@@ -2,14 +2,13 @@
 
 import ctypes
 
+import pyalsoft
 from pyalsoft._generated import types
 from pyalsoft._generated.functions import (
     COMMAND_EXTENSIONS,
     EXTENSION_APIS,
     PROTOTYPES,
 )
-
-import pyalsoft
 
 
 def test_representative_base_and_opaque_types() -> None:

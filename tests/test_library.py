@@ -9,9 +9,9 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 import pytest
-from pyalsoft._generated.functions import PROTOTYPES
 
 import pyalsoft._library as runtime
+from pyalsoft._generated.functions import PROTOTYPES
 from pyalsoft._library import (
     ExtensionUnavailableError,
     ForeignFunction,

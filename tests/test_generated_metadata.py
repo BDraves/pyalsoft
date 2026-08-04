@@ -1,5 +1,6 @@
 """Smoke tests for generated constants and registry metadata."""
 
+import pyalsoft
 from pyalsoft._generated import constants
 from pyalsoft._generated.registry import (
     API_SETS,
@@ -16,8 +17,6 @@ from pyalsoft._generated.semantics import (
     OBJECT_PROPERTIES,
     OBJECT_PROPERTIES_BY_KEY,
 )
-
-import pyalsoft
 
 
 def test_representative_constants() -> None:
