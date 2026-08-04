@@ -1,0 +1,28 @@
+Copyright (C) 2025 Dylan Perks and Contributors
+
+This file, al.xml, is the OpenAL API Registry. The canonical version of the
+registry, together with documentation and Python generator scripts used to
+generate C header files for OpenAL, can always be found in the OpenAL Soft
+repository at https://github.com/kcat/openal-soft.
+
+This file is based upon the following documents and reproduces the same
+copyright notice:
+- OpenAL Specification and Reference v1.0 Draft Edition (Published June 2000)
+  Copyright (C) 1999-2000 by Loki Software
+- OpenAL Specification and Reference v1.1 (Published June 2005)
+  Copyright (C) 2005 by authors
+
+In addition, this file is based on OpenAL Soft, and makes use of only numerical
+parameters, data structure layouts and accessors, and small macros and small
+inline functions (ten lines or less in length) in accordance with the Lesser
+General Public License v2.0. Usage of this file alone is unencumbered by LGPL
+and does not attract the copyleft provisions thereof.
+
+Permission is granted to make and distribute verbatim copies of this file
+provided the copyright notice and this permission notice are preserved on all
+copies.
+
+Permission is granted to copy and distribute translations of this file into
+another language, under the above conditions for modified versions, except
+that this permission notice may be stated in a translation approved by the
+copyright owners.

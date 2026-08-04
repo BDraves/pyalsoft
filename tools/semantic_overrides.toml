@@ -1,0 +1,147 @@
+version = 1
+
+# The OpenAL registry is intentionally kept byte-for-byte identical to upstream.
+# Corrections and Python-specific semantics that the XML cannot express live here.
+
+[property.AL_CONE_OUTER_GAIN]
+objects = ["source"]
+enum_groups = ["SourcePName", "SourceFloat"]
+reason = "The OpenAL header documents this as a source property."
+
+[property.AL_DIRECTION]
+objects = ["source"]
+enum_groups = ["SourcePName", "SourceFloat3", "SourceInteger3"]
+reason = "OpenAL exposes direction on sources; listener direction is part of AL_ORIENTATION."
+
+[property.AL_POSITION]
+enum_groups = ["SourcePName", "ListenerPName", "SourceFloat3", "ListenerFloat3", "SourceInteger3", "ListenerInteger3"]
+reason = "The registry repeats ListenerFloat3 where ListenerInteger3 is intended."
+
+[property.AL_AIR_ABSORPTION_FACTOR]
+value_types = ["ALfloat"]
+enum_groups = ["SourceFloat", "SourcePName"]
+reason = "EFX exposes this property through the floating-point source accessors."
+
+[property.AL_ROOM_ROLLOFF_FACTOR]
+value_types = ["ALfloat"]
+enum_groups = ["SourceFloat", "SourcePName"]
+reason = "EFX exposes this property through the floating-point source accessors."
+
+[property.AL_STEREO_ANGLES]
+value_types = ["ALfloat[2]"]
+reason = "The extension reads and writes a left/right angle pair."
+
+[property.AL_BYTE_RW_OFFSETS_SOFT]
+value_types = ["ALfloat[2]"]
+writable = false
+reason = "The extension reports read/write offsets as a pair."
+
+[property.AL_SAMPLE_RW_OFFSETS_SOFT]
+value_types = ["ALfloat[2]"]
+writable = false
+reason = "The extension reports read/write offsets as a pair."
+
+[property.AL_AUXILIARY_SEND_FILTER]
+generate = false
+reason = "This selector uses a special (slot, send, filter) three-integer shape."
+
+[property.AL_SOURCE_STATE]
+writable = false
+
+[property.AL_BUFFERS_QUEUED]
+writable = false
+
+[property.AL_BUFFERS_PROCESSED]
+writable = false
+
+[property.AL_SOURCE_TYPE]
+writable = false
+
+[property.AL_FREQUENCY]
+writable = false
+
+[property.AL_BITS]
+writable = false
+
+[property.AL_CHANNELS]
+writable = false
+
+[property.AL_SIZE]
+writable = false
+
+[property.AL_INTERNAL_FORMAT_SOFT]
+writable = false
+
+[property.AL_BYTE_LENGTH_SOFT]
+writable = false
+
+[property.AL_SAMPLE_LENGTH_SOFT]
+writable = false
+
+[property.AL_SEC_LENGTH_SOFT]
+writable = false
+
+[property.AL_SAMPLE_OFFSET_LATENCY_SOFT]
+writable = false
+
+[property.AL_SEC_OFFSET_LATENCY_SOFT]
+writable = false
+
+[property.AL_SAMPLE_OFFSET_CLOCK_SOFT]
+writable = false
+
+[property.AL_SEC_OFFSET_CLOCK_SOFT]
+writable = false
+
+[command.alGenBuffers]
+lengths = { buffers = "n" }
+
+[command.alDeleteBuffers]
+lengths = { buffers = "n" }
+
+[command.alSourceQueueBuffers]
+lengths = { buffers = "nb" }
+
+[command.alSourceUnqueueBuffers]
+lengths = { buffers = "nb" }
+
+[command.alGenBuffersDirect]
+lengths = { buffers = "n" }
+
+[command.alDeleteBuffersDirect]
+lengths = { buffers = "n" }
+
+[command.alSourceQueueBuffersDirect]
+lengths = { buffers = "nb" }
+
+[command.alSourceUnqueueBuffersDirect]
+lengths = { buffers = "nb" }
+
+# These non-const pointers are caller-owned storage, not values for the wrapper
+# to allocate and return.
+[command.alBufferDataStatic]
+directions = { data = "in" }
+
+[command.alBufferDataStaticDirect]
+directions = { data = "in" }
+
+[command.alGetBufferSamplesSOFT]
+directions = { data = "inout" }
+
+[command.alRequestFoldbackStart]
+directions = { mem = "inout" }
+
+[command.alRequestFoldbackStartDirect]
+directions = { mem = "inout" }
+
+[command.alcCaptureSamples]
+directions = { buffer = "inout" }
+
+[command.alcRenderSamplesSOFT]
+directions = { buffer = "inout" }
+
+[command.EAXSetDirect]
+directions = { value = "in" }
+
+[command.EAXGetDirect]
+directions = { value = "inout" }
