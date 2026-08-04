@@ -1,5 +1,5 @@
 [build-system]
-requires = ["cmake>=3.25,<4", "hatchling>=1.27,<2"]
+requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
 [project]
@@ -74,6 +74,7 @@ include = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pyalsoft"]
+dependencies = ["cmake>=3.25,<4; sys_platform != 'win32'"]
 
 [tool.hatch.build.targets.wheel.hooks.custom]
 path = "hatch_build.py"
@@ -83,7 +84,7 @@ build = "cp312-manylinux_* cp312-macosx_* cp312-win_amd64"
 build-frontend = "uv"
 test-requires = ["pyinstaller==6.20.0"]
 test-command = "python {project}/tools/freeze_test.py"
-environment = { ALSOFT_DRIVERS = "null", UV_CACHE_DIR = ".cache/" }
+environment = { ALSOFT_DRIVERS = "null" }
 
 [tool.cibuildwheel.linux]
 before-all = "dnf install -y alsa-lib-devel pulseaudio-libs-devel"

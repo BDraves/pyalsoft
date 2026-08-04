@@ -14,9 +14,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  UV_CACHE_DIR: .cache/
-
 jobs:
   quality:
     name: Quality
@@ -27,17 +24,19 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
       - name: Set up uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.11.29"
           enable-cache: true
 
-      - name: Set up Python
-        run: uv python install 3.12
-
       - name: Install dependencies
-        run: uv sync --locked --python 3.12
+        run: uv sync --locked --no-install-project --python 3.12
 
       - name: Check generated files
         run: |
@@ -67,13 +66,9 @@ jobs:
           - os: ubuntu-latest
             python-version: "3.12"
           - os: ubuntu-latest
-            python-version: "3.13"
-          - os: ubuntu-latest
             python-version: "3.14"
           - os: macos-latest
             python-version: "3.14"
-          - os: windows-latest
-            python-version: "3.12"
           - os: windows-latest
             python-version: "3.14"
 
@@ -81,19 +76,23 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
       - name: Set up uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.11.29"
           enable-cache: true
 
-      - name: Set up Python
-        run: uv python install ${{ matrix.python-version }}
-
       - name: Install dependencies
-        run: uv sync --locked --python ${{ matrix.python-version }}
+        run: uv sync --locked --no-install-project --python ${{ matrix.python-version }}
 
       - name: Test
+        env:
+          PYTHONPATH: src
         run: uv run --no-sync pytest
 
       - name: Install OpenAL Soft on Linux
@@ -104,6 +103,8 @@ jobs:
 
       - name: Install OpenAL Soft on macOS
         if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
         run: |
           brew install openal-soft
           openal_prefix="$(brew --prefix openal-soft)"
@@ -112,6 +113,7 @@ jobs:
       - name: Test system OpenAL runtime
         if: runner.os == 'macOS' || (runner.os == 'Linux' && matrix.python-version == '3.14')
         env:
+          PYTHONPATH: src
           PYALSOFT_RUN_SYSTEM_TESTS: "1"
         run: uv run --no-sync pytest tests/test_system_runtime.py
 

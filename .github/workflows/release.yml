@@ -21,9 +21,6 @@ on:
 permissions:
   contents: read
 
-env:
-  UV_CACHE_DIR: .cache/
-
 jobs:
   build:
     name: Wheel (${{ matrix.os }})
@@ -64,9 +61,18 @@ jobs:
           version: "0.11.29"
           enable-cache: true
 
+      - name: Cache cibuildwheel tools
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/cibw-cache
+          key: cibw-${{ matrix.os }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            cibw-${{ matrix.os }}-
+
       - name: Build and test native wheel
         env:
           CIBW_ARCHS: native
+          CIBW_CACHE_PATH: ${{ runner.temp }}/cibw-cache
         run: uv tool run --from cibuildwheel==3.4.1 cibuildwheel --output-dir wheelhouse
 
       - name: Upload wheel
