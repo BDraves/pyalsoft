@@ -152,6 +152,9 @@ the generator, registry, or overrides, regenerate them with:
 uv run python tools/generate_bindings.py
 ```
 
+See the [repository tool guide](tools/README.md) for the purpose and structure
+of each development and release command.
+
 ## License
 
 PyALSoft's original Python code is available under the MIT License. Bundled

@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import io
-import tomllib
+import sys
 import urllib.request
 import zipfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-VENDOR = ROOT / "vendor" / "openal-soft"
-CONFIG_PATH = VENDOR / "source.toml"
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tools.openal_soft import (  # noqa: E402
+    ROOT,
+    VENDOR,
+    source_configuration,
+    verify_checksum,
+)
 
 VENDORED_FILES = {
     "sha256": VENDOR / "al.xml",
@@ -39,30 +44,7 @@ REQUIRED_CONFIG = {
 
 
 def _config() -> dict[str, str]:
-    raw = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    missing = REQUIRED_CONFIG - raw.keys()
-    if missing:
-        names = ", ".join(sorted(missing))
-        raise ValueError(f"{CONFIG_PATH} is missing required keys: {names}")
-
-    config: dict[str, str] = {}
-    for key in REQUIRED_CONFIG:
-        value = raw[key]
-        if not isinstance(value, str):
-            raise TypeError(f"{CONFIG_PATH}: {key} must be a string")
-        config[key] = value
-    return config
-
-
-def _sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def _verify(label: str, data: bytes, expected: str) -> bytes:
-    actual = _sha256(data)
-    if actual != expected:
-        raise ValueError(f"{label} SHA-256 mismatch: expected {expected}, got {actual}")
-    return data
+    return source_configuration(REQUIRED_CONFIG)
 
 
 def _download(url: str) -> bytes:
@@ -103,36 +85,38 @@ def check() -> None:
         data = path.read_bytes()
         if checksum_key == "sha256":
             data = _normalized_registry(data)
-        _verify(str(path.relative_to(ROOT)), data, config[checksum_key])
+        verify_checksum(str(path.relative_to(ROOT)), data, config[checksum_key])
         print(f"verified {path.relative_to(ROOT)}")
 
 
 def sync() -> None:
     config = _config()
     registry = _normalized_registry(_download(config["source_url"]))
-    _verify("OpenAL registry", registry, config["sha256"])
+    verify_checksum("OpenAL registry", registry, config["sha256"])
 
     source_archive = _download(config["library_source_url"])
-    _verify(
+    verify_checksum(
         "OpenAL Soft source archive",
         source_archive,
         config["library_source_sha256"],
     )
 
     archive = _download(config["binary_archive_url"])
-    _verify("OpenAL Soft binary archive", archive, config["binary_archive_sha256"])
+    verify_checksum(
+        "OpenAL Soft binary archive", archive, config["binary_archive_sha256"]
+    )
 
-    dll = _verify(
+    dll = verify_checksum(
         "OpenAL Soft Win64 DLL",
         _member(archive, config["windows_amd64_member"]),
         config["windows_amd64_sha256"],
     )
-    license_text = _verify(
+    license_text = verify_checksum(
         "OpenAL Soft license",
         _member(archive, config["license_member"]),
         config["license_sha256"],
     )
-    pffft_license = _verify(
+    pffft_license = verify_checksum(
         "PFFFT license",
         _member(archive, config["pffft_license_member"]),
         config["pffft_license_sha256"],

@@ -3,104 +3,30 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
-import platform
 import shutil
 import subprocess
 import sys
 import tarfile
-import tomllib
-from dataclasses import dataclass
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-VENDOR = ROOT / "vendor" / "openal-soft"
-CONFIG_PATH = VENDOR / "source.toml"
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-
-@dataclass(frozen=True)
-class RuntimeTarget:
-    """Native runtime build and package naming for one platform."""
-
-    identifier: str
-    bundled_name: str
-    output_pattern: str | None
-    cmake_options: tuple[str, ...] = ()
-
-
-def runtime_target(
-    system: str = sys.platform,
-    machine: str = platform.machine(),
-) -> RuntimeTarget:
-    """Return the supported runtime target for a Python platform."""
-
-    normalized_machine = machine.casefold()
-    if normalized_machine in {"amd64", "x86_64"}:
-        architecture = "x86_64"
-    elif normalized_machine in {"arm64", "aarch64"}:
-        architecture = "arm64"
-    else:
-        raise RuntimeError(f"unsupported OpenAL Soft architecture: {machine}")
-
-    if system == "win32" and architecture == "x86_64":
-        return RuntimeTarget("win_amd64", "soft_oal.dll", None)
-    if system == "linux":
-        identifier = "linux_aarch64" if architecture == "arm64" else "linux_x86_64"
-        return RuntimeTarget(
-            identifier,
-            "libopenal.so.1",
-            "libopenal.so.*",
-            (
-                "-DALSOFT_REQUIRE_ALSA=ON",
-                "-DALSOFT_BACKEND_PIPEWIRE=OFF",
-                "-DALSOFT_STATIC_LIBGCC=ON",
-                "-DALSOFT_STATIC_STDCXX=ON",
-            ),
-        )
-    if system == "darwin":
-        identifier = "macos_arm64" if architecture == "arm64" else "macos_x86_64"
-        deployment_target = "11.0" if architecture == "arm64" else "10.13"
-        return RuntimeTarget(
-            identifier,
-            "libopenal.1.dylib",
-            "libopenal.*.dylib",
-            (
-                "-DALSOFT_REQUIRE_COREAUDIO=ON",
-                # OpenAL Soft 1.25.2 makes this warning fatal on Apple Clang 17.
-                # Remove after vendoring upstream commit 681d049c or newer.
-                "-DHAVE_WFUNCTION_EFFECTS=OFF",
-                f"-DCMAKE_OSX_DEPLOYMENT_TARGET={deployment_target}",
-            ),
-        )
-    raise RuntimeError(f"unsupported OpenAL Soft target: {system} {machine}")
-
-
-def _configuration() -> dict[str, str]:
-    raw = tomllib.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    required = {"version", "library_source_sha256"}
-    missing = required - raw.keys()
-    if missing:
-        names = ", ".join(sorted(missing))
-        raise ValueError(f"{CONFIG_PATH} is missing required keys: {names}")
-
-    result: dict[str, str] = {}
-    for key in required:
-        value = raw[key]
-        if not isinstance(value, str):
-            raise TypeError(f"{CONFIG_PATH}: {key} must be a string")
-        result[key] = value
-    return result
+from tools.openal_soft import (
+    ROOT,
+    VENDOR,
+    RuntimeTarget,
+    runtime_target,
+    source_configuration,
+    verify_checksum,
+)  # noqa: E402
 
 
 def _source_tree(config: dict[str, str]) -> Path:
     archive = VENDOR / f"openal-soft-{config['version']}.tar.bz2"
     data = archive.read_bytes()
-    actual = hashlib.sha256(data).hexdigest()
     expected = config["library_source_sha256"]
-    if actual != expected:
-        raise ValueError(
-            f"{archive} SHA-256 mismatch: expected {expected}, got {actual}"
-        )
+    verify_checksum(str(archive), data, expected)
 
     source_parent = ROOT / "build" / "openal-soft" / f"source-{expected[:12]}"
     source = source_parent / f"openal-soft-{config['version']}"
@@ -140,7 +66,7 @@ def build_runtime(target: RuntimeTarget | None = None) -> Path:
         shutil.copy2(source, staged)
         return staged
 
-    config = _configuration()
+    config = source_configuration({"version", "library_source_sha256"})
     staged = (
         ROOT
         / "build"
