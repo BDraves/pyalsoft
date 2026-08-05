@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import time
 from dataclasses import replace
+from typing import TYPE_CHECKING
 
-from examples.play_sine import SAMPLE_RATE, sine_pcm
 from pyalsoft import (
     PCM,
     VoiceConfig,
@@ -18,6 +18,13 @@ from pyalsoft import (
     upload,
 )
 from pyalsoft.bindings import OpenALLibrary
+
+if TYPE_CHECKING:
+    from examples.play_sine import SAMPLE_RATE, sine_pcm
+elif __package__:
+    from .play_sine import SAMPLE_RATE, sine_pcm
+else:
+    from play_sine import SAMPLE_RATE, sine_pcm
 
 
 def move_sine(
@@ -38,9 +45,13 @@ def move_sine(
         clip = upload(playback, pcm)
         voice = play(playback, clip, config)
         started = time.monotonic()
+        deadline = started + duration + 2.0
 
         while get_voice_status(playback, voice).state is VoiceState.PLAYING:
-            progress = min((time.monotonic() - started) / duration, 1.0)
+            now = time.monotonic()
+            if now >= deadline:
+                raise RuntimeError("timed out waiting for playback to finish")
+            progress = min((now - started) / duration, 1.0)
             config = replace(config, position=(-2.0 + 4.0 * progress, 0.0, -1.0))
             set_voice_config(playback, voice, config)
             time.sleep(1 / 60)

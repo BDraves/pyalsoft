@@ -70,64 +70,20 @@ and can be run from a source checkout with:
 uv run python examples/play_sine.py
 ```
 
-[`examples/move_sine.py`](examples/move_sine.py) shows a playing voice moving
-from left to right by creating updated `VoiceConfig` values with
-`dataclasses.replace` and passing them to `set_voice_config`.
-
-## Platforms
-
-PyALSoft supports Windows x86-64, macOS x86-64 and ARM64, and Linux x86-64
-and ARM64. Platform wheels bundle OpenAL Soft. `pyalsoft.bindings.load()` uses
-the bundled library when available, then falls back to a system installation.
-Pass an explicit library path to `pyalsoft.bindings.load(path)` to override
-discovery.
-
 ## API layers
 
-The package root is a functional interface for static buffered playback.
-`PCM`, `VoiceConfig`, and `Listener` are immutable data. `Clip` and `Voice` are
-opaque identities owned by a `Playback` session. Functions including `upload`,
-`play`, `set_voice_config`, `set_listener`, `pause`, `resume`, `stop`, and
-`release` make state changes explicit. A stopped or completed voice retains its
-identity until it is passed to `release`; `release_finished` collects all such
-voices in a long-lived session. Closing the session releases any resources that
-remain. `resume` accepts paused voices only.
+Automatically generated, CType bindings of OpenAL live at `pyalsoft.bindings`. Only experienced users should touch these. Most users can pretend they do not exist.
 
-`pyalsoft.bindings` is the supported low-level escape hatch for streaming,
-capture, EFX, extensions, or direct control. Its recommended `library.al` and
-`library.alc` namespaces use snake-case names, accept Python strings and
-sequences, infer array lengths, allocate output parameters, and return normal
-Python values. Generated object handles such as `library.al.source(identifier)`
-expose typed properties including `gain`, `position`, `buffer`, and `state`.
-
-Exact C entry points remain available when direct control is needed. For
-example, `library.alGenSources` is the generated `ctypes` binding for
-`alGenSources`, while `library.al.gen_sources()` is its Python-value wrapper.
-Constants, enums, and C types are available through `bindings.constants`,
-`bindings.enums`, and `bindings.types`.
-
-Extensions are discoverable by registry name or generated attribute. Check an
-extension against its device or current context before using its commands:
-
-```python
-efx = library.extensions.alc_ext_efx
-if efx.is_present(device):
-    print(efx.commands)
-```
-
-At the bindings layer, unavailable libraries, missing contexts, and unsupported
-extensions raise `LibraryNotFoundError`, `ContextRequiredError`, and
-`ExtensionUnavailableError`, respectively. `open_playback` translates library
-discovery failures into `PlaybackOpenError`. See the
-[`bindings API reference`](docs/reference.md) for the complete command,
-property, and extension surface.
+`pyalsoft` holds the hand authored Python API, intended to make working with the library more Pythonic and manageable.
 
 ## Contributing
+
+Direct development occurs on `development`, the base branch of the repository. Pull requests from there to master represent official releases, signified by a version increase in `pyproject.toml`. Version increases should only be done from `development`. If implementing your own feature, it is requested that you fork this repository and make your own feature branch, and then merge into `development`.
 
 Create the locked development environment with [uv](https://docs.astral.sh/uv/):
 
 ```console
-uv sync --locked --python 3.12
+uv sync --python 3.12
 ```
 
 Before submitting a change, run the same core checks as CI:

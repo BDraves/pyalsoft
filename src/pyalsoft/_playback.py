@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+from collections import deque
+from collections.abc import Buffer
 from dataclasses import dataclass, field
 from enum import Enum
 from types import TracebackType
@@ -30,7 +32,7 @@ class PlaybackClosedError(AudioError):
 
 
 class InvalidHandleError(AudioError):
-    """Raised when a clip or voice is stale or belongs to another session."""
+    """Raised when a resource is stale or belongs to another session."""
 
 
 class ResourceInUseError(AudioError):
@@ -60,6 +62,16 @@ class VoiceState(Enum):
     INITIAL = "initial"
     PLAYING = "playing"
     PAUSED = "paused"
+    STOPPED = "stopped"
+
+
+class StreamState(Enum):
+    """Managed lifecycle state of a stream."""
+
+    INITIAL = "initial"
+    PLAYING = "playing"
+    PAUSED = "paused"
+    FINISHED = "finished"
     STOPPED = "stopped"
 
 
@@ -190,6 +202,17 @@ class VoiceStatus:
 
 
 @dataclass(frozen=True, slots=True)
+class StreamStatus:
+    """Runtime state and queue accounting for a stream."""
+
+    state: StreamState
+    input_finished: bool
+    queued_chunks: int
+    queued_seconds: float
+    underrun_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class Clip:
     """Opaque identity for PCM uploaded to a playback session."""
 
@@ -213,8 +236,42 @@ class Voice:
         return "Voice(<opaque>)"
 
 
+@dataclass(frozen=True, slots=True)
+class Stream:
+    """Opaque identity for one managed streaming source."""
+
+    _owner: object = field(repr=False)
+    _token: object = field(repr=False)
+    _identifier: int = field(repr=False)
+
+    def __repr__(self) -> str:
+        return "Stream(<opaque>)"
+
+
+@dataclass(frozen=True, slots=True)
+class _StreamChunk:
+    buffer: int
+    frame_count: int
+    duration: float
+
+
+@dataclass(slots=True)
+class _StreamRecord:
+    identifier: int
+    buffers: tuple[int, ...]
+    free_buffers: deque[int]
+    queued_chunks: deque[_StreamChunk]
+    channels: int
+    sample_rate: int
+    sample_type: SampleType
+    state: StreamState = StreamState.INITIAL
+    input_finished: bool = False
+    underrun_count: int = 0
+    underrun_active: bool = False
+
+
 class Playback:
-    """Opaque owner for a playback device, context, clips, and voices.
+    """Opaque owner for a playback device, context, clips, voices, and streams.
 
     Instances are returned by :func:`open_playback`. Use them as context
     managers or pass them to :func:`close_playback` for deterministic cleanup.
@@ -227,6 +284,7 @@ class Playback:
         "_device",
         "_library",
         "_previous_context",
+        "_streams",
         "_token",
         "_voice_clips",
         "_voices",
@@ -247,6 +305,7 @@ class Playback:
         self._clips: dict[object, int] = {}
         self._voices: dict[object, int] = {}
         self._voice_clips: dict[object, object] = {}
+        self._streams: dict[object, _StreamRecord] = {}
         self._closed = False
 
     def __enter__(self) -> Self:
@@ -341,6 +400,36 @@ def _voice_identifier(playback: Playback, voice: Voice) -> int:
     return identifier
 
 
+def _stream_record(playback: Playback, stream: Stream) -> _StreamRecord:
+    _require_playback(playback)
+    if not isinstance(stream, Stream) or stream._owner is not playback._token:
+        raise InvalidHandleError("stream does not belong to this playback session")
+    record = playback._streams.get(stream._token)
+    if record is None or record.identifier != stream._identifier:
+        raise InvalidHandleError("stream has been released")
+    return record
+
+
+def _validate_stream_layout(
+    channels: int,
+    sample_rate: int,
+    sample_type: SampleType,
+    buffer_count: int,
+) -> None:
+    if channels not in (1, 2):
+        raise ValueError("channels must be 1 or 2")
+    if isinstance(sample_rate, bool) or not isinstance(sample_rate, int):
+        raise TypeError("sample_rate must be an integer")
+    if sample_rate <= 0:
+        raise ValueError("sample_rate must be positive")
+    if not isinstance(sample_type, SampleType):
+        raise TypeError("sample_type must be a SampleType")
+    if isinstance(buffer_count, bool) or not isinstance(buffer_count, int):
+        raise TypeError("buffer_count must be an integer")
+    if buffer_count <= 0:
+        raise ValueError("buffer_count must be positive")
+
+
 def _apply_voice_config(
     playback: Playback, identifier: int, config: VoiceConfig
 ) -> None:
@@ -409,13 +498,19 @@ def close_playback(playback: Playback) -> None:
         else:
             try:
                 _clear_al_errors(playback)
-                voice_ids = tuple(playback._voices.values())
-                if voice_ids:
-                    playback._library.al.source_stopv(voice_ids)
-                    playback._library.al.delete_sources(voice_ids)
-                clip_ids = tuple(playback._clips.values())
-                if clip_ids:
-                    playback._library.al.delete_buffers(clip_ids)
+                source_ids = tuple(playback._voices.values()) + tuple(
+                    record.identifier for record in playback._streams.values()
+                )
+                if source_ids:
+                    playback._library.al.source_stopv(source_ids)
+                    playback._library.al.delete_sources(source_ids)
+                buffer_ids = tuple(playback._clips.values()) + tuple(
+                    identifier
+                    for record in playback._streams.values()
+                    for identifier in record.buffers
+                )
+                if buffer_ids:
+                    playback._library.al.delete_buffers(buffer_ids)
                 _check_al_error(playback, "audio cleanup")
             except Exception as error:
                 remember(error)
@@ -438,6 +533,7 @@ def close_playback(playback: Playback) -> None:
             remember(error)
         playback._voices.clear()
         playback._voice_clips.clear()
+        playback._streams.clear()
         playback._clips.clear()
         playback._closed = True
 
@@ -507,12 +603,252 @@ def play(
     return Voice(playback._token, token, identifier)
 
 
-def set_voice_config(playback: Playback, voice: Voice, config: VoiceConfig) -> None:
-    """Apply a complete immutable configuration to a live voice."""
+def open_stream(
+    playback: Playback,
+    *,
+    channels: int,
+    sample_rate: int,
+    sample_type: SampleType = SampleType.INT16,
+    buffer_count: int = 4,
+    config: VoiceConfig = _DEFAULT_VOICE_CONFIG,
+) -> Stream:
+    """Create an unstarted source with a bounded pool of streaming buffers."""
+
+    _validate_stream_layout(channels, sample_rate, sample_type, buffer_count)
+    if not isinstance(config, VoiceConfig):
+        raise TypeError("config must be a VoiceConfig")
+    if config.looping:
+        raise ValueError("streaming voices cannot loop")
+
+    _prepare_al(playback)
+    source_ids: tuple[int, ...] = ()
+    buffer_ids: tuple[int, ...] = ()
+    try:
+        source_ids = playback._library.al.gen_sources()
+        if len(source_ids) != 1:
+            raise AudioBackendError("OpenAL did not create exactly one source")
+        _check_al_error(playback, "create stream source")
+        buffer_ids = playback._library.al.gen_buffers(buffer_count)
+        if len(buffer_ids) != buffer_count:
+            raise AudioBackendError(
+                f"OpenAL did not create exactly {buffer_count} stream buffers"
+            )
+        _check_al_error(playback, "create stream buffers")
+        _apply_voice_config(playback, source_ids[0], config)
+        _check_al_error(playback, "configure stream")
+    except Exception:
+        _clear_al_errors(playback)
+        if source_ids:
+            playback._library.al.source_stopv(source_ids)
+            playback._library.al.delete_sources(source_ids)
+        if buffer_ids:
+            playback._library.al.delete_buffers(buffer_ids)
+        playback._library.al.get_error()
+        raise
+
+    token = object()
+    identifier = source_ids[0]
+    playback._streams[token] = _StreamRecord(
+        identifier=identifier,
+        buffers=buffer_ids,
+        free_buffers=deque(buffer_ids),
+        queued_chunks=deque(),
+        channels=channels,
+        sample_rate=sample_rate,
+        sample_type=sample_type,
+    )
+    return Stream(playback._token, token, identifier)
+
+
+def _copy_stream_samples(samples: Buffer) -> bytes:
+    try:
+        view = memoryview(samples)
+    except TypeError as error:
+        raise TypeError("samples must be bytes-like") from error
+    try:
+        return view.tobytes()
+    finally:
+        view.release()
+
+
+def try_write_stream(
+    playback: Playback,
+    stream: Stream,
+    samples: Buffer,
+) -> bool:
+    """Queue one complete PCM chunk, or report bounded-buffer backpressure."""
+
+    record = _stream_record(playback, stream)
+    data = _copy_stream_samples(samples)
+    if not data:
+        raise ValueError("samples cannot be empty")
+    frame_width = record.channels * record.sample_type.byte_width
+    if len(data) % frame_width:
+        raise ValueError("samples must contain a whole number of frames")
+    if record.state in (StreamState.FINISHED, StreamState.STOPPED):
+        raise InvalidVoiceStateError(
+            f"cannot write to a stream in the {record.state.value} state"
+        )
+    if record.input_finished:
+        raise InvalidVoiceStateError("cannot write to a stream after end-of-input")
+    if not record.free_buffers:
+        return False
+
+    _prepare_al(playback)
+    buffer = record.free_buffers[0]
+    playback._library.al.buffer_data(
+        buffer,
+        _FORMAT_BY_LAYOUT[(record.channels, record.sample_type)],
+        data,
+        record.sample_rate,
+    )
+    _check_al_error(playback, "upload stream chunk")
+    playback._library.al.source_queue_buffers(record.identifier, (buffer,))
+    _check_al_error(playback, "queue stream chunk")
+
+    record.free_buffers.popleft()
+    frame_count = len(data) // frame_width
+    record.queued_chunks.append(
+        _StreamChunk(
+            buffer=buffer,
+            frame_count=frame_count,
+            duration=frame_count / record.sample_rate,
+        )
+    )
+    record.underrun_active = False
+
+    if record.state is StreamState.PLAYING:
+        native_state = _get_voice_state(
+            playback, record.identifier, "query stream after write"
+        )
+        if native_state is VoiceState.STOPPED:
+            playback._library.al.source_play(record.identifier)
+            _check_al_error(playback, "restart stream after write")
+            processed_frames = sum(
+                chunk.frame_count for chunk in tuple(record.queued_chunks)[:-1]
+            )
+            if processed_frames:
+                playback._library.al.sourcei(
+                    record.identifier, bindings.AL_SAMPLE_OFFSET, processed_frames
+                )
+                _check_al_error(playback, "skip processed stream chunks")
+    return True
+
+
+def start_stream(playback: Playback, stream: Stream) -> None:
+    """Start a primed stream for the first and only time."""
+
+    record = _stream_record(playback, stream)
+    if record.state is not StreamState.INITIAL:
+        raise InvalidVoiceStateError(
+            f"cannot start a stream in the {record.state.value} state"
+        )
+    if not record.queued_chunks:
+        raise InvalidVoiceStateError("cannot start a stream without a queued chunk")
+    _prepare_al(playback)
+    playback._library.al.source_play(record.identifier)
+    _check_al_error(playback, "start stream")
+    record.state = StreamState.PLAYING
+
+
+def _stream_status(record: _StreamRecord, offset_seconds: float = 0.0) -> StreamStatus:
+    queued_seconds = sum(chunk.duration for chunk in record.queued_chunks)
+    if record.queued_chunks:
+        current_duration = record.queued_chunks[0].duration
+        queued_seconds -= min(max(offset_seconds, 0.0), current_duration)
+    return StreamStatus(
+        state=record.state,
+        input_finished=record.input_finished,
+        queued_chunks=len(record.queued_chunks),
+        queued_seconds=max(queued_seconds, 0.0),
+        underrun_count=record.underrun_count,
+    )
+
+
+def update_stream(playback: Playback, stream: Stream) -> StreamStatus:
+    """Reclaim processed chunks, recover underruns, and return stream status."""
+
+    record = _stream_record(playback, stream)
+    if record.state in (StreamState.FINISHED, StreamState.STOPPED):
+        return _stream_status(record)
+
+    _prepare_al(playback)
+    processed = int(
+        playback._library.al.get_sourcei(
+            record.identifier, bindings.AL_BUFFERS_PROCESSED
+        )
+    )
+    _check_al_error(playback, "query processed stream buffers")
+    if not 0 <= processed <= len(record.queued_chunks):
+        raise AudioBackendError("OpenAL returned an invalid processed buffer count")
+    if processed:
+        returned = playback._library.al.source_unqueue_buffers(
+            record.identifier, processed
+        )
+        _check_al_error(playback, "reclaim stream buffers")
+        expected = tuple(
+            chunk.buffer for chunk in tuple(record.queued_chunks)[:processed]
+        )
+        if returned != expected:
+            raise AudioBackendError("OpenAL returned unexpected stream buffers")
+        for _ in range(processed):
+            chunk = record.queued_chunks.popleft()
+            record.free_buffers.append(chunk.buffer)
+
+    if not record.queued_chunks and record.input_finished:
+        record.state = StreamState.FINISHED
+        record.underrun_active = False
+    elif record.state is StreamState.PLAYING:
+        if not record.queued_chunks:
+            if not record.underrun_active:
+                record.underrun_count += 1
+                record.underrun_active = True
+        else:
+            native_state = _get_voice_state(
+                playback, record.identifier, "query stream playback state"
+            )
+            if native_state is VoiceState.STOPPED:
+                playback._library.al.source_play(record.identifier)
+                _check_al_error(playback, "restart stream after underrun")
+
+    offset = 0.0
+    if record.queued_chunks:
+        offset = float(
+            playback._library.al.get_sourcef(record.identifier, bindings.AL_SEC_OFFSET)
+        )
+        _check_al_error(playback, "query stream offset")
+        if not math.isfinite(offset):
+            raise AudioBackendError("OpenAL returned a non-finite stream offset")
+    return _stream_status(record, offset)
+
+
+def finish_stream(playback: Playback, stream: Stream) -> None:
+    """Declare end-of-input and allow already queued chunks to drain."""
+
+    record = _stream_record(playback, stream)
+    if record.state is StreamState.STOPPED:
+        raise InvalidVoiceStateError("cannot finish a stream in the stopped state")
+    if record.state is StreamState.FINISHED or record.input_finished:
+        return
+    record.input_finished = True
+    record.underrun_active = False
+    if not record.queued_chunks:
+        record.state = StreamState.FINISHED
+
+
+def set_voice_config(
+    playback: Playback, voice: Voice | Stream, config: VoiceConfig
+) -> None:
+    """Apply a complete immutable configuration to a live voice or stream."""
 
     if not isinstance(config, VoiceConfig):
         raise TypeError("config must be a VoiceConfig")
-    identifier = _voice_identifier(playback, voice)
+    if isinstance(voice, Stream):
+        identifier = _stream_record(playback, voice).identifier
+        if config.looping:
+            raise ValueError("streaming voices cannot loop")
+    else:
+        identifier = _voice_identifier(playback, voice)
     _prepare_al(playback)
     _apply_voice_config(playback, identifier, config)
     _check_al_error(playback, "configure voice")
@@ -564,15 +900,36 @@ def _control_voice(playback: Playback, voice: Voice, operation: str) -> None:
     _check_al_error(playback, f"{operation} voice")
 
 
-def pause(playback: Playback, voice: Voice) -> None:
-    """Pause a live voice."""
+def pause(playback: Playback, voice: Voice | Stream) -> None:
+    """Pause a live voice or a logically playing stream."""
 
+    if isinstance(voice, Stream):
+        record = _stream_record(playback, voice)
+        if record.state is not StreamState.PLAYING:
+            return
+        _prepare_al(playback)
+        playback._library.al.source_pause(record.identifier)
+        _check_al_error(playback, "pause stream")
+        record.state = StreamState.PAUSED
+        record.underrun_active = False
+        return
     _control_voice(playback, voice, "pause")
 
 
-def resume(playback: Playback, voice: Voice) -> None:
-    """Resume a paused voice."""
+def resume(playback: Playback, voice: Voice | Stream) -> None:
+    """Resume a paused voice or stream."""
 
+    if isinstance(voice, Stream):
+        record = _stream_record(playback, voice)
+        if record.state is not StreamState.PAUSED:
+            raise InvalidVoiceStateError(
+                f"cannot resume a stream in the {record.state.value} state"
+            )
+        _prepare_al(playback)
+        playback._library.al.source_play(record.identifier)
+        _check_al_error(playback, "resume stream")
+        record.state = StreamState.PLAYING
+        return
     identifier = _voice_identifier(playback, voice)
     _prepare_al(playback)
     state = _get_voice_state(playback, identifier, "query voice before resume")
@@ -584,17 +941,40 @@ def resume(playback: Playback, voice: Voice) -> None:
     _check_al_error(playback, "resume voice")
 
 
-def stop(playback: Playback, voice: Voice) -> None:
-    """Stop a live voice without releasing its identity."""
+def stop(playback: Playback, voice: Voice | Stream) -> None:
+    """Stop a live voice or discard a stream's queued audio."""
 
+    if isinstance(voice, Stream):
+        record = _stream_record(playback, voice)
+        if record.state in (StreamState.FINISHED, StreamState.STOPPED):
+            return
+        _prepare_al(playback)
+        playback._library.al.source_stop(record.identifier)
+        _check_al_error(playback, "stop stream")
+        queued_count = len(record.queued_chunks)
+        if queued_count:
+            returned = playback._library.al.source_unqueue_buffers(
+                record.identifier, queued_count
+            )
+            _check_al_error(playback, "discard stopped stream buffers")
+            expected = tuple(chunk.buffer for chunk in record.queued_chunks)
+            if returned != expected:
+                raise AudioBackendError("OpenAL returned unexpected stream buffers")
+            for chunk in record.queued_chunks:
+                record.free_buffers.append(chunk.buffer)
+            record.queued_chunks.clear()
+        record.state = StreamState.STOPPED
+        record.underrun_active = False
+        return
     _control_voice(playback, voice, "stop")
 
 
 def release_finished(playback: Playback) -> int:
-    """Release all stopped voices and return the number released.
+    """Release all terminal voices and streams and return the count.
 
     OpenAL reports both naturally completed and explicitly stopped voices as
-    stopped. Paused and playing voices remain live.
+    stopped. Streams are collected only after their managed state becomes
+    ``FINISHED`` or ``STOPPED``; this function never updates active streams.
     """
 
     _prepare_al(playback)
@@ -606,15 +986,33 @@ def release_finished(playback: Playback) -> int:
             stopped_tokens.append(token)
             stopped_identifiers.append(identifier)
 
-    if not stopped_identifiers:
+    stream_tokens = [
+        token
+        for token, record in playback._streams.items()
+        if record.state in (StreamState.FINISHED, StreamState.STOPPED)
+    ]
+    stream_identifiers = [
+        playback._streams[token].identifier for token in stream_tokens
+    ]
+    stream_buffers = [
+        identifier
+        for token in stream_tokens
+        for identifier in playback._streams[token].buffers
+    ]
+
+    if not stopped_identifiers and not stream_identifiers:
         return 0
 
-    playback._library.al.delete_sources(stopped_identifiers)
-    _check_al_error(playback, "release finished voices")
+    playback._library.al.delete_sources(stopped_identifiers + stream_identifiers)
+    if stream_buffers:
+        playback._library.al.delete_buffers(stream_buffers)
+    _check_al_error(playback, "release finished voices and streams")
     for token in stopped_tokens:
         del playback._voices[token]
         del playback._voice_clips[token]
-    return len(stopped_tokens)
+    for token in stream_tokens:
+        del playback._streams[token]
+    return len(stopped_tokens) + len(stream_tokens)
 
 
 @overload
@@ -625,9 +1023,22 @@ def release(playback: Playback, resource: Clip) -> None: ...
 def release(playback: Playback, resource: Voice) -> None: ...
 
 
-def release(playback: Playback, resource: Clip | Voice) -> None:
-    """Release a clip or voice before its playback session closes."""
+@overload
+def release(playback: Playback, resource: Stream) -> None: ...
 
+
+def release(playback: Playback, resource: Clip | Voice | Stream) -> None:
+    """Release a clip, voice, or stream before its playback session closes."""
+
+    if isinstance(resource, Stream):
+        record = _stream_record(playback, resource)
+        _prepare_al(playback)
+        playback._library.al.source_stop(record.identifier)
+        playback._library.al.delete_sources((record.identifier,))
+        playback._library.al.delete_buffers(record.buffers)
+        _check_al_error(playback, "release stream")
+        del playback._streams[resource._token]
+        return
     if isinstance(resource, Voice):
         identifier = _voice_identifier(playback, resource)
         _prepare_al(playback)
@@ -646,7 +1057,7 @@ def release(playback: Playback, resource: Clip | Voice) -> None:
         _check_al_error(playback, "release clip")
         del playback._clips[resource._token]
         return
-    raise TypeError("resource must be a Clip or Voice")
+    raise TypeError("resource must be a Clip, Voice, or Stream")
 
 
 __all__ = [
@@ -662,14 +1073,19 @@ __all__ = [
     "PlaybackOpenError",
     "ResourceInUseError",
     "SampleType",
+    "Stream",
+    "StreamState",
+    "StreamStatus",
     "Vector3",
     "Voice",
     "VoiceConfig",
     "VoiceState",
     "VoiceStatus",
     "close_playback",
+    "finish_stream",
     "get_voice_status",
     "open_playback",
+    "open_stream",
     "pause",
     "play",
     "release",
@@ -677,6 +1093,9 @@ __all__ = [
     "resume",
     "set_listener",
     "set_voice_config",
+    "start_stream",
     "stop",
+    "try_write_stream",
+    "update_stream",
     "upload",
 ]

@@ -2,18 +2,35 @@
 
 from __future__ import annotations
 
+import runpy
 import sys
 from pathlib import Path
 
 import pytest
 
+from examples.move_sine import move_sine
 from examples.play_sine import SAMPLE_RATE, play_sine, sine_pcm
+from examples.stream_sine import sine_chunks, stream_sine
 from pyalsoft import bindings
 
 ROOT = Path(__file__).resolve().parents[1]
+EXAMPLES = ROOT / "examples"
 WINDOWS_RUNTIME = (
     ROOT / "vendor" / "openal-soft" / "runtime" / "win_amd64" / "soft_oal.dll"
 )
+
+
+def test_move_sine_can_be_loaded_by_file_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(EXAMPLES))
+
+    namespace = runpy.run_path(
+        str(EXAMPLES / "move_sine.py"),
+        run_name="move_sine_example",
+    )
+
+    assert callable(namespace["move_sine"])
 
 
 def test_sine_pcm_is_mono_16_bit_audio() -> None:
@@ -24,6 +41,12 @@ def test_sine_pcm_is_mono_16_bit_audio() -> None:
     assert len(pcm) == round(SAMPLE_RATE * duration) * 2
     assert pcm[:2] == b"\x00\x00"
     assert any(pcm)
+
+
+def test_streamed_sine_chunks_match_buffered_generation() -> None:
+    arguments = {"frequency": 440.0, "duration": 0.05}
+
+    assert b"".join(sine_chunks(**arguments)) == sine_pcm(**arguments)
 
 
 @pytest.mark.parametrize("name", ["frequency", "duration"])
@@ -46,3 +69,5 @@ def test_play_sine_with_bundled_null_driver(
     library = bindings.load(WINDOWS_RUNTIME)
 
     play_sine(library, duration=0.05)
+    move_sine(library, duration=0.05)
+    stream_sine(library, duration=0.05)
