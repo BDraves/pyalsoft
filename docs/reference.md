@@ -7,17 +7,6 @@ Registry: OpenAL Soft 1.25.2 (`b2c48f7718ef3fcf67921a8b6534c4914e328970`)
 Registry SHA-256: `f4a5eb2f94adbb80e8afb1c510d2993932eb74519568c28f3e4919864acddf4a`
 
 The low-level `OpenALLibrary.al*` and `OpenALLibrary.alc*` attributes remain raw `ctypes` functions. The `library.al` and `library.alc` namespaces below accept Python values, infer input array lengths, allocate output parameters, and return normal Python values.
-
-```python
-import pyalsoft
-
-library = pyalsoft.load()
-device = library.alc.open_device(None)
-(source_id,) = library.al.gen_sources()
-source = library.al.source(source_id)
-source.pitch = 1.25
-```
-
 Extensions are exposed as generated capability objects. For example, `library.extensions.alc_ext_efx` lists its commands, enums, types, and dependencies; `is_present(device)` checks runtime availability.
 
 Semantic corrections that cannot be represented by the upstream XML are reviewed in `tools/semantic_overrides.toml`.

@@ -2197,17 +2197,6 @@ def render_documentation(
         "remain raw `ctypes` functions. The `library.al` and `library.alc` "
         "namespaces below accept Python values, infer input array lengths, "
         "allocate output parameters, and return normal Python values.",
-        "",
-        "```python",
-        "import pyalsoft",
-        "",
-        "library = pyalsoft.load()",
-        "device = library.alc.open_device(None)",
-        "(source_id,) = library.al.gen_sources()",
-        "source = library.al.source(source_id)",
-        "source.pitch = 1.25",
-        "```",
-        "",
         "Extensions are exposed as generated capability objects. For example, "
         "`library.extensions.alc_ext_efx` lists its commands, enums, types, and "
         "dependencies; `is_present(device)` checks runtime availability.",
