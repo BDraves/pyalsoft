@@ -9,7 +9,7 @@ on:
   pull_request:
     branches: ["development", "master"]
     paths:
-      - ".github/workflows/native-wheels.yml"
+      - ".github/workflows/release.yml"
       - "hatch_build.py"
       - "pyproject.toml"
       - "src/pyalsoft/**"
@@ -68,6 +68,13 @@ jobs:
           key: cibw-${{ matrix.os }}-${{ hashFiles('pyproject.toml') }}
           restore-keys: |
             cibw-${{ matrix.os }}-
+
+      - name: Cache built OpenAL runtime
+        if: runner.os != 'Windows'
+        uses: actions/cache@v5
+        with:
+          path: build/native
+          key: openal-v1-${{ matrix.os }}-${{ hashFiles('vendor/openal-soft/source.toml', 'tools/build_openal_soft.py', 'hatch_build.py') }}
 
       - name: Build and test native wheel
         env:
