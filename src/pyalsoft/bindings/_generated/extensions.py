@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from pyalsoft import _extensions
+from pyalsoft.bindings import _extensions
 
 
 class ExtensionCapabilities(_extensions.ExtensionNamespace):

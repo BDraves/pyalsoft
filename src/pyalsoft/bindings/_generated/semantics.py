@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from pyalsoft._specs import (
+from pyalsoft.bindings._specs import (
     CommandWrapperSpec,
     EnumGroupSpec,
     ObjectPropertySpec,

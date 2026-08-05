@@ -123,7 +123,7 @@ jobs:
         run: |
           uv build --wheel
           $wheel = Get-Item dist/pyalsoft-*-py3-none-win_amd64.whl
-          uv run --isolated --no-project --python ${{ matrix.python-version }} --with $wheel.FullName python -c "import pyalsoft; import pyalsoft._library as runtime; path = runtime._bundled_library_path(); assert path; assert pyalsoft.load().library_name == path"
+          uv run --isolated --no-project --python ${{ matrix.python-version }} --with $wheel.FullName python -c "from pyalsoft import bindings; from pyalsoft.bindings import _library as runtime; path = runtime._bundled_library_path(); assert path; assert bindings.load().library_name == path"
 
   ci-success:
     name: CI success

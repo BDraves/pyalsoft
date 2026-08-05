@@ -5,14 +5,14 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any, overload
 
-from pyalsoft._generated import constants as _constants
-from pyalsoft._generated import enums as _enums
-from pyalsoft._generated import types as _types
-from pyalsoft._generated.semantics import OBJECT_PROPERTIES_BY_KEY
-from pyalsoft._specs import ObjectPropertySpec
+from pyalsoft.bindings._generated import constants as _constants
+from pyalsoft.bindings._generated import enums as _enums
+from pyalsoft.bindings._generated import types as _types
+from pyalsoft.bindings._generated.semantics import OBJECT_PROPERTIES_BY_KEY
+from pyalsoft.bindings._specs import ObjectPropertySpec
 
 if TYPE_CHECKING:
-    from pyalsoft._library import OpenALLibrary
+    from pyalsoft.bindings._library import OpenALLibrary
 
 _RANGE = re.compile(
     r"(?P<minimum>-?(?:\d+(?:\.\d*)?|\.\d+))?\.\.(?P<inclusive>=)?"
@@ -78,7 +78,7 @@ def _enum_value(spec: ObjectPropertySpec, value: int) -> object:
 def _wrap_object(library: OpenALLibrary, object_name: str, value: int) -> object:
     if value == 0:
         return None
-    from pyalsoft._generated import objects
+    from pyalsoft.bindings._generated import objects
 
     classes = {
         "source": objects.Source,

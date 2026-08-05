@@ -6,13 +6,14 @@ import ctypes
 import ctypes.util
 import sys
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
-import pyalsoft._library as runtime
-from pyalsoft._generated.functions import PROTOTYPES
-from pyalsoft._library import (
+from pyalsoft.bindings import _library as runtime
+from pyalsoft.bindings._generated.functions import PROTOTYPES
+from pyalsoft.bindings._library import (
     ExtensionUnavailableError,
     ForeignFunction,
     FunctionUnavailableError,
@@ -81,6 +82,27 @@ def test_candidates_prefer_the_bundled_runtime(
     assert candidates[0] == "bundled-library"
     assert "system-library" in candidates
     assert fallback in candidates
+
+
+def test_bundled_runtime_is_found_in_editable_distribution(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source" / "pyalsoft" / "bindings" / "_library.py"
+    installed = tmp_path / "site-packages" / "pyalsoft" / "_native" / "soft_oal.dll"
+    installed.parent.mkdir(parents=True)
+    installed.touch()
+
+    class EditableDistribution:
+        def locate_file(self, path: Path) -> Path:
+            assert path == Path("pyalsoft/_native/soft_oal.dll")
+            return tmp_path / "site-packages" / path
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(runtime, "__file__", str(source))
+    monkeypatch.setattr(runtime, "distribution", lambda _name: EditableDistribution())
+
+    assert runtime._bundled_library_path() == str(installed.resolve())
 
 
 def test_core_export_is_typed_and_cached(monkeypatch: pytest.MonkeyPatch) -> None:

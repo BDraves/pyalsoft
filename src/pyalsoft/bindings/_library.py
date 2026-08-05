@@ -7,10 +7,11 @@ import ctypes.util
 import os
 import sys
 from collections.abc import Callable
+from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from pyalsoft._generated.functions import (
+from pyalsoft.bindings._generated.functions import (
     COMMAND_EXPORTS,
     COMMAND_EXTENSIONS,
     COMMAND_NAMESPACES,
@@ -19,8 +20,8 @@ from pyalsoft._generated.functions import (
 )
 
 if TYPE_CHECKING:
-    from pyalsoft._generated.commands import ALCCommands, ALCommands
-    from pyalsoft._generated.extensions import ExtensionCapabilities
+    from pyalsoft.bindings._generated.commands import ALCCommands, ALCommands
+    from pyalsoft.bindings._generated.extensions import ExtensionCapabilities
 
 type ForeignFunction = Callable[..., Any]
 type LibraryPath = str | os.PathLike[str]
@@ -55,10 +56,26 @@ def _bundled_library_path() -> str | None:
         library_name = "libopenal.so.1"
     else:
         return None
-    path = Path(__file__).with_name("_native") / library_name
-    if not path.is_file():
+    package_path = Path(__file__).parent.parent / "_native" / library_name
+    if package_path.is_file():
+        return os.fspath(package_path.resolve())
+
+    # Editable builds can put forced-included files in site-packages while the
+    # importable Python package remains in the source tree. Resolve the native
+    # payload through the distribution metadata so both locations are covered.
+    try:
+        installed_path = Path(
+            str(
+                distribution("pyalsoft").locate_file(
+                    Path("pyalsoft") / "_native" / library_name
+                )
+            )
+        )
+    except PackageNotFoundError:
         return None
-    return os.fspath(path.resolve())
+    if not installed_path.is_file():
+        return None
+    return os.fspath(installed_path.resolve())
 
 
 def _library_candidates() -> tuple[str, ...]:
@@ -163,7 +180,7 @@ class OpenALLibrary:
         """Python-value wrappers for AL commands and typed AL objects."""
 
         if self._al_commands is None:
-            from pyalsoft._generated.commands import ALCommands
+            from pyalsoft.bindings._generated.commands import ALCommands
 
             self._al_commands = ALCommands(self)
         return self._al_commands
@@ -173,7 +190,7 @@ class OpenALLibrary:
         """Python-value wrappers for ALC device and context commands."""
 
         if self._alc_commands is None:
-            from pyalsoft._generated.commands import ALCCommands
+            from pyalsoft.bindings._generated.commands import ALCCommands
 
             self._alc_commands = ALCCommands(self)
         return self._alc_commands
@@ -183,7 +200,7 @@ class OpenALLibrary:
         """Generated capability objects for all registry extensions."""
 
         if self._extension_capabilities is None:
-            from pyalsoft._generated.extensions import ExtensionCapabilities
+            from pyalsoft.bindings._generated.extensions import ExtensionCapabilities
 
             self._extension_capabilities = ExtensionCapabilities(self)
         return self._extension_capabilities
@@ -413,7 +430,7 @@ class OpenALLibrary:
 
 
 def load(path: LibraryPath | None = None) -> OpenALLibrary:
-    """Load OpenAL and return its typed raw binding object."""
+    """Load OpenAL and return its typed low-level binding object."""
 
     return OpenALLibrary(path)
 

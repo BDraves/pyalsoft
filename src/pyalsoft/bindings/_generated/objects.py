@@ -6,8 +6,8 @@
 
 from __future__ import annotations
 
-from pyalsoft import _objects
-from pyalsoft._generated import enums as _enums
+from pyalsoft.bindings import _objects
+from pyalsoft.bindings._generated import enums as _enums
 
 class Buffer(_objects.ALObject):
     """Typed handle for an OpenAL buffer."""

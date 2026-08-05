@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from enum import IntEnum, IntFlag
 
-from pyalsoft._generated import constants as _constants
+from pyalsoft.bindings._generated import constants as _constants
 
 class ALDistanceModel(IntEnum):
     """Values in the registry ``DistanceModel`` group."""
