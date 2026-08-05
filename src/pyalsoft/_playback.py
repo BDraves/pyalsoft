@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import threading
 from dataclasses import dataclass, field
 from enum import Enum
 from types import TracebackType
@@ -28,10 +27,6 @@ class AudioBackendError(AudioError):
 
 class PlaybackClosedError(AudioError):
     """Raised when an operation uses a closed playback session."""
-
-
-class PlaybackThreadError(AudioError):
-    """Raised when a playback session is used from a different thread."""
 
 
 class InvalidHandleError(AudioError):
@@ -219,7 +214,6 @@ class Playback:
 
     Instances are returned by :func:`open_playback`. Use them as context
     managers or pass them to :func:`close_playback` for deterministic cleanup.
-    Audio operations must remain on the thread that opened the session.
     """
 
     __slots__ = (
@@ -228,7 +222,6 @@ class Playback:
         "_context",
         "_device",
         "_library",
-        "_owner_thread",
         "_previous_context",
         "_token",
         "_voice_clips",
@@ -251,7 +244,6 @@ class Playback:
         self._voices: dict[object, int] = {}
         self._voice_clips: dict[object, object] = {}
         self._closed = False
-        self._owner_thread = threading.get_ident()
 
     def __enter__(self) -> Self:
         _activate(self)
@@ -294,10 +286,6 @@ def _require_playback(playback: Playback) -> None:
         raise TypeError("playback must be a Playback")
     if playback._closed:
         raise PlaybackClosedError("playback session is closed")
-    if threading.get_ident() != playback._owner_thread:
-        raise PlaybackThreadError(
-            "playback session must be used from the thread that opened it"
-        )
 
 
 def _activate(playback: Playback) -> None:
@@ -367,7 +355,7 @@ def open_playback(
     *,
     library: bindings.OpenALLibrary | None = None,
 ) -> Playback:
-    """Open a managed playback session on the current thread."""
+    """Open a managed playback session."""
 
     library = library or bindings.load()
     previous_context = library.alc.get_current_context()
@@ -399,10 +387,6 @@ def close_playback(playback: Playback) -> None:
         raise TypeError("playback must be a Playback")
     if playback._closed:
         return
-    if threading.get_ident() != playback._owner_thread:
-        raise PlaybackThreadError(
-            "playback session must be closed from the thread that opened it"
-        )
 
     first_error: Exception | None = None
 
@@ -627,7 +611,6 @@ __all__ = [
     "Playback",
     "PlaybackClosedError",
     "PlaybackOpenError",
-    "PlaybackThreadError",
     "ResourceInUseError",
     "SampleType",
     "Vector3",

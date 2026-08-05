@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError, replace
 from typing import cast
 
@@ -284,3 +285,18 @@ def test_handles_cannot_cross_playback_sessions() -> None:
     finally:
         close_playback(second)
         close_playback(first)
+
+
+def test_playback_does_not_enforce_thread_ownership() -> None:
+    library = FakeLibrary()
+    playback = open_playback(library=as_library(library))
+    pcm = PCM(b"\0\0", channels=1, sample_rate=1)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        clip = executor.submit(upload, playback, pcm).result()
+        voice = executor.submit(play, playback, clip).result()
+        executor.submit(stop, playback, voice).result()
+        executor.submit(close_playback, playback).result()
+
+    assert library.al.sources == {}
+    assert library.al.buffers == {}
