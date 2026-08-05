@@ -38,6 +38,10 @@ files = ["src", "tools", "tests"]
 strict = true
 exclude = ["^src/pyalsoft/_generated/"]
 
+[[tool.mypy.overrides]]
+module = "pyalsoft._generated.*"
+disable_error_code = ["redundant-cast", "valid-type"]
+
 [tool.pytest.ini_options]
 addopts = ["--strict-config", "--strict-markers", "-p", "no:cacheprovider", "-ra"]
 markers = [
