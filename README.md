@@ -1,5 +1,12 @@
 # PyALSoft
 
+[![CI status](https://github.com/BDraves/pyalsoft/actions/workflows/ci.yml/badge.svg?branch=development)](https://github.com/BDraves/pyalsoft/actions/workflows/ci.yml)
+[![PyPI version](https://img.shields.io/pypi/v/pyalsoft.svg)](https://pypi.org/project/pyalsoft/)
+[![Supported Python versions](https://img.shields.io/pypi/pyversions/pyalsoft.svg)](https://pypi.org/project/pyalsoft/)
+<!-- openal-soft-version-badge:start -->
+[![OpenAL Soft 1.25.2](https://img.shields.io/badge/OpenAL_Soft-1.25.2-557C94)](https://github.com/kcat/openal-soft/releases/tag/1.25.2)
+<!-- openal-soft-version-badge:end -->
+
 PyALSoft provides automatically generated Python bindings for OpenAL Soft, including core OpenAL, ALC, EFX, and supported extensions.
 
 ## Installation

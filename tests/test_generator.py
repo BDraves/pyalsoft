@@ -7,6 +7,7 @@ import pytest
 from tools.generate_bindings import (
     DEFAULT_DOCS_OUTPUT,
     DEFAULT_OUTPUT_DIR,
+    DEFAULT_README_OUTPUT,
     DEFAULT_REGISTRY,
     DEFAULT_SOURCE,
     RegistryError,
@@ -16,6 +17,7 @@ from tools.generate_bindings import (
     parse_registry,
     render_documentation,
     render_outputs,
+    render_readme_badge,
     verify_registry,
 )
 
@@ -139,3 +141,22 @@ def test_committed_generated_files_are_current() -> None:
         digest,
         load_semantic_overrides(),
     )
+
+    readme = DEFAULT_README_OUTPUT.read_text(encoding="utf-8")
+    assert readme == render_readme_badge(readme, source)
+
+
+def test_readme_badge_is_rendered_from_openal_soft_version() -> None:
+    source = load_source_info(DEFAULT_SOURCE)
+    old_badge = """before
+<!-- openal-soft-version-badge:start -->
+stale
+<!-- openal-soft-version-badge:end -->
+after
+"""
+
+    rendered = render_readme_badge(old_badge, source)
+
+    assert f"OpenAL Soft {source.version}" in rendered
+    assert f"releases/tag/{source.version}" in rendered
+    assert "stale" not in rendered

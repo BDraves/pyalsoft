@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REGISTRY = ROOT / "vendor" / "openal-soft" / "al.xml"
@@ -19,6 +20,10 @@ DEFAULT_SOURCE = ROOT / "vendor" / "openal-soft" / "source.toml"
 DEFAULT_SEMANTICS = ROOT / "tools" / "semantic_overrides.toml"
 DEFAULT_OUTPUT_DIR = ROOT / "src" / "pyalsoft" / "_generated"
 DEFAULT_DOCS_OUTPUT = ROOT / "docs" / "reference.md"
+DEFAULT_README_OUTPUT = ROOT / "README.md"
+
+_OPENAL_BADGE_START = "<!-- openal-soft-version-badge:start -->"
+_OPENAL_BADGE_END = "<!-- openal-soft-version-badge:end -->"
 
 _INTEGER_LITERAL = re.compile(r"-?(?:0[xX][0-9A-Fa-f]+|[0-9]+)\Z")
 _FLOAT_LITERAL = re.compile(
@@ -2466,6 +2471,31 @@ def render_outputs(
     }
 
 
+def render_readme_badge(readme: str, source: SourceInfo) -> str:
+    """Update the generated OpenAL Soft version badge in a README."""
+
+    if readme.count(_OPENAL_BADGE_START) != 1 or readme.count(_OPENAL_BADGE_END) != 1:
+        raise ValueError("README must contain exactly one OpenAL Soft badge block")
+
+    start = readme.index(_OPENAL_BADGE_START)
+    end = readme.index(_OPENAL_BADGE_END, start)
+    if end < start:
+        raise ValueError("README OpenAL Soft badge block is malformed")
+
+    badge_version = quote(source.version.replace("-", "--"), safe=".")
+    release_version = quote(source.version, safe=".")
+    block = "\n".join(
+        (
+            _OPENAL_BADGE_START,
+            f"[![OpenAL Soft {source.version}]"
+            f"(https://img.shields.io/badge/OpenAL_Soft-{badge_version}-557C94)]"
+            f"(https://github.com/kcat/openal-soft/releases/tag/{release_version})",
+            _OPENAL_BADGE_END,
+        )
+    )
+    return readme[:start] + block + readme[end + len(_OPENAL_BADGE_END) :]
+
+
 def _check_outputs(output_dir: Path, outputs: Mapping[str, str]) -> bool:
     stale: list[str] = []
     for name, expected in outputs.items():
@@ -2508,6 +2538,7 @@ def _argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--semantics", type=Path, default=DEFAULT_SEMANTICS)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--docs-output", type=Path, default=DEFAULT_DOCS_OUTPUT)
+    parser.add_argument("--readme-output", type=Path, default=DEFAULT_README_OUTPUT)
     parser.add_argument(
         "--check",
         action="store_true",
@@ -2526,6 +2557,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     overrides = load_semantic_overrides(arguments.semantics)
     outputs = render_outputs(registry, source, digest, overrides)
     documentation = render_documentation(registry, source, digest, overrides)
+    readme = render_readme_badge(
+        arguments.readme_output.read_text(encoding="utf-8"), source
+    )
 
     print(
         f"Parsed {len(registry.types)} types, {len(registry.enums)} enums, "
@@ -2535,9 +2569,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.check:
         code_is_current = _check_outputs(arguments.output_dir, outputs)
         docs_are_current = _check_file(arguments.docs_output, documentation)
-        return 0 if code_is_current and docs_are_current else 1
+        readme_is_current = _check_file(arguments.readme_output, readme)
+        return 0 if code_is_current and docs_are_current and readme_is_current else 1
     _write_outputs(arguments.output_dir, outputs)
     _write_file(arguments.docs_output, documentation)
+    _write_file(arguments.readme_output, readme)
     return 0
 
 
