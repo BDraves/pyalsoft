@@ -66,6 +66,9 @@ def runtime_target(
             "libopenal.*.dylib",
             (
                 "-DALSOFT_REQUIRE_COREAUDIO=ON",
+                # OpenAL Soft 1.25.2 makes this warning fatal on Apple Clang 17.
+                # Remove after vendoring upstream commit 681d049c or newer.
+                "-DHAVE_WFUNCTION_EFFECTS=OFF",
                 f"-DCMAKE_OSX_DEPLOYMENT_TARGET={deployment_target}",
             ),
         )

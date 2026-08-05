@@ -75,6 +75,22 @@ jobs:
           CIBW_CACHE_PATH: ${{ runner.temp }}/cibw-cache
         run: uv tool run --from cibuildwheel==3.4.1 cibuildwheel --output-dir wheelhouse
 
+      - name: Test Linux wheel with PyInstaller
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          ALSOFT_DRIVERS: "null"
+        run: |
+          wheels=(wheelhouse/*.whl)
+          if [[ ${#wheels[@]} -ne 1 ]]; then
+            echo "Expected exactly one wheel, found ${#wheels[@]}." >&2
+            exit 1
+          fi
+          uv run --isolated --no-project --python 3.12 \
+            --with "${wheels[0]}" \
+            --with pyinstaller==6.20.0 \
+            python tools/freeze_test.py
+
       - name: Upload wheel
         uses: actions/upload-artifact@v7
         with:

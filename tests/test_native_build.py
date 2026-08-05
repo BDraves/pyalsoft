@@ -36,6 +36,12 @@ def test_unsupported_runtime_target_is_rejected() -> None:
         runtime_target("linux", "riscv64")
 
 
+@pytest.mark.parametrize("machine", ["x86_64", "arm64"])
+def test_macos_disables_fatal_function_effects_warning(machine: str) -> None:
+    target = runtime_target("darwin", machine)
+    assert "-DHAVE_WFUNCTION_EFFECTS=OFF" in target.cmake_options
+
+
 def test_pyinstaller_hook_is_packaged() -> None:
     hook_directory = Path(get_hook_dirs()[0])
     hook = hook_directory / "hook-pyalsoft.py"

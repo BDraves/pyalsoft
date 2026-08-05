@@ -88,5 +88,7 @@ environment = { ALSOFT_DRIVERS = "null" }
 
 [tool.cibuildwheel.linux]
 before-all = "dnf install -y alsa-lib-devel pulseaudio-libs-devel"
+test-requires = []
+test-command = "python {project}/tools/smoke_test_runtime.py"
 manylinux-x86_64-image = "manylinux_2_28"
 manylinux-aarch64-image = "manylinux_2_28"
