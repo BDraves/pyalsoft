@@ -7,9 +7,10 @@
 [![OpenAL Soft 1.25.2](https://img.shields.io/badge/OpenAL_Soft-1.25.2-557C94)](https://github.com/kcat/openal-soft/releases/tag/1.25.2)
 <!-- openal-soft-version-badge:end -->
 
-PyALSoft provides typed bindings for OpenAL Soft, including core OpenAL, ALC,
-EFX, and supported extensions. The current low-level interface lives in
-`pyalsoft.bindings`; the package root is reserved for a managed, Pythonic API.
+PyALSoft provides a functional, managed playback API and typed bindings for
+OpenAL Soft, including core OpenAL, ALC, EFX, and supported extensions. The
+managed API lives at the package root; the complete low-level interface remains
+available through `pyalsoft.bindings`.
 
 > PyALSoft is an independent project and is not affiliated with or endorsed by the OpenAL Soft project.
 
@@ -23,15 +24,22 @@ python3 -m pip install pyalsoft
 
 ## Quick start
 
-This complete example generates a 440 Hz sine wave, plays it, and releases the
-source, buffer, context, and device:
+This example generates a 440 Hz sine wave, plays it, and releases every native
+resource when the `with` block exits:
 
 ```python
 import math
 import time
 from array import array
 
-from pyalsoft import bindings
+from pyalsoft import (
+    PCM,
+    VoiceState,
+    get_voice_status,
+    open_playback,
+    play,
+    upload,
+)
 
 sample_rate = 44_100
 duration = 0.5
@@ -43,46 +51,13 @@ pcm = array(
     ),
 ).tobytes()
 
-library = bindings.load()
-device = library.alc.open_device(None)
-if not device:
-    raise RuntimeError("could not open the default OpenAL device")
+audio = PCM(samples=pcm, channels=1, sample_rate=sample_rate)
 
-context = library.alc.create_context(device, None)
-if not context:
-    library.alc.close_device(device)
-    raise RuntimeError("could not create an OpenAL context")
-
-buffer_id = None
-source_id = None
-try:
-    if not library.alc.make_context_current(context):
-        raise RuntimeError("could not make the OpenAL context current")
-
-    (buffer_id,) = library.al.gen_buffers()
-    library.al.buffer_data(
-        buffer_id,
-        bindings.enums.ALFormat.FORMAT_MONO16,
-        pcm,
-        sample_rate,
-    )
-
-    (source_id,) = library.al.gen_sources()
-    source = library.al.source(source_id)
-    source.buffer = library.al.buffer(buffer_id)
-    library.al.source_play(source_id)
-
-    while source.state == bindings.enums.ALSourceState.PLAYING:
+with open_playback() as playback:
+    clip = upload(playback, audio)
+    voice = play(playback, clip)
+    while get_voice_status(playback, voice).state is VoiceState.PLAYING:
         time.sleep(0.01)
-finally:
-    if source_id is not None:
-        library.al.source_stop(source_id)
-        library.al.delete_sources([source_id])
-    if buffer_id is not None:
-        library.al.delete_buffers([buffer_id])
-    library.alc.make_context_current(None)
-    library.alc.destroy_context(context)
-    library.alc.close_device(device)
 ```
 
 The same example is available as [`examples/play_sine.py`](examples/play_sine.py)
@@ -91,6 +66,10 @@ and can be run from a source checkout with:
 ```console
 uv run python examples/play_sine.py
 ```
+
+[`examples/move_sine.py`](examples/move_sine.py) shows a playing voice moving
+from left to right by creating updated `VoiceConfig` values with
+`dataclasses.replace` and passing them to `configure_voice`.
 
 ## Platforms
 
@@ -102,12 +81,21 @@ discovery.
 
 ## API layers
 
-`pyalsoft.bindings` is the supported low-level interface. Its recommended
-`library.al` and `library.alc` namespaces use snake-case names, accept Python
-strings and sequences, infer array lengths, allocate output parameters, and
-return normal Python values. Generated object handles such as
-`library.al.source(identifier)` expose typed properties including `gain`,
-`position`, `buffer`, and `state`.
+The package root is a functional interface for static buffered playback.
+`PCM`, `VoiceConfig`, and `Listener` are immutable data. `Clip` and `Voice` are
+opaque identities owned by a `Playback` session. Functions including `upload`,
+`play`, `configure_voice`, `set_listener`, `pause`, `resume`, `stop`, and
+`release` make state changes explicit. A session must be used and closed on the
+thread that opened it. A stopped or completed voice retains its identity until
+it is passed to `release`; closing the session releases any resources that
+remain.
+
+`pyalsoft.bindings` is the supported low-level escape hatch for streaming,
+capture, EFX, extensions, or direct control. Its recommended `library.al` and
+`library.alc` namespaces use snake-case names, accept Python strings and
+sequences, infer array lengths, allocate output parameters, and return normal
+Python values. Generated object handles such as `library.al.source(identifier)`
+expose typed properties including `gain`, `position`, `buffer`, and `state`.
 
 Exact C entry points remain available when direct control is needed. For
 example, `library.alGenSources` is the generated `ctypes` binding for

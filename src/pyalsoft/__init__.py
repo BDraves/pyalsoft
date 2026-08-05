@@ -1,9 +1,65 @@
-"""Pythonic access to OpenAL Soft.
-
-The supported low-level OpenAL interface is available through
-:mod:`pyalsoft.bindings`.
-"""
+"""Functional, managed playback and low-level OpenAL Soft bindings."""
 
 from pyalsoft import bindings
+from pyalsoft._playback import (
+    PCM,
+    AudioBackendError,
+    AudioError,
+    Clip,
+    InvalidHandleError,
+    Listener,
+    Playback,
+    PlaybackClosedError,
+    PlaybackOpenError,
+    PlaybackThreadError,
+    ResourceInUseError,
+    SampleType,
+    Vector3,
+    Voice,
+    VoiceConfig,
+    VoiceState,
+    VoiceStatus,
+    close_playback,
+    configure_voice,
+    get_voice_status,
+    open_playback,
+    pause,
+    play,
+    release,
+    resume,
+    set_listener,
+    stop,
+    upload,
+)
 
-__all__ = ["bindings"]
+__all__ = [
+    "AudioBackendError",
+    "AudioError",
+    "Clip",
+    "InvalidHandleError",
+    "Listener",
+    "PCM",
+    "Playback",
+    "PlaybackClosedError",
+    "PlaybackOpenError",
+    "PlaybackThreadError",
+    "ResourceInUseError",
+    "SampleType",
+    "Vector3",
+    "Voice",
+    "VoiceConfig",
+    "VoiceState",
+    "VoiceStatus",
+    "bindings",
+    "close_playback",
+    "configure_voice",
+    "get_voice_status",
+    "open_playback",
+    "pause",
+    "play",
+    "release",
+    "resume",
+    "set_listener",
+    "stop",
+    "upload",
+]

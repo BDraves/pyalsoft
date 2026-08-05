@@ -6,7 +6,16 @@ import math
 import time
 from array import array
 
-from pyalsoft import bindings
+from pyalsoft import (
+    PCM,
+    SampleType,
+    VoiceState,
+    get_voice_status,
+    open_playback,
+    play,
+    upload,
+)
+from pyalsoft.bindings import OpenALLibrary
 
 SAMPLE_RATE = 44_100
 
@@ -33,60 +42,27 @@ def sine_pcm(*, frequency: float, duration: float) -> bytes:
 
 
 def play_sine(
-    library: bindings.OpenALLibrary | None = None,
+    library: OpenALLibrary | None = None,
     *,
     frequency: float = 440.0,
     duration: float = 0.5,
 ) -> None:
-    """Play a sine wave and release every OpenAL resource afterward."""
+    """Play a sine wave and release every audio resource afterward."""
 
-    library = library or bindings.load()
-    device = library.alc.open_device(None)
-    if not device:
-        raise RuntimeError("could not open the default OpenAL playback device")
-
-    context: object | None = None
-    buffer_id: int | None = None
-    source_id: int | None = None
-    context_is_current = False
-    try:
-        context = library.alc.create_context(device, None)
-        if not context:
-            raise RuntimeError("could not create an OpenAL context")
-        if not library.alc.make_context_current(context):
-            raise RuntimeError("could not make the OpenAL context current")
-        context_is_current = True
-
-        (buffer_id,) = library.al.gen_buffers()
-        library.al.buffer_data(
-            buffer_id,
-            bindings.enums.ALFormat.FORMAT_MONO16,
-            sine_pcm(frequency=frequency, duration=duration),
-            SAMPLE_RATE,
-        )
-
-        (source_id,) = library.al.gen_sources()
-        source = library.al.source(source_id)
-        source.buffer = library.al.buffer(buffer_id)
-        library.al.source_play(source_id)
-
+    pcm = PCM(
+        samples=sine_pcm(frequency=frequency, duration=duration),
+        channels=1,
+        sample_rate=SAMPLE_RATE,
+        sample_type=SampleType.INT16,
+    )
+    with open_playback(library=library) as playback:
+        clip = upload(playback, pcm)
+        voice = play(playback, clip)
         deadline = time.monotonic() + duration + 2.0
-        while source.state == bindings.enums.ALSourceState.PLAYING:
+        while get_voice_status(playback, voice).state is VoiceState.PLAYING:
             if time.monotonic() >= deadline:
                 raise RuntimeError("timed out waiting for playback to finish")
             time.sleep(0.01)
-    finally:
-        if context_is_current:
-            if source_id is not None:
-                library.al.source_stop(source_id)
-                library.al.delete_sources([source_id])
-            if buffer_id is not None:
-                library.al.delete_buffers([buffer_id])
-            library.alc.make_context_current(None)
-        if context is not None:
-            library.alc.destroy_context(context)
-        if not library.alc.close_device(device):
-            raise RuntimeError("could not close the OpenAL playback device")
 
 
 if __name__ == "__main__":

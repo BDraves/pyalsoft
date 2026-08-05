@@ -45,7 +45,8 @@ def test_bindings_package_reexports_generated_values_and_types() -> None:
     assert bindings.ALuint is ctypes.c_uint
 
 
-def test_package_root_reserves_the_pythonic_api_namespace() -> None:
-    assert pyalsoft.__all__ == ["bindings"]
+def test_package_root_exposes_the_pythonic_api_namespace() -> None:
+    assert "open_playback" in pyalsoft.__all__
+    assert "VoiceConfig" in pyalsoft.__all__
     assert pyalsoft.bindings is bindings
     assert not hasattr(pyalsoft, "load")

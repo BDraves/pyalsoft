@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "pyalsoft"
 version = "0.1.0"
-description = "Typed Python bindings for OpenAL Soft with bundled runtimes, ALC, EFX, and extensions"
+description = "Functional Python audio API and typed OpenAL Soft bindings with bundled runtimes"
 readme = "README.md"
 authors = [
   { name = "Brennan Draves", email = "dravesbrennan@gmail.com" },
