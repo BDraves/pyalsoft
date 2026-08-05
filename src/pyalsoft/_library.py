@@ -7,6 +7,7 @@ import ctypes.util
 import os
 import sys
 from collections.abc import Callable
+from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -55,10 +56,26 @@ def _bundled_library_path() -> str | None:
         library_name = "libopenal.so.1"
     else:
         return None
-    path = Path(__file__).with_name("_native") / library_name
-    if not path.is_file():
+    package_path = Path(__file__).with_name("_native") / library_name
+    if package_path.is_file():
+        return os.fspath(package_path.resolve())
+
+    # Editable builds can put forced-included files in site-packages while the
+    # importable Python package remains in the source tree. Resolve the native
+    # payload through the distribution metadata so both locations are covered.
+    try:
+        installed_path = Path(
+            str(
+                distribution("pyalsoft").locate_file(
+                    Path("pyalsoft") / "_native" / library_name
+                )
+            )
+        )
+    except PackageNotFoundError:
         return None
-    return os.fspath(path.resolve())
+    if not installed_path.is_file():
+        return None
+    return os.fspath(installed_path.resolve())
 
 
 def _library_candidates() -> tuple[str, ...]:
