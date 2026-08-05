@@ -11,22 +11,25 @@ import pytest
 from pyalsoft import (
     PCM,
     InvalidHandleError,
+    InvalidVoiceStateError,
     Listener,
     PlaybackClosedError,
+    PlaybackOpenError,
     ResourceInUseError,
     SampleType,
     VoiceConfig,
     VoiceState,
     bindings,
     close_playback,
-    configure_voice,
     get_voice_status,
     open_playback,
     pause,
     play,
     release,
+    release_finished,
     resume,
     set_listener,
+    set_voice_config,
     stop,
     upload,
 )
@@ -179,6 +182,10 @@ def test_pcm_and_configuration_are_immutable_data() -> None:
     )
     with pytest.raises(FrozenInstanceError):
         pcm.channels = 2  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        VoiceConfig((1.0, 2.0, 3.0))  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        Listener((1.0, 2.0, 3.0))  # type: ignore[call-arg]
 
 
 @pytest.mark.parametrize(
@@ -229,7 +236,7 @@ def test_managed_playback_applies_data_and_controls_lifecycle() -> None:
             0.0,
         )
 
-        configure_voice(playback, voice, replace(config, position=(7.0, 8.0, 9.0)))
+        set_voice_config(playback, voice, replace(config, position=(7.0, 8.0, 9.0)))
         assert library.al.sources[100][bindings.AL_POSITION] == (
             7.0,
             8.0,
@@ -240,8 +247,12 @@ def test_managed_playback_applies_data_and_controls_lifecycle() -> None:
         assert get_voice_status(playback, voice).state is VoiceState.PAUSED
         resume(playback, voice)
         assert get_voice_status(playback, voice).state is VoiceState.PLAYING
+        with pytest.raises(InvalidVoiceStateError, match="playing"):
+            resume(playback, voice)
         stop(playback, voice)
         assert get_voice_status(playback, voice).state is VoiceState.STOPPED
+        with pytest.raises(InvalidVoiceStateError, match="stopped"):
+            resume(playback, voice)
 
         with pytest.raises(ResourceInUseError):
             release(playback, clip)
@@ -255,6 +266,40 @@ def test_managed_playback_applies_data_and_controls_lifecycle() -> None:
     assert library.alc.destroyed_contexts == [library.alc.context]
     assert library.alc.closed_devices == [library.alc.device]
     assert library.alc.current_context is library.alc.previous_context
+
+
+def test_release_finished_collects_only_stopped_voices() -> None:
+    library = FakeLibrary()
+    with open_playback(library=as_library(library)) as playback:
+        clip = upload(playback, PCM(b"\0\0", channels=1, sample_rate=1))
+        finished = play(playback, clip)
+        paused = play(playback, clip)
+        library.al.states[100] = bindings.AL_STOPPED
+        pause(playback, paused)
+
+        assert release_finished(playback) == 1
+        assert release_finished(playback) == 0
+        with pytest.raises(InvalidHandleError, match="released"):
+            get_voice_status(playback, finished)
+        assert get_voice_status(playback, paused).state is VoiceState.PAUSED
+
+        release(playback, paused)
+        release(playback, clip)
+
+
+def test_open_playback_wraps_library_loading_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    failure = bindings.LibraryNotFoundError("missing")
+
+    def fail_to_load() -> bindings.OpenALLibrary:
+        raise failure
+
+    monkeypatch.setattr(bindings, "load", fail_to_load)
+
+    with pytest.raises(PlaybackOpenError) as caught:
+        open_playback()
+    assert caught.value.__cause__ is failure
 
 
 def test_close_releases_live_resources_and_is_idempotent() -> None:

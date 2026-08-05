@@ -38,6 +38,7 @@ from pyalsoft import (
     get_voice_status,
     open_playback,
     play,
+    release,
     upload,
 )
 
@@ -58,6 +59,8 @@ with open_playback() as playback:
     voice = play(playback, clip)
     while get_voice_status(playback, voice).state is VoiceState.PLAYING:
         time.sleep(0.01)
+    release(playback, voice)
+    release(playback, clip)
 ```
 
 The same example is available as [`examples/play_sine.py`](examples/play_sine.py)
@@ -69,7 +72,7 @@ uv run python examples/play_sine.py
 
 [`examples/move_sine.py`](examples/move_sine.py) shows a playing voice moving
 from left to right by creating updated `VoiceConfig` values with
-`dataclasses.replace` and passing them to `configure_voice`.
+`dataclasses.replace` and passing them to `set_voice_config`.
 
 ## Platforms
 
@@ -84,11 +87,11 @@ discovery.
 The package root is a functional interface for static buffered playback.
 `PCM`, `VoiceConfig`, and `Listener` are immutable data. `Clip` and `Voice` are
 opaque identities owned by a `Playback` session. Functions including `upload`,
-`play`, `configure_voice`, `set_listener`, `pause`, `resume`, `stop`, and
-`release` make state changes explicit. A session must be used and closed on the
-thread that opened it. A stopped or completed voice retains its identity until
-it is passed to `release`; closing the session releases any resources that
-remain.
+`play`, `set_voice_config`, `set_listener`, `pause`, `resume`, `stop`, and
+`release` make state changes explicit. A stopped or completed voice retains its
+identity until it is passed to `release`; `release_finished` collects all such
+voices in a long-lived session. Closing the session releases any resources that
+remain. `resume` accepts paused voices only.
 
 `pyalsoft.bindings` is the supported low-level escape hatch for streaming,
 capture, EFX, extensions, or direct control. Its recommended `library.al` and
@@ -112,9 +115,10 @@ if efx.is_present(device):
     print(efx.commands)
 ```
 
-Unavailable libraries, missing contexts, and unsupported extensions raise
-`LibraryNotFoundError`, `ContextRequiredError`, and
-`ExtensionUnavailableError`, respectively. See the
+At the bindings layer, unavailable libraries, missing contexts, and unsupported
+extensions raise `LibraryNotFoundError`, `ContextRequiredError`, and
+`ExtensionUnavailableError`, respectively. `open_playback` translates library
+discovery failures into `PlaybackOpenError`. See the
 [`bindings API reference`](docs/reference.md) for the complete command,
 property, and extension surface.
 

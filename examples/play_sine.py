@@ -13,6 +13,7 @@ from pyalsoft import (
     get_voice_status,
     open_playback,
     play,
+    release,
     upload,
 )
 from pyalsoft.bindings import OpenALLibrary
@@ -63,6 +64,8 @@ def play_sine(
             if time.monotonic() >= deadline:
                 raise RuntimeError("timed out waiting for playback to finish")
             time.sleep(0.01)
+        release(playback, voice)
+        release(playback, clip)
 
 
 if __name__ == "__main__":

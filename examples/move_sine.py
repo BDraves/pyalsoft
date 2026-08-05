@@ -10,10 +10,11 @@ from pyalsoft import (
     PCM,
     VoiceConfig,
     VoiceState,
-    configure_voice,
     get_voice_status,
     open_playback,
     play,
+    release,
+    set_voice_config,
     upload,
 )
 from pyalsoft.bindings import OpenALLibrary
@@ -41,8 +42,10 @@ def move_sine(
         while get_voice_status(playback, voice).state is VoiceState.PLAYING:
             progress = min((time.monotonic() - started) / duration, 1.0)
             config = replace(config, position=(-2.0 + 4.0 * progress, 0.0, -1.0))
-            configure_voice(playback, voice, config)
+            set_voice_config(playback, voice, config)
             time.sleep(1 / 60)
+        release(playback, voice)
+        release(playback, clip)
 
 
 if __name__ == "__main__":

@@ -37,6 +37,10 @@ class ResourceInUseError(AudioError):
     """Raised when a resource is still referenced by another live resource."""
 
 
+class InvalidVoiceStateError(AudioError):
+    """Raised when an operation is not valid for a voice's current state."""
+
+
 class SampleType(Enum):
     """PCM sample representations supported by core OpenAL."""
 
@@ -120,7 +124,7 @@ class PCM:
         return self.frame_count / self.sample_rate
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class VoiceConfig:
     """Desired configurable state for one playing voice."""
 
@@ -150,7 +154,7 @@ class VoiceConfig:
         object.__setattr__(self, "pitch", pitch)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Listener:
     """Desired spatial state for the playback context's listener."""
 
@@ -357,7 +361,11 @@ def open_playback(
 ) -> Playback:
     """Open a managed playback session."""
 
-    library = library or bindings.load()
+    if library is None:
+        try:
+            library = bindings.load()
+        except bindings.LibraryNotFoundError as error:
+            raise PlaybackOpenError("could not load an OpenAL library") from error
     previous_context = library.alc.get_current_context()
     device = library.alc.open_device(device_name)
     if not device:
@@ -499,7 +507,7 @@ def play(
     return Voice(playback._token, token, identifier)
 
 
-def configure_voice(playback: Playback, voice: Voice, config: VoiceConfig) -> None:
+def set_voice_config(playback: Playback, voice: Voice, config: VoiceConfig) -> None:
     """Apply a complete immutable configuration to a live voice."""
 
     if not isinstance(config, VoiceConfig):
@@ -529,18 +537,23 @@ def get_voice_status(playback: Playback, voice: Voice) -> VoiceStatus:
 
     identifier = _voice_identifier(playback, voice)
     _prepare_al(playback)
+    state = _get_voice_state(playback, identifier, "query voice state")
+    offset = playback._library.al.get_sourcef(identifier, bindings.AL_SEC_OFFSET)
+    _check_al_error(playback, "query voice")
+    return VoiceStatus(state=state, offset_seconds=float(offset))
+
+
+def _get_voice_state(playback: Playback, identifier: int, operation: str) -> VoiceState:
     raw_state = int(
         playback._library.al.get_sourcei(identifier, bindings.AL_SOURCE_STATE)
     )
-    offset = playback._library.al.get_sourcef(identifier, bindings.AL_SEC_OFFSET)
-    _check_al_error(playback, "query voice")
+    _check_al_error(playback, operation)
     try:
-        state = _VOICE_STATE_BY_AL[raw_state]
+        return _VOICE_STATE_BY_AL[raw_state]
     except KeyError as error:
         raise AudioBackendError(
             f"OpenAL returned unknown voice state 0x{raw_state:04x}"
         ) from error
-    return VoiceStatus(state=state, offset_seconds=float(offset))
 
 
 def _control_voice(playback: Playback, voice: Voice, operation: str) -> None:
@@ -558,15 +571,50 @@ def pause(playback: Playback, voice: Voice) -> None:
 
 
 def resume(playback: Playback, voice: Voice) -> None:
-    """Resume a paused voice, or restart a stopped voice."""
+    """Resume a paused voice."""
 
-    _control_voice(playback, voice, "play")
+    identifier = _voice_identifier(playback, voice)
+    _prepare_al(playback)
+    state = _get_voice_state(playback, identifier, "query voice before resume")
+    if state is not VoiceState.PAUSED:
+        raise InvalidVoiceStateError(
+            f"cannot resume a voice in the {state.value} state"
+        )
+    playback._library.al.source_play(identifier)
+    _check_al_error(playback, "resume voice")
 
 
 def stop(playback: Playback, voice: Voice) -> None:
     """Stop a live voice without releasing its identity."""
 
     _control_voice(playback, voice, "stop")
+
+
+def release_finished(playback: Playback) -> int:
+    """Release all stopped voices and return the number released.
+
+    OpenAL reports both naturally completed and explicitly stopped voices as
+    stopped. Paused and playing voices remain live.
+    """
+
+    _prepare_al(playback)
+    stopped_tokens: list[object] = []
+    stopped_identifiers: list[int] = []
+    for token, identifier in tuple(playback._voices.items()):
+        state = _get_voice_state(playback, identifier, "query finished voice")
+        if state is VoiceState.STOPPED:
+            stopped_tokens.append(token)
+            stopped_identifiers.append(identifier)
+
+    if not stopped_identifiers:
+        return 0
+
+    playback._library.al.delete_sources(stopped_identifiers)
+    _check_al_error(playback, "release finished voices")
+    for token in stopped_tokens:
+        del playback._voices[token]
+        del playback._voice_clips[token]
+    return len(stopped_tokens)
 
 
 @overload
@@ -606,6 +654,7 @@ __all__ = [
     "AudioError",
     "Clip",
     "InvalidHandleError",
+    "InvalidVoiceStateError",
     "Listener",
     "PCM",
     "Playback",
@@ -619,14 +668,15 @@ __all__ = [
     "VoiceState",
     "VoiceStatus",
     "close_playback",
-    "configure_voice",
     "get_voice_status",
     "open_playback",
     "pause",
     "play",
     "release",
+    "release_finished",
     "resume",
     "set_listener",
+    "set_voice_config",
     "stop",
     "upload",
 ]
