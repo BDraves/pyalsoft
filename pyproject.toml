@@ -67,7 +67,7 @@ dev = [
 ]
 
 [tool.mypy]
-files = ["src", "tools", "tests"]
+files = ["examples", "src", "tools", "tests"]
 strict = true
 exclude = ["^src/pyalsoft/_generated/"]
 
@@ -96,6 +96,7 @@ known-first-party = ["pyalsoft"]
 
 [tool.hatch.build.targets.sdist]
 include = [
+  "/examples",
   "/docs",
   "/LICENSE",
   "/LICENSES",
@@ -120,12 +121,15 @@ path = "hatch_build.py"
 build = "cp312-manylinux_* cp312-macosx_* cp312-win_amd64"
 build-frontend = "uv"
 test-requires = ["pyinstaller==6.20.0"]
-test-command = "python {project}/tools/freeze_test.py"
+test-command = [
+  "python {project}/examples/play_sine.py",
+  "python {project}/tools/freeze_test.py",
+]
 environment = { ALSOFT_DRIVERS = "null" }
 
 [tool.cibuildwheel.linux]
 before-all = "dnf install -y alsa-lib-devel pulseaudio-libs-devel"
 test-requires = []
-test-command = "python {project}/tools/smoke_test_runtime.py"
+test-command = "python {project}/examples/play_sine.py"
 manylinux-x86_64-image = "manylinux_2_28"
 manylinux-aarch64-image = "manylinux_2_28"
