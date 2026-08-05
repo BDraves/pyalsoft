@@ -17,12 +17,15 @@ from pyalsoft import (
     PlaybackOpenError,
     ResourceInUseError,
     SampleType,
+    StreamState,
     VoiceConfig,
     VoiceState,
     bindings,
     close_playback,
+    finish_stream,
     get_voice_status,
     open_playback,
+    open_stream,
     pause,
     play,
     release,
@@ -30,7 +33,10 @@ from pyalsoft import (
     resume,
     set_listener,
     set_voice_config,
+    start_stream,
     stop,
+    try_write_stream,
+    update_stream,
     upload,
 )
 
@@ -39,9 +45,15 @@ class FakeAL:
     def __init__(self) -> None:
         self.next_buffer = 1
         self.next_source = 100
+        self.allocated_buffers: set[int] = set()
         self.buffers: dict[int, tuple[int, bytes, int]] = {}
         self.sources: dict[int, dict[int, object]] = {}
         self.states: dict[int, int] = {}
+        self.queues: dict[int, list[int]] = {}
+        self.processed: dict[int, int] = {}
+        self.offsets: dict[int, float] = {}
+        self.play_calls: list[int] = []
+        self.sample_offset_calls: list[tuple[int, int]] = []
         self.listener: dict[int, object] = {}
         self.error = bindings.AL_NO_ERROR
 
@@ -52,10 +64,12 @@ class FakeAL:
     def gen_buffers(self, count: int = 1) -> tuple[int, ...]:
         identifiers = tuple(range(self.next_buffer, self.next_buffer + count))
         self.next_buffer += count
+        self.allocated_buffers.update(identifiers)
         return identifiers
 
     def delete_buffers(self, buffers: tuple[int, ...]) -> None:
         for identifier in buffers:
+            self.allocated_buffers.discard(identifier)
             self.buffers.pop(identifier, None)
 
     def buffer_data(
@@ -75,6 +89,9 @@ class FakeAL:
         for identifier in sources:
             self.sources.pop(identifier, None)
             self.states.pop(identifier, None)
+            self.queues.pop(identifier, None)
+            self.processed.pop(identifier, None)
+            self.offsets.pop(identifier, None)
 
     def source3f(
         self, identifier: int, parameter: int, x: float, y: float, z: float
@@ -86,8 +103,13 @@ class FakeAL:
 
     def sourcei(self, identifier: int, parameter: int, value: int) -> None:
         self.sources[identifier][parameter] = value
+        if parameter == bindings.AL_SAMPLE_OFFSET:
+            self.sample_offset_calls.append((identifier, value))
 
     def source_play(self, identifier: int) -> None:
+        self.play_calls.append(identifier)
+        if self.states[identifier] == bindings.AL_STOPPED:
+            self.processed[identifier] = 0
         self.states[identifier] = bindings.AL_PLAYING
 
     def source_pause(self, identifier: int) -> None:
@@ -95,18 +117,40 @@ class FakeAL:
 
     def source_stop(self, identifier: int) -> None:
         self.states[identifier] = bindings.AL_STOPPED
+        if identifier in self.queues:
+            self.processed[identifier] = len(self.queues[identifier])
 
     def source_stopv(self, sources: tuple[int, ...]) -> None:
         for identifier in sources:
             self.source_stop(identifier)
 
     def get_sourcei(self, identifier: int, parameter: int) -> int:
-        assert parameter == bindings.AL_SOURCE_STATE
-        return self.states[identifier]
+        if parameter == bindings.AL_SOURCE_STATE:
+            return self.states[identifier]
+        if parameter == bindings.AL_BUFFERS_PROCESSED:
+            return self.processed.get(identifier, 0)
+        if parameter == bindings.AL_BUFFERS_QUEUED:
+            return len(self.queues.get(identifier, ()))
+        raise AssertionError(f"unexpected integer source parameter {parameter}")
 
     def get_sourcef(self, identifier: int, parameter: int) -> float:
         assert parameter == bindings.AL_SEC_OFFSET
+        if identifier in self.queues:
+            return self.offsets.get(identifier, 0.0)
         return 0.25
+
+    def source_queue_buffers(self, identifier: int, buffers: tuple[int, ...]) -> None:
+        self.queues.setdefault(identifier, []).extend(buffers)
+        self.processed.setdefault(identifier, 0)
+
+    def source_unqueue_buffers(self, identifier: int, count: int) -> tuple[int, ...]:
+        assert count <= self.processed.get(identifier, 0)
+        queue = self.queues[identifier]
+        returned = tuple(queue[:count])
+        del queue[:count]
+        self.processed[identifier] -= count
+        self.offsets[identifier] = 0.0
+        return returned
 
     def listener3f(self, parameter: int, x: float, y: float, z: float) -> None:
         self.listener[parameter] = (x, y, z)
@@ -345,3 +389,223 @@ def test_playback_does_not_enforce_thread_ownership() -> None:
 
     assert library.al.sources == {}
     assert library.al.buffers == {}
+
+
+def test_stream_uses_bounded_reusable_buffers_and_drains_finished_input() -> None:
+    library = FakeLibrary()
+    with open_playback(library=as_library(library)) as playback:
+        stream = open_stream(
+            playback,
+            channels=1,
+            sample_rate=10,
+            buffer_count=2,
+            config=VoiceConfig(gain=0.5),
+        )
+        assert len(library.al.allocated_buffers) == 2
+        assert library.al.sources[100][bindings.AL_GAIN] == 0.5
+
+        first = bytearray(b"\0\0" * 10)
+        assert try_write_stream(playback, stream, first)
+        first[:] = b"\xff" * len(first)
+        assert library.al.buffers[1][1] == b"\0\0" * 10
+        assert try_write_stream(playback, stream, b"\0\0" * 5)
+        assert not try_write_stream(playback, stream, b"\0\0")
+
+        start_stream(playback, stream)
+        status = update_stream(playback, stream)
+        assert status.state is StreamState.PLAYING
+        assert status.queued_chunks == 2
+        assert status.queued_seconds == pytest.approx(1.5)
+
+        finish_stream(playback, stream)
+        library.al.processed[100] = 2
+        library.al.states[100] = bindings.AL_STOPPED
+        status = update_stream(playback, stream)
+        assert status.state is StreamState.FINISHED
+        assert status.input_finished
+        assert status.queued_chunks == 0
+        assert status.queued_seconds == 0.0
+        assert status.underrun_count == 0
+
+        assert release_finished(playback) == 1
+        with pytest.raises(InvalidHandleError, match="released"):
+            update_stream(playback, stream)
+
+    assert library.al.allocated_buffers == set()
+
+
+def test_stream_update_reclaims_offsets_and_counts_underrun_episodes() -> None:
+    library = FakeLibrary()
+    with open_playback(library=as_library(library)) as playback:
+        stream = open_stream(
+            playback,
+            channels=1,
+            sample_rate=10,
+            buffer_count=1,
+        )
+        assert try_write_stream(playback, stream, b"\0\0" * 10)
+        start_stream(playback, stream)
+        library.al.offsets[100] = 0.25
+        assert update_stream(playback, stream).queued_seconds == pytest.approx(0.75)
+
+        library.al.processed[100] = 1
+        library.al.states[100] = bindings.AL_STOPPED
+        status = update_stream(playback, stream)
+        assert status.state is StreamState.PLAYING
+        assert status.queued_chunks == 0
+        assert status.underrun_count == 1
+        assert update_stream(playback, stream).underrun_count == 1
+
+        assert try_write_stream(playback, stream, b"\0\0" * 2)
+        assert library.al.play_calls == [100, 100]
+        library.al.processed[100] = 1
+        library.al.states[100] = bindings.AL_STOPPED
+        assert update_stream(playback, stream).underrun_count == 2
+
+        finish_stream(playback, stream)
+        status = update_stream(playback, stream)
+        assert status.state is StreamState.FINISHED
+        assert status.underrun_count == 2
+        release(playback, stream)
+
+
+def test_stream_write_restarts_without_replaying_unreclaimed_chunks() -> None:
+    library = FakeLibrary()
+    with open_playback(library=as_library(library)) as playback:
+        stream = open_stream(
+            playback,
+            channels=1,
+            sample_rate=10,
+            buffer_count=2,
+        )
+        assert try_write_stream(playback, stream, b"\0\0" * 10)
+        start_stream(playback, stream)
+
+        library.al.processed[100] = 1
+        library.al.states[100] = bindings.AL_STOPPED
+        assert try_write_stream(playback, stream, b"\0\0" * 2)
+
+        assert library.al.play_calls == [100, 100]
+        assert library.al.sample_offset_calls == [(100, 10)]
+        release(playback, stream)
+
+
+def test_stream_pause_resume_stop_and_looping_rules() -> None:
+    library = FakeLibrary()
+    with open_playback(library=as_library(library)) as playback:
+        with pytest.raises(ValueError, match="cannot loop"):
+            open_stream(
+                playback,
+                channels=2,
+                sample_rate=44_100,
+                config=VoiceConfig(looping=True),
+            )
+
+        stream = open_stream(
+            playback,
+            channels=2,
+            sample_rate=44_100,
+            sample_type=SampleType.UINT8,
+            buffer_count=2,
+        )
+        pause(playback, stream)
+        assert try_write_stream(playback, stream, b"\0\0")
+        start_stream(playback, stream)
+        pause(playback, stream)
+        assert update_stream(playback, stream).state is StreamState.PAUSED
+        finish_stream(playback, stream)
+        assert update_stream(playback, stream).state is StreamState.PAUSED
+        with pytest.raises(ValueError, match="cannot loop"):
+            set_voice_config(playback, stream, VoiceConfig(looping=True))
+
+        resume(playback, stream)
+        assert update_stream(playback, stream).state is StreamState.PLAYING
+        stop(playback, stream)
+        status = update_stream(playback, stream)
+        assert status.state is StreamState.STOPPED
+        assert status.input_finished
+        assert status.queued_chunks == 0
+        stop(playback, stream)
+        pause(playback, stream)
+        with pytest.raises(InvalidVoiceStateError, match="stopped"):
+            resume(playback, stream)
+        with pytest.raises(InvalidVoiceStateError, match="stopped"):
+            finish_stream(playback, stream)
+        with pytest.raises(InvalidVoiceStateError, match="stopped"):
+            try_write_stream(playback, stream, b"\0\0")
+        release(playback, stream)
+
+
+@pytest.mark.parametrize(
+    ("arguments", "exception", "message"),
+    [
+        ({"channels": 3, "sample_rate": 1}, ValueError, "channels"),
+        ({"channels": 1, "sample_rate": 0}, ValueError, "positive"),
+        ({"channels": 1, "sample_rate": True}, TypeError, "integer"),
+        ({"channels": 1, "sample_rate": 1, "buffer_count": 0}, ValueError, "positive"),
+        (
+            {"channels": 1, "sample_rate": 1, "buffer_count": True},
+            TypeError,
+            "integer",
+        ),
+    ],
+)
+def test_open_stream_rejects_invalid_layouts(
+    arguments: dict[str, object], exception: type[Exception], message: str
+) -> None:
+    library = FakeLibrary()
+    with (
+        open_playback(library=as_library(library)) as playback,
+        pytest.raises(exception, match=message),
+    ):
+        open_stream(playback, **arguments)  # type: ignore[arg-type]
+
+
+def test_stream_rejects_invalid_chunks_and_invalid_start_transitions() -> None:
+    library = FakeLibrary()
+    with open_playback(library=as_library(library)) as playback:
+        stream = open_stream(
+            playback,
+            channels=2,
+            sample_rate=1,
+            buffer_count=1,
+        )
+        with pytest.raises(InvalidVoiceStateError, match="without a queued chunk"):
+            start_stream(playback, stream)
+        with pytest.raises(TypeError, match="bytes-like"):
+            try_write_stream(playback, stream, "audio")  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="empty"):
+            try_write_stream(playback, stream, b"")
+        with pytest.raises(ValueError, match="whole number"):
+            try_write_stream(playback, stream, b"\0\0")
+
+        assert try_write_stream(playback, stream, b"\0" * 4)
+        with pytest.raises(ValueError, match="whole number"):
+            try_write_stream(playback, stream, b"\0")
+        start_stream(playback, stream)
+        with pytest.raises(InvalidVoiceStateError, match="playing"):
+            start_stream(playback, stream)
+        finish_stream(playback, stream)
+        finish_stream(playback, stream)
+        with pytest.raises(InvalidVoiceStateError, match="end-of-input"):
+            try_write_stream(playback, stream, b"\0" * 4)
+        release(playback, stream)
+
+
+def test_primed_finished_stream_can_start_and_close_releases_all_buffers() -> None:
+    library = FakeLibrary()
+    playback = open_playback(library=as_library(library))
+    stream = open_stream(
+        playback,
+        channels=1,
+        sample_rate=1,
+        buffer_count=3,
+    )
+    assert try_write_stream(playback, stream, b"\0\0")
+    finish_stream(playback, stream)
+    start_stream(playback, stream)
+
+    close_playback(playback)
+
+    assert library.al.sources == {}
+    assert library.al.allocated_buffers == set()
