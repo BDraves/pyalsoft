@@ -1,0 +1,142 @@
+name: CI
+
+on:
+  push:
+    branches: ["development", "master"]
+  pull_request:
+    branches: ["development", "master"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.29"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked --no-install-project --python 3.12
+
+      - name: Check generated files
+        run: |
+          uv run --no-sync python tools/generate_bindings.py --check
+          uv run --no-sync python tools/sync_openal_soft.py --check
+
+      - name: Lint
+        run: uv run --no-sync ruff check .
+
+      - name: Check formatting
+        run: uv run --no-sync ruff format --check .
+
+      - name: Type check
+        run: uv run --no-sync mypy
+
+      - name: Build source distribution
+        run: uv build --sdist
+
+  test:
+    name: Test (${{ matrix.python-version }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python-version: "3.12"
+          - os: ubuntu-latest
+            python-version: "3.14"
+          - os: macos-latest
+            python-version: "3.14"
+          - os: windows-latest
+            python-version: "3.14"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.29"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked --no-install-project --python ${{ matrix.python-version }}
+
+      - name: Test
+        env:
+          PYTHONPATH: src
+        run: uv run --no-sync pytest
+
+      - name: Install OpenAL Soft on Linux
+        if: runner.os == 'Linux' && matrix.python-version == '3.14'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends libopenal1
+
+      - name: Install OpenAL Soft on macOS
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          brew install openal-soft
+          openal_prefix="$(brew --prefix openal-soft)"
+          echo "PYALSOFT_TEST_LIBRARY=$openal_prefix/lib/libopenal.dylib" >> "$GITHUB_ENV"
+
+      - name: Test system OpenAL runtime
+        if: runner.os == 'macOS' || (runner.os == 'Linux' && matrix.python-version == '3.14')
+        env:
+          PYTHONPATH: src
+          PYALSOFT_RUN_SYSTEM_TESTS: "1"
+        run: uv run --no-sync pytest tests/test_system_runtime.py
+
+      - name: Build and smoke-test bundled Windows runtime wheel
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          uv build --wheel
+          $wheel = Get-Item dist/pyalsoft-*-py3-none-win_amd64.whl
+          uv run --isolated --no-project --python ${{ matrix.python-version }} --with $wheel.FullName python -c "import pyalsoft; import pyalsoft._library as runtime; path = runtime._bundled_library_path(); assert path; assert pyalsoft.load().library_name == path"
+
+  ci-success:
+    name: CI success
+    if: always()
+    needs: [quality, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Verify required jobs
+        env:
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+        run: |
+          test "$QUALITY_RESULT" = "success"
+          test "$TEST_RESULT" = "success"

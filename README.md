@@ -7,8 +7,7 @@ PyALSoft provides automatically generated Python bindings for OpenAL Soft, inclu
 PyALSoft requires Python 3.12 or later.
 
 ```console
-python -m pip install uv
-uv sync
+python3 -m pip install pyalsoft
 ```
 
 ## Platforms
@@ -21,3 +20,10 @@ an explicit library path to `pyalsoft.load(path)` to override discovery.
 ## Disclaimer
 
 > PyALSoft is an independent project and is not affiliated with or endorsed by the OpenAL Soft project.
+
+## License
+
+PyALSoft's original Python code is available under the MIT License. Bundled
+OpenAL Soft and other third-party components remain under their respective
+licenses. The distribution includes the complete license texts and a
+third-party notice.

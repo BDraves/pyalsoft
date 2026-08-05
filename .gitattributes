@@ -1,0 +1,4 @@
+* text=auto eol=lf
+vendor/openal-soft/COPYING -text
+vendor/openal-soft/LICENSE-pffft -text
+vendor/openal-soft/runtime/** binary
