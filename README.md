@@ -78,10 +78,12 @@ Automatically generated, CType bindings of OpenAL live at `pyalsoft.bindings`. O
 
 ## Contributing
 
+Direct development occurs on `development`, the base branch of the repository. Pull requests from there to master represent official releases, signified by a version increase in `pyproject.toml`. Version increases should only be done from `development`. If implementing your own feature, it is requested that you fork this repository and make your own feature branch, and then merge into `development`.
+
 Create the locked development environment with [uv](https://docs.astral.sh/uv/):
 
 ```console
-uv sync --locked --python 3.12
+uv sync --python 3.12
 ```
 
 Before submitting a change, run the same core checks as CI:
