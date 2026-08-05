@@ -6,16 +6,16 @@ import ctypes
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
-from pyalsoft._generated import enums as _enums
-from pyalsoft._generated import types as _types
-from pyalsoft._generated.semantics import (
+from pyalsoft.bindings._generated import enums as _enums
+from pyalsoft.bindings._generated import types as _types
+from pyalsoft.bindings._generated.semantics import (
     COMMAND_WRAPPERS_BY_NAME,
     ENUM_GROUPS_BY_NAME,
 )
-from pyalsoft._specs import CommandWrapperSpec, WrapperParameterSpec
+from pyalsoft.bindings._specs import CommandWrapperSpec, WrapperParameterSpec
 
 if TYPE_CHECKING:
-    from pyalsoft._library import OpenALLibrary
+    from pyalsoft.bindings._library import OpenALLibrary
 
 type ReadableBuffer = bytes | bytearray | memoryview
 

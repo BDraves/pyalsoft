@@ -7,7 +7,7 @@ from typing import cast
 
 import pytest
 
-import pyalsoft
+from pyalsoft import bindings
 
 pytestmark = [
     pytest.mark.integration,
@@ -25,7 +25,7 @@ def test_system_runtime_can_create_a_context(
 
     monkeypatch.setenv("ALSOFT_DRIVERS", "null")
     path = os.environ.get("PYALSOFT_TEST_LIBRARY")
-    library = pyalsoft.load(path)
+    library = bindings.load(path)
 
     device = cast(object | None, library.alcOpenDevice(None))
     assert device, f"could not open the null device with {library.library_name!r}"
@@ -36,7 +36,7 @@ def test_system_runtime_can_create_a_context(
         assert context, f"could not create a context with {library.library_name!r}"
         assert library.alcMakeContextCurrent(context)
 
-        version = cast(bytes | None, library.alGetString(pyalsoft.AL_VERSION))
+        version = cast(bytes | None, library.alGetString(bindings.AL_VERSION))
         assert version
     finally:
         library.alcMakeContextCurrent(None)

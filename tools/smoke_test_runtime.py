@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import pyalsoft
-import pyalsoft._library as runtime
+from pyalsoft import bindings
+from pyalsoft.bindings import _library as runtime
 
 
 def main() -> None:
@@ -11,7 +11,7 @@ def main() -> None:
     if bundled is None:
         raise RuntimeError("the platform wheel did not contain an OpenAL Soft runtime")
 
-    library = pyalsoft.load()
+    library = bindings.load()
     if library.library_name != bundled:
         raise RuntimeError(f"loaded {library.library_name!r} instead of {bundled!r}")
 

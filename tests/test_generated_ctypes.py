@@ -3,8 +3,9 @@
 import ctypes
 
 import pyalsoft
-from pyalsoft._generated import types
-from pyalsoft._generated.functions import (
+from pyalsoft import bindings
+from pyalsoft.bindings._generated import types
+from pyalsoft.bindings._generated.functions import (
     COMMAND_EXTENSIONS,
     EXTENSION_APIS,
     PROTOTYPES,
@@ -39,6 +40,12 @@ def test_callbacks_and_extension_metadata_are_concrete() -> None:
     assert EXTENSION_APIS["ALC_EXT_EFX"] == ("al", "alc")
 
 
-def test_public_package_reexports_generated_values_and_types() -> None:
-    assert pyalsoft.AL_FORMAT_MONO16 == 0x1101
-    assert pyalsoft.ALuint is ctypes.c_uint
+def test_bindings_package_reexports_generated_values_and_types() -> None:
+    assert bindings.AL_FORMAT_MONO16 == 0x1101
+    assert bindings.ALuint is ctypes.c_uint
+
+
+def test_package_root_reserves_the_pythonic_api_namespace() -> None:
+    assert pyalsoft.__all__ == ["bindings"]
+    assert pyalsoft.bindings is bindings
+    assert not hasattr(pyalsoft, "load")

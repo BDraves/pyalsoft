@@ -1,8 +1,8 @@
 """Smoke tests for generated constants and registry metadata."""
 
-import pyalsoft
-from pyalsoft._generated import constants
-from pyalsoft._generated.registry import (
+from pyalsoft import bindings
+from pyalsoft.bindings._generated import constants
+from pyalsoft.bindings._generated.registry import (
     API_SETS,
     COMMANDS,
     DEFINES,
@@ -11,7 +11,7 @@ from pyalsoft._generated.registry import (
     REGISTRY_NOTES,
     TYPES,
 )
-from pyalsoft._generated.semantics import (
+from pyalsoft.bindings._generated.semantics import (
     COMMAND_WRAPPERS,
     ENUM_GROUPS,
     OBJECT_PROPERTIES,
@@ -80,10 +80,10 @@ def test_generated_metadata_includes_xml_annotations() -> None:
     assert foldback_name.python_value == "AL_EXT_FOLDBACK"
 
 
-def test_public_package_exposes_registry_and_define_constants() -> None:
-    assert pyalsoft.registry.ENUMS is ENUMS
-    assert pyalsoft.registry.__name__ == "pyalsoft.registry"
-    assert pyalsoft.ALC_VERSION_0_1 == 1
+def test_bindings_package_exposes_registry_and_define_constants() -> None:
+    assert bindings.registry.ENUMS is ENUMS
+    assert bindings.registry.__name__ == "pyalsoft.bindings.registry"
+    assert bindings.ALC_VERSION_0_1 == 1
 
 
 def test_generated_semantic_model_covers_commands_and_properties() -> None:
@@ -104,10 +104,10 @@ def test_generated_semantic_model_covers_commands_and_properties() -> None:
     assert special.getter is None
 
 
-def test_public_package_exposes_semantic_enums_and_objects() -> None:
-    assert pyalsoft.ALSourceState.PLAYING == pyalsoft.AL_PLAYING
-    assert pyalsoft.ALSourceFloat3.DIRECTION == pyalsoft.AL_DIRECTION
-    assert "DIRECTION" not in pyalsoft.ALListenerFloat3.__members__
-    assert pyalsoft.registry.OBJECT_PROPERTIES is OBJECT_PROPERTIES
-    assert pyalsoft.Source.object_name == "source"
-    assert not hasattr(pyalsoft.Listener, "direction")
+def test_bindings_package_exposes_semantic_enums_and_objects() -> None:
+    assert bindings.ALSourceState.PLAYING == bindings.AL_PLAYING
+    assert bindings.ALSourceFloat3.DIRECTION == bindings.AL_DIRECTION
+    assert "DIRECTION" not in bindings.ALListenerFloat3.__members__
+    assert bindings.registry.OBJECT_PROPERTIES is OBJECT_PROPERTIES
+    assert bindings.Source.object_name == "source"
+    assert not hasattr(bindings.Listener, "direction")

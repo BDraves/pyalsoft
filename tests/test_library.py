@@ -11,9 +11,9 @@ from typing import Any, cast
 
 import pytest
 
-import pyalsoft._library as runtime
-from pyalsoft._generated.functions import PROTOTYPES
-from pyalsoft._library import (
+from pyalsoft.bindings import _library as runtime
+from pyalsoft.bindings._generated.functions import PROTOTYPES
+from pyalsoft.bindings._library import (
     ExtensionUnavailableError,
     ForeignFunction,
     FunctionUnavailableError,
@@ -88,7 +88,7 @@ def test_bundled_runtime_is_found_in_editable_distribution(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    source = tmp_path / "source" / "pyalsoft" / "_library.py"
+    source = tmp_path / "source" / "pyalsoft" / "bindings" / "_library.py"
     installed = tmp_path / "site-packages" / "pyalsoft" / "_native" / "soft_oal.dll"
     installed.parent.mkdir(parents=True)
     installed.touch()

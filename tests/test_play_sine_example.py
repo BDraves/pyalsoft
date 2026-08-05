@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-import pyalsoft
 from examples.play_sine import SAMPLE_RATE, play_sine, sine_pcm
+from pyalsoft import bindings
 
 ROOT = Path(__file__).resolve().parents[1]
 WINDOWS_RUNTIME = (
@@ -43,6 +43,6 @@ def test_play_sine_with_bundled_null_driver(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("ALSOFT_DRIVERS", "null")
-    library = pyalsoft.load(WINDOWS_RUNTIME)
+    library = bindings.load(WINDOWS_RUNTIME)
 
     play_sine(library, duration=0.05)

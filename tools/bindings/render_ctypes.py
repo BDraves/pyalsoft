@@ -103,7 +103,7 @@ def render_ctypes_functions(registry: Registry, source: SourceInfo, digest: str)
         [
             "import ctypes as _ctypes",
             "",
-            "from pyalsoft._generated import types as _types",
+            "from pyalsoft.bindings._generated import types as _types",
             "",
         ]
     )

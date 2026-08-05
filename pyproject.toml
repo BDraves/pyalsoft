@@ -69,10 +69,10 @@ dev = [
 [tool.mypy]
 files = ["examples", "src", "tools", "tests"]
 strict = true
-exclude = ["^src/pyalsoft/_generated/"]
+exclude = ["^src/pyalsoft/bindings/_generated/"]
 
 [[tool.mypy.overrides]]
-module = "pyalsoft._generated.*"
+module = "pyalsoft.bindings._generated.*"
 disable_error_code = ["redundant-cast", "valid-type"]
 
 [tool.pytest.ini_options]
@@ -86,7 +86,11 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 88
 target-version = "py312"
-extend-exclude = [".cache", "src/pyalsoft/_generated", "pytest-cache-files-*"]
+extend-exclude = [
+  ".cache",
+  "src/pyalsoft/bindings/_generated",
+  "pytest-cache-files-*",
+]
 
 [tool.ruff.lint]
 select = ["B", "E4", "E7", "E9", "F", "I", "SIM", "UP"]

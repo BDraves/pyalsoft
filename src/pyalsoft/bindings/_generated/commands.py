@@ -9,12 +9,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, cast
 
-from pyalsoft import _api
-from pyalsoft._generated import enums as _enums
-from pyalsoft._generated import types as _types
+from pyalsoft.bindings import _api
+from pyalsoft.bindings._generated import enums as _enums
+from pyalsoft.bindings._generated import types as _types
 
 if TYPE_CHECKING:
-    from pyalsoft._generated.objects import (
+    from pyalsoft.bindings._generated.objects import (
         AuxiliaryEffectSlot,
         Buffer,
         Effect,
@@ -1515,35 +1515,35 @@ class ALCommands(_api.CommandNamespace):
     def source(self, identifier: int) -> Source:
         """Wrap an existing source identifier."""
 
-        from pyalsoft._generated.objects import Source
+        from pyalsoft.bindings._generated.objects import Source
 
         return Source(self.library, identifier)
 
     def buffer(self, identifier: int) -> Buffer:
         """Wrap an existing buffer identifier."""
 
-        from pyalsoft._generated.objects import Buffer
+        from pyalsoft.bindings._generated.objects import Buffer
 
         return Buffer(self.library, identifier)
 
     def effect(self, identifier: int) -> Effect:
         """Wrap an existing effect identifier."""
 
-        from pyalsoft._generated.objects import Effect
+        from pyalsoft.bindings._generated.objects import Effect
 
         return Effect(self.library, identifier)
 
     def filter(self, identifier: int) -> Filter:
         """Wrap an existing filter identifier."""
 
-        from pyalsoft._generated.objects import Filter
+        from pyalsoft.bindings._generated.objects import Filter
 
         return Filter(self.library, identifier)
 
     def auxiliary_effect_slot(self, identifier: int) -> AuxiliaryEffectSlot:
         """Wrap an existing auxiliary effect slot identifier."""
 
-        from pyalsoft._generated.objects import AuxiliaryEffectSlot
+        from pyalsoft.bindings._generated.objects import AuxiliaryEffectSlot
 
         return AuxiliaryEffectSlot(self.library, identifier)
 
@@ -1551,7 +1551,7 @@ class ALCommands(_api.CommandNamespace):
     def listener(self) -> Listener:
         """Return the current context's singleton listener."""
 
-        from pyalsoft._generated.objects import Listener
+        from pyalsoft.bindings._generated.objects import Listener
 
         return Listener(self.library)
 

@@ -5,11 +5,11 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING
 
-from pyalsoft._generated.registry import API_SETS
-from pyalsoft._specs import ApiSetSpec
+from pyalsoft.bindings._generated.registry import API_SETS
+from pyalsoft.bindings._specs import ApiSetSpec
 
 if TYPE_CHECKING:
-    from pyalsoft._library import ForeignFunction, OpenALLibrary
+    from pyalsoft.bindings._library import ForeignFunction, OpenALLibrary
 
 _EXTENSIONS = {item.name: item for item in API_SETS if item.kind == "extension"}
 
@@ -84,7 +84,7 @@ class Extension:
 
         if self.is_present(device):
             return
-        from pyalsoft._library import ExtensionUnavailableError
+        from pyalsoft.bindings._library import ExtensionUnavailableError
 
         raise ExtensionUnavailableError(
             f"OpenAL extension {self.name!r} is not available"

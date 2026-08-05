@@ -7,7 +7,9 @@
 [![OpenAL Soft 1.25.2](https://img.shields.io/badge/OpenAL_Soft-1.25.2-557C94)](https://github.com/kcat/openal-soft/releases/tag/1.25.2)
 <!-- openal-soft-version-badge:end -->
 
-PyALSoft provides automatically generated Python bindings for OpenAL Soft, including core OpenAL, ALC, EFX, and supported extensions.
+PyALSoft provides typed bindings for OpenAL Soft, including core OpenAL, ALC,
+EFX, and supported extensions. The current low-level interface lives in
+`pyalsoft.bindings`; the package root is reserved for a managed, Pythonic API.
 
 > PyALSoft is an independent project and is not affiliated with or endorsed by the OpenAL Soft project.
 
@@ -29,7 +31,7 @@ import math
 import time
 from array import array
 
-import pyalsoft
+from pyalsoft import bindings
 
 sample_rate = 44_100
 duration = 0.5
@@ -41,7 +43,7 @@ pcm = array(
     ),
 ).tobytes()
 
-library = pyalsoft.load()
+library = bindings.load()
 device = library.alc.open_device(None)
 if not device:
     raise RuntimeError("could not open the default OpenAL device")
@@ -60,7 +62,7 @@ try:
     (buffer_id,) = library.al.gen_buffers()
     library.al.buffer_data(
         buffer_id,
-        pyalsoft.enums.ALFormat.FORMAT_MONO16,
+        bindings.enums.ALFormat.FORMAT_MONO16,
         pcm,
         sample_rate,
     )
@@ -70,7 +72,7 @@ try:
     source.buffer = library.al.buffer(buffer_id)
     library.al.source_play(source_id)
 
-    while source.state == pyalsoft.enums.ALSourceState.PLAYING:
+    while source.state == bindings.enums.ALSourceState.PLAYING:
         time.sleep(0.01)
 finally:
     if source_id is not None:
@@ -93,21 +95,25 @@ uv run python examples/play_sine.py
 ## Platforms
 
 PyALSoft supports Windows x86-64, macOS x86-64 and ARM64, and Linux x86-64
-and ARM64. Platform wheels bundle OpenAL Soft. `pyalsoft.load()` uses the
-bundled library when available, then falls back to a system installation. Pass
-an explicit library path to `pyalsoft.load(path)` to override discovery.
+and ARM64. Platform wheels bundle OpenAL Soft. `pyalsoft.bindings.load()` uses
+the bundled library when available, then falls back to a system installation.
+Pass an explicit library path to `pyalsoft.bindings.load(path)` to override
+discovery.
 
 ## API layers
 
-The recommended `library.al` and `library.alc` namespaces use snake-case names,
-accept Python strings and sequences, infer array lengths, allocate output
-parameters, and return normal Python values. Generated object handles such as
+`pyalsoft.bindings` is the supported low-level interface. Its recommended
+`library.al` and `library.alc` namespaces use snake-case names, accept Python
+strings and sequences, infer array lengths, allocate output parameters, and
+return normal Python values. Generated object handles such as
 `library.al.source(identifier)` expose typed properties including `gain`,
 `position`, `buffer`, and `state`.
 
-Exact C entry points remain available when low-level control is needed. For
+Exact C entry points remain available when direct control is needed. For
 example, `library.alGenSources` is the generated `ctypes` binding for
 `alGenSources`, while `library.al.gen_sources()` is its Python-value wrapper.
+Constants, enums, and C types are available through `bindings.constants`,
+`bindings.enums`, and `bindings.types`.
 
 Extensions are discoverable by registry name or generated attribute. Check an
 extension against its device or current context before using its commands:
@@ -121,7 +127,7 @@ if efx.is_present(device):
 Unavailable libraries, missing contexts, and unsupported extensions raise
 `LibraryNotFoundError`, `ContextRequiredError`, and
 `ExtensionUnavailableError`, respectively. See the
-[`generated API reference`](docs/reference.md) for the complete command,
+[`bindings API reference`](docs/reference.md) for the complete command,
 property, and extension surface.
 
 ## Contributing

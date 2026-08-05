@@ -1,6 +1,6 @@
 """Public access to metadata from the vendored OpenAL XML registry."""
 
-from pyalsoft._generated.registry import (
+from pyalsoft.bindings._generated.registry import (
     API_SETS,
     COMMANDS,
     DEFINES,
@@ -12,7 +12,7 @@ from pyalsoft._generated.registry import (
     UPSTREAM_COMMIT,
     UPSTREAM_VERSION,
 )
-from pyalsoft._generated.semantics import (
+from pyalsoft.bindings._generated.semantics import (
     COMMAND_WRAPPERS,
     COMMAND_WRAPPERS_BY_NAME,
     ENUM_GROUPS,
@@ -20,7 +20,7 @@ from pyalsoft._generated.semantics import (
     OBJECT_PROPERTIES,
     OBJECT_PROPERTIES_BY_KEY,
 )
-from pyalsoft._specs import (
+from pyalsoft.bindings._specs import (
     ApiMemberSpec,
     ApiSetSpec,
     CommandSpec,

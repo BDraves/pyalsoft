@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import ctypes as _ctypes
 
-from pyalsoft._generated import types as _types
+from pyalsoft.bindings._generated import types as _types
 
 LPALENABLE = _ctypes.CFUNCTYPE(None, _types.ALenum)
 LPALDISABLE = _ctypes.CFUNCTYPE(None, _types.ALenum)

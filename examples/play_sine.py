@@ -6,7 +6,7 @@ import math
 import time
 from array import array
 
-import pyalsoft
+from pyalsoft import bindings
 
 SAMPLE_RATE = 44_100
 
@@ -33,14 +33,14 @@ def sine_pcm(*, frequency: float, duration: float) -> bytes:
 
 
 def play_sine(
-    library: pyalsoft.OpenALLibrary | None = None,
+    library: bindings.OpenALLibrary | None = None,
     *,
     frequency: float = 440.0,
     duration: float = 0.5,
 ) -> None:
     """Play a sine wave and release every OpenAL resource afterward."""
 
-    library = library or pyalsoft.load()
+    library = library or bindings.load()
     device = library.alc.open_device(None)
     if not device:
         raise RuntimeError("could not open the default OpenAL playback device")
@@ -60,7 +60,7 @@ def play_sine(
         (buffer_id,) = library.al.gen_buffers()
         library.al.buffer_data(
             buffer_id,
-            pyalsoft.enums.ALFormat.FORMAT_MONO16,
+            bindings.enums.ALFormat.FORMAT_MONO16,
             sine_pcm(frequency=frequency, duration=duration),
             SAMPLE_RATE,
         )
@@ -71,7 +71,7 @@ def play_sine(
         library.al.source_play(source_id)
 
         deadline = time.monotonic() + duration + 2.0
-        while source.state == pyalsoft.enums.ALSourceState.PLAYING:
+        while source.state == bindings.enums.ALSourceState.PLAYING:
             if time.monotonic() >= deadline:
                 raise RuntimeError("timed out waiting for playback to finish")
             time.sleep(0.01)
