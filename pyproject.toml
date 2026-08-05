@@ -5,13 +5,42 @@ build-backend = "hatchling.build"
 [project]
 name = "pyalsoft"
 version = "0.1.0"
-description = "PyALSoft provides automatically generated Python bindings for OpenAL Soft, including core OpenAL, ALC, EFX, and supported extensions"
+description = "Typed Python bindings for OpenAL Soft with bundled runtimes, ALC, EFX, and extensions"
 readme = "README.md"
 authors = [
   { name = "Brennan Draves", email = "dravesbrennan@gmail.com" },
 ]
 requires-python = ">=3.12"
 dependencies = []
+keywords = [
+  "3d-audio",
+  "audio",
+  "bindings",
+  "ctypes",
+  "efx",
+  "game-audio",
+  "hrtf",
+  "openal",
+  "openal-soft",
+  "sound",
+  "spatial-audio",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Operating System :: MacOS :: MacOS X",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Topic :: Multimedia :: Sound/Audio",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Typing :: Typed",
+]
 license = "MIT AND LGPL-2.0-or-later AND BSD-3-Clause AND LicenseRef-OpenAL-Registry"
 license-files = [
   "LICENSE",
@@ -21,7 +50,11 @@ license-files = [
 ]
 
 [project.urls]
+Homepage = "https://github.com/BDraves/pyalsoft"
+Documentation = "https://github.com/BDraves/pyalsoft/blob/master/docs/reference.md"
 Source = "https://github.com/BDraves/pyalsoft"
+Issues = "https://github.com/BDraves/pyalsoft/issues"
+"Release notes" = "https://github.com/BDraves/pyalsoft/releases"
 
 [project.entry-points.pyinstaller40]
 hook-dirs = "pyalsoft._pyinstaller:get_hook_dirs"
