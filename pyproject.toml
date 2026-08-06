@@ -73,7 +73,7 @@ exclude = ["^src/pyalsoft/bindings/"]
 
 [[tool.mypy.overrides]]
 module = ["pyalsoft.bindings", "pyalsoft.bindings.*"]
-follow_imports = "skip"
+follow_imports = "silent"
 
 [tool.pytest.ini_options]
 addopts = ["--strict-config", "--strict-markers", "-p", "no:cacheprovider", "-ra"]
