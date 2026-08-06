@@ -7,7 +7,47 @@ from pathlib import Path
 import pytest
 
 from pyalsoft._pyinstaller import get_hook_dirs
-from tools.openal_soft import runtime_target
+from tools.build_openal_soft import build_runtime
+from tools.openal_soft import (
+    NATIVE_ROOT_ENVIRONMENT,
+    native_runtime_root,
+    runtime_target,
+)
+
+
+def test_native_runtime_root_defaults_to_project_build_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv(NATIVE_ROOT_ENVIRONMENT, raising=False)
+    assert native_runtime_root(tmp_path) == tmp_path / "build" / "native"
+
+
+def test_native_runtime_root_can_be_configured(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    configured = tmp_path / "native-cache"
+    monkeypatch.setenv(NATIVE_ROOT_ENVIRONMENT, str(configured))
+    assert native_runtime_root(tmp_path / "project") == configured
+
+
+def test_native_runtime_root_rejects_relative_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(NATIVE_ROOT_ENVIRONMENT, "relative/native-cache")
+    with pytest.raises(ValueError, match="must be an absolute path"):
+        native_runtime_root()
+
+
+def test_build_runtime_uses_configured_native_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    configured = tmp_path / "native-cache"
+    monkeypatch.setenv(NATIVE_ROOT_ENVIRONMENT, str(configured))
+
+    path = build_runtime(runtime_target("win32", "AMD64"))
+
+    assert path == configured / "win_amd64" / "soft_oal.dll"
+    assert path.is_file()
 
 
 @pytest.mark.parametrize(

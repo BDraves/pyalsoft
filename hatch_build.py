@@ -13,7 +13,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from tools.openal_soft import runtime_target, source_configuration  # noqa: E402
+from tools.openal_soft import (  # noqa: E402
+    native_runtime_root,
+    runtime_target,
+    source_configuration,
+)
 
 
 class CustomBuildHook(BuildHookInterface):
@@ -29,7 +33,7 @@ class CustomBuildHook(BuildHookInterface):
         vendored = (
             root / "vendor" / "openal-soft" / "runtime" / runtime_id / library_name
         )
-        staged = root / "build" / "native" / runtime_id
+        staged = native_runtime_root(root) / runtime_id
         if runtime_id != "win_amd64":
             configuration = source_configuration({"library_source_sha256"})
             checksum = configuration["library_source_sha256"]

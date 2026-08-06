@@ -82,7 +82,21 @@ jobs:
         env:
           CIBW_ARCHS: native
           CIBW_CACHE_PATH: ${{ runner.temp }}/cibw-cache
+          CIBW_ENVIRONMENT_LINUX: >-
+            ALSOFT_DRIVERS=null
+            PYALSOFT_NATIVE_ROOT=/host${{ github.workspace }}/build/native
         run: uv tool run --from cibuildwheel==3.4.1 cibuildwheel --output-dir wheelhouse
+
+      - name: Verify Linux OpenAL runtime cache
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          runtime="$(find build/native -type f -name 'libopenal.so.1' -print -quit)"
+          if [[ -z "$runtime" ]]; then
+            echo "Linux OpenAL runtime was not written to build/native." >&2
+            exit 1
+          fi
+          echo "Cached $runtime"
 
       - name: Test Linux wheel with PyInstaller
         if: runner.os == 'Linux'
