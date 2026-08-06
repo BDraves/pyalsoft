@@ -86,6 +86,19 @@ class StreamState(Enum):
     STOPPED = "stopped"
 
 
+class HRTFStatus(Enum):
+    """Observed HRTF state for an open playback session."""
+
+    UNAVAILABLE = "unavailable"
+    DISABLED = "disabled"
+    ENABLED = "enabled"
+    DENIED = "denied"
+    REQUIRED = "required"
+    HEADPHONES_DETECTED = "headphones_detected"
+    UNSUPPORTED_FORMAT = "unsupported_format"
+    UNKNOWN = "unknown"
+
+
 def _finite_float(name: str, value: float) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TypeError(f"{name} must be a number")
@@ -104,6 +117,44 @@ def _vector3(name: str, value: Vector3) -> Vector3:
             _finite_float(f"{name}[{index}]", item) for index, item in enumerate(value)
         ),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class PlaybackDevice:
+    """A named playback device reported by the current OpenAL runtime."""
+
+    name: str
+    is_default: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.name, str):
+            raise TypeError("name must be a string")
+        if not self.name:
+            raise ValueError("name cannot be empty")
+        if not isinstance(self.is_default, bool):
+            raise TypeError("is_default must be a boolean")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PlaybackConfig:
+    """Preferences applied while creating an OpenAL playback context."""
+
+    hrtf: bool | None = None
+
+    def __post_init__(self) -> None:
+        if self.hrtf is not None and not isinstance(self.hrtf, bool):
+            raise TypeError("hrtf must be a boolean or None")
+
+
+@dataclass(frozen=True, slots=True)
+class PlaybackInfo:
+    """Observed properties of an open playback session."""
+
+    device_name: str
+    renderer: str
+    version: str
+    hrtf_status: HRTFStatus
+    hrtf_name: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -353,6 +404,16 @@ _VOICE_STATE_BY_AL = {
 }
 
 _DEFAULT_VOICE_CONFIG = VoiceConfig()
+_DEFAULT_PLAYBACK_CONFIG = PlaybackConfig()
+
+_HRTF_STATUS_BY_ALC = {
+    bindings.ALC_HRTF_DISABLED_SOFT: HRTFStatus.DISABLED,
+    bindings.ALC_HRTF_ENABLED_SOFT: HRTFStatus.ENABLED,
+    bindings.ALC_HRTF_DENIED_SOFT: HRTFStatus.DENIED,
+    bindings.ALC_HRTF_REQUIRED_SOFT: HRTFStatus.REQUIRED,
+    bindings.ALC_HRTF_HEADPHONES_DETECTED_SOFT: HRTFStatus.HEADPHONES_DETECTED,
+    bindings.ALC_HRTF_UNSUPPORTED_FORMAT_SOFT: HRTFStatus.UNSUPPORTED_FORMAT,
+}
 
 
 def _require_playback(playback: Playback) -> None:
@@ -375,6 +436,15 @@ def _clear_al_errors(playback: Playback) -> None:
     raise AudioBackendError("OpenAL error state could not be cleared")
 
 
+def _clear_alc_errors(
+    library: bindings.OpenALLibrary, device: object | None
+) -> None:
+    for _ in range(16):
+        if int(library.alc.get_error(device)) == bindings.ALC_NO_ERROR:
+            return
+    raise AudioBackendError("OpenAL ALC error state could not be cleared")
+
+
 def _prepare_al(playback: Playback) -> None:
     _activate(playback)
     _clear_al_errors(playback)
@@ -389,6 +459,21 @@ def _check_al_error(playback: Playback, operation: str) -> None:
     except ValueError:
         name = f"unknown error 0x{code:04x}"
     raise AudioBackendError(f"{operation} failed: OpenAL {name}")
+
+
+def _check_alc_error(
+    library: bindings.OpenALLibrary,
+    device: object | None,
+    operation: str,
+) -> None:
+    code = int(library.alc.get_error(device))
+    if code == bindings.ALC_NO_ERROR:
+        return
+    try:
+        name = bindings.enums.ALCContextErrorCode(code).name
+    except ValueError:
+        name = f"unknown error 0x{code:04x}"
+    raise AudioBackendError(f"{operation} failed: OpenAL ALC {name}")
 
 
 def _clip_identifier(playback: Playback, clip: Clip) -> int:
@@ -454,25 +539,69 @@ def _apply_voice_config(
     al.sourcei(identifier, bindings.AL_SOURCE_RELATIVE, int(config.relative))
 
 
+def _load_playback_library(
+    library: bindings.OpenALLibrary | None,
+) -> bindings.OpenALLibrary:
+    if library is not None:
+        return library
+    try:
+        return bindings.load()
+    except bindings.LibraryNotFoundError as error:
+        raise PlaybackOpenError("could not load an OpenAL library") from error
+
+
+def list_playback_devices(
+    *, library: bindings.OpenALLibrary | None = None
+) -> tuple[PlaybackDevice, ...]:
+    """Return playback devices known to the selected OpenAL runtime."""
+
+    library = _load_playback_library(library)
+    _clear_alc_errors(library, None)
+    enumerate_all = library.alc.is_extension_present(None, "ALC_ENUMERATE_ALL_EXT")
+    if enumerate_all:
+        devices_selector = bindings.ALC_ALL_DEVICES_SPECIFIER
+        default_selector = bindings.ALC_DEFAULT_ALL_DEVICES_SPECIFIER
+    else:
+        devices_selector = bindings.ALC_DEVICE_SPECIFIER
+        default_selector = bindings.ALC_DEFAULT_DEVICE_SPECIFIER
+
+    names = library.alc.get_strings(None, devices_selector)
+    default_name = library.alc.get_string(None, default_selector)
+    _check_alc_error(library, None, "enumerate playback devices")
+    return tuple(
+        PlaybackDevice(name, is_default=name == default_name)
+        for name in dict.fromkeys(names)
+    )
+
+
 def open_playback(
-    device_name: str | bytes | None = None,
+    device_name: PlaybackDevice | str | bytes | None = None,
     *,
+    config: PlaybackConfig = _DEFAULT_PLAYBACK_CONFIG,
     library: bindings.OpenALLibrary | None = None,
 ) -> Playback:
     """Open a managed playback session."""
 
-    if library is None:
-        try:
-            library = bindings.load()
-        except bindings.LibraryNotFoundError as error:
-            raise PlaybackOpenError("could not load an OpenAL library") from error
+    if not isinstance(config, PlaybackConfig):
+        raise TypeError("config must be a PlaybackConfig")
+    if isinstance(device_name, PlaybackDevice):
+        device_name = device_name.name
+    elif device_name is not None and not isinstance(device_name, (str, bytes)):
+        raise TypeError("device_name must be a PlaybackDevice, str, bytes, or None")
+
+    library = _load_playback_library(library)
     previous_context = library.alc.get_current_context()
     device = library.alc.open_device(device_name)
     if not device:
         raise PlaybackOpenError("could not open the requested playback device")
     context: object | None = None
     try:
-        context = library.alc.create_context(device, None)
+        attributes: tuple[int, ...] | None = None
+        if config.hrtf is not None and library.alc.is_extension_present(
+            device, "ALC_SOFT_HRTF"
+        ):
+            attributes = (bindings.ALC_HRTF_SOFT, int(config.hrtf))
+        context = library.alc.create_context(device, attributes)
         if not context:
             raise PlaybackOpenError("could not create an OpenAL context")
         if not library.alc.make_context_current(context):
@@ -483,6 +612,45 @@ def open_playback(
         library.alc.close_device(device)
         raise
     return Playback(library, device, context, previous_context)
+
+
+def get_playback_info(playback: Playback) -> PlaybackInfo:
+    """Return observed device, renderer, version, and HRTF information."""
+
+    _prepare_al(playback)
+    library = playback._library
+    _clear_alc_errors(library, playback._device)
+    device_name = library.alc.get_string(
+        playback._device, bindings.ALC_DEVICE_SPECIFIER
+    )
+    if library.alc.is_extension_present(playback._device, "ALC_SOFT_HRTF"):
+        native_status = library.alc.get_integerv(
+            playback._device, bindings.ALC_HRTF_STATUS_SOFT, 1
+        )[0]
+        hrtf_status = _HRTF_STATUS_BY_ALC.get(native_status, HRTFStatus.UNKNOWN)
+        hrtf_name = library.alc.get_string(
+            playback._device, bindings.ALC_HRTF_SPECIFIER_SOFT
+        )
+        if not hrtf_name:
+            hrtf_name = None
+    else:
+        hrtf_status = HRTFStatus.UNAVAILABLE
+        hrtf_name = None
+    _check_alc_error(library, playback._device, "query playback information")
+
+    renderer = library.al.get_string(bindings.AL_RENDERER)
+    version = library.al.get_string(bindings.AL_VERSION)
+    _check_al_error(playback, "query playback information")
+    if device_name is None or renderer is None or version is None:
+        raise AudioBackendError("OpenAL returned incomplete playback information")
+
+    return PlaybackInfo(
+        device_name=device_name,
+        renderer=renderer,
+        version=version,
+        hrtf_status=hrtf_status,
+        hrtf_name=hrtf_name,
+    )
 
 
 def close_playback(playback: Playback) -> None:
@@ -1377,12 +1545,16 @@ __all__ = [
     "AudioError",
     "AudioFileError",
     "Clip",
+    "HRTFStatus",
     "InvalidHandleError",
     "InvalidVoiceStateError",
     "Listener",
     "PCM",
     "Playback",
+    "PlaybackConfig",
     "PlaybackClosedError",
+    "PlaybackDevice",
+    "PlaybackInfo",
     "PlaybackOpenError",
     "PlayingSound",
     "ResourceInUseError",
@@ -1397,7 +1569,9 @@ __all__ = [
     "VoiceStatus",
     "close_playback",
     "finish_stream",
+    "get_playback_info",
     "get_voice_status",
+    "list_playback_devices",
     "open_playback",
     "open_stream",
     "pause",
