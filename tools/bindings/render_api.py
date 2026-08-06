@@ -354,10 +354,17 @@ def _render_command_method(
         "",
     ]
     if wrapper.string_list_name is not None:
+        string_list_documentation = (
+            f"Return a NUL-separated string list from ``{wrapper.name}``."
+        )
+        if wrapper.name == "alcGetString":
+            string_list_documentation += (
+                " Requires a null device and a device-list selector."
+            )
         lines.extend(
             [
                 f"    def {wrapper.string_list_name}({signature}) -> tuple[str, ...]:",
-                f'        """Return a NUL-separated string list from ``{wrapper.name}``."""',
+                f'        """{string_list_documentation}"""',
                 "",
                 "        return cast(",
                 "            tuple[str, ...],",

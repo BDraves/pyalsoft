@@ -1630,7 +1630,7 @@ class ALCCommands(_api.CommandNamespace):
         return cast(str | None, self._invoke('alcGetString', {'device': device, 'param': param}))
 
     def get_strings(self, device: object | None, param: _enums.ALCContextString | int) -> tuple[str, ...]:
-        """Return a NUL-separated string list from ``alcGetString``."""
+        """Return a NUL-separated string list from ``alcGetString``. Requires a null device and a device-list selector."""
 
         return cast(
             tuple[str, ...],

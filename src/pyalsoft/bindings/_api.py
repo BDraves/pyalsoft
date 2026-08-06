@@ -6,6 +6,7 @@ import ctypes
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
+from pyalsoft.bindings._generated import constants as _constants
 from pyalsoft.bindings._generated import enums as _enums
 from pyalsoft.bindings._generated import types as _types
 from pyalsoft.bindings._generated.semantics import (
@@ -18,6 +19,14 @@ if TYPE_CHECKING:
     from pyalsoft.bindings._library import OpenALLibrary
 
 type ReadableBuffer = bytes | bytearray | memoryview
+
+_ALC_STRING_LIST_PARAMETERS = frozenset(
+    {
+        _constants.ALC_DEVICE_SPECIFIER,
+        _constants.ALC_CAPTURE_DEVICE_SPECIFIER,
+        _constants.ALC_ALL_DEVICES_SPECIFIER,
+    }
+)
 
 
 def _c_type_parts(c_type: str) -> tuple[str, int, bool]:
@@ -235,6 +244,25 @@ def _decode_string_list(value: object) -> tuple[str, ...]:
         address += len(encoded) + 1
 
 
+def _validate_string_list_call(
+    name: str, values: Mapping[str, object]
+) -> None:
+    if name != "alcGetString":
+        raise TypeError(f"{name!r} is not a supported string-list command")
+    if values.get("device") is not None:
+        raise ValueError("alcGetString string-list queries require a null device")
+
+    parameter = values.get("param")
+    if (
+        isinstance(parameter, bool)
+        or not isinstance(parameter, int)
+        or parameter not in _ALC_STRING_LIST_PARAMETERS
+    ):
+        raise ValueError(
+            "alcGetString string-list queries require a device-list selector"
+        )
+
+
 class CommandNamespace:
     """Base class used by generated AL and ALC Python command namespaces."""
 
@@ -321,6 +349,7 @@ class CommandNamespace:
         *,
         resolution_device: object | None = None,
     ) -> tuple[str, ...]:
+        _validate_string_list_call(name, values)
         wrapper = COMMAND_WRAPPERS_BY_NAME[name]
         if any(item.direction == "out" for item in wrapper.parameters):
             raise TypeError("string-list wrappers cannot have output parameters")
