@@ -414,6 +414,28 @@ class OpenALLibrary:
             check_extension=check_extension,
         )
 
+    def _get_pointer_return_function(
+        self,
+        name: str,
+        *,
+        device: object | None = None,
+    ) -> ForeignFunction:
+        """Return *name* without ctypes converting its pointer result."""
+
+        function = self.get_function(name, device=device)
+        address = _pointer_address(function)
+        if address is None:
+            raise FunctionUnavailableError(
+                f"OpenAL returned a null entry point for {name!r}"
+            )
+        argument_types = getattr(PROTOTYPES[name], "_argtypes_", None)
+        if argument_types is None:
+            raise FunctionUnavailableError(
+                f"generated prototype for {name!r} has no argument types"
+            )
+        prototype = ctypes.CFUNCTYPE(ctypes.c_void_p, *argument_types)
+        return cast(ForeignFunction, prototype(address))
+
     def __getattr__(self, name: str) -> ForeignFunction:
         if name not in PROTOTYPES:
             raise AttributeError(name)

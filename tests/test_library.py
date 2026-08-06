@@ -11,6 +11,7 @@ from typing import Any, cast
 
 import pytest
 
+from pyalsoft import bindings
 from pyalsoft.bindings import _library as runtime
 from pyalsoft.bindings._generated.functions import PROTOTYPES
 from pyalsoft.bindings._library import (
@@ -115,6 +116,63 @@ def test_core_export_is_typed_and_cached(monkeypatch: pytest.MonkeyPatch) -> Non
     assert library.get_function("alcOpenDevice") is open_device
     assert library.alcOpenDevice is open_device
     assert len(prototype.sources) == 1
+
+
+@pytest.mark.parametrize(
+    "parameter",
+    [
+        bindings.ALC_DEVICE_SPECIFIER,
+        bindings.ALC_CAPTURE_DEVICE_SPECIFIER,
+        bindings.ALC_ALL_DEVICES_SPECIFIER,
+    ],
+)
+def test_generated_string_list_wrapper_preserves_embedded_nuls(
+    monkeypatch: pytest.MonkeyPatch,
+    parameter: int,
+) -> None:
+    encoded = ctypes.create_string_buffer(b"Speakers\0USB Headset\0\0")
+    library = make_library(monkeypatch, {})
+
+    def get_pointer_return_function(
+        name: str, *, device: object | None = None
+    ) -> ForeignFunction:
+        assert name == "alcGetString"
+        assert device is None
+
+        def get_strings(_device: object, _parameter: object) -> int:
+            return ctypes.addressof(encoded)
+
+        return get_strings
+
+    monkeypatch.setattr(
+        library,
+        "_get_pointer_return_function",
+        get_pointer_return_function,
+    )
+
+    assert library.alc.get_strings(None, parameter) == (
+        "Speakers",
+        "USB Headset",
+    )
+
+
+@pytest.mark.parametrize(
+    ("device", "parameter"),
+    [
+        (object(), bindings.ALC_DEVICE_SPECIFIER),
+        (None, bindings.ALC_DEFAULT_DEVICE_SPECIFIER),
+        (None, bindings.ALC_EXTENSIONS),
+    ],
+)
+def test_generated_string_list_wrapper_rejects_single_string_queries(
+    monkeypatch: pytest.MonkeyPatch,
+    device: object | None,
+    parameter: int,
+) -> None:
+    library = make_library(monkeypatch, {})
+
+    with pytest.raises(ValueError):
+        library.alc.get_strings(device, parameter)
 
 
 def test_al_extension_uses_current_context(monkeypatch: pytest.MonkeyPatch) -> None:

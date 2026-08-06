@@ -6,6 +6,7 @@ import ctypes
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
+from pyalsoft.bindings._generated import constants as _constants
 from pyalsoft.bindings._generated import enums as _enums
 from pyalsoft.bindings._generated import types as _types
 from pyalsoft.bindings._generated.semantics import (
@@ -18,6 +19,14 @@ if TYPE_CHECKING:
     from pyalsoft.bindings._library import OpenALLibrary
 
 type ReadableBuffer = bytes | bytearray | memoryview
+
+_ALC_STRING_LIST_PARAMETERS = frozenset(
+    {
+        _constants.ALC_DEVICE_SPECIFIER,
+        _constants.ALC_CAPTURE_DEVICE_SPECIFIER,
+        _constants.ALC_ALL_DEVICES_SPECIFIER,
+    }
+)
 
 
 def _c_type_parts(c_type: str) -> tuple[str, int, bool]:
@@ -219,6 +228,39 @@ def _convert_return(wrapper: CommandWrapperSpec, value: object) -> object:
     return converted
 
 
+def _decode_string_list(value: object) -> tuple[str, ...]:
+    address = getattr(value, "value", value)
+    if address is None or address == 0:
+        return ()
+    if not isinstance(address, int):
+        raise TypeError("string-list result must be a pointer")
+
+    strings: list[str] = []
+    while True:
+        encoded = ctypes.string_at(address)
+        if not encoded:
+            return tuple(strings)
+        strings.append(encoded.decode("utf-8"))
+        address += len(encoded) + 1
+
+
+def _validate_string_list_call(name: str, values: Mapping[str, object]) -> None:
+    if name != "alcGetString":
+        raise TypeError(f"{name!r} is not a supported string-list command")
+    if values.get("device") is not None:
+        raise ValueError("alcGetString string-list queries require a null device")
+
+    parameter = values.get("param")
+    if (
+        isinstance(parameter, bool)
+        or not isinstance(parameter, int)
+        or parameter not in _ALC_STRING_LIST_PARAMETERS
+    ):
+        raise ValueError(
+            "alcGetString string-list queries require a device-list selector"
+        )
+
+
 class CommandNamespace:
     """Base class used by generated AL and ALC Python command namespaces."""
 
@@ -297,6 +339,50 @@ class CommandNamespace:
         if len(results) == 1:
             return results[0]
         return tuple(results)
+
+    def _invoke_string_list(
+        self,
+        name: str,
+        values: Mapping[str, object],
+        *,
+        resolution_device: object | None = None,
+    ) -> tuple[str, ...]:
+        _validate_string_list_call(name, values)
+        wrapper = COMMAND_WRAPPERS_BY_NAME[name]
+        if any(item.direction == "out" for item in wrapper.parameters):
+            raise TypeError("string-list wrappers cannot have output parameters")
+
+        prepared: dict[str, object] = {}
+        derived_lengths: dict[str, int] = {}
+        for parameter in wrapper.parameters:
+            if not parameter.visible:
+                continue
+            argument, length = _prepare_input(parameter, values[parameter.name])
+            prepared[parameter.name] = argument
+            if (
+                parameter.length is not None
+                and not parameter.length.isdigit()
+                and length is not None
+            ):
+                derived_lengths[parameter.length] = length
+
+        arguments: list[object] = []
+        for parameter in wrapper.parameters:
+            if parameter.visible:
+                arguments.append(prepared[parameter.name])
+            else:
+                try:
+                    arguments.append(derived_lengths[parameter.name])
+                except KeyError as error:
+                    raise TypeError(
+                        f"cannot infer hidden parameter {parameter.name!r}"
+                    ) from error
+
+        device = (
+            resolution_device if resolution_device is not None else values.get("device")
+        )
+        function = self._library._get_pointer_return_function(name, device=device)
+        return _decode_string_list(function(*arguments))
 
 
 __all__ = ["CommandNamespace", "ReadableBuffer"]

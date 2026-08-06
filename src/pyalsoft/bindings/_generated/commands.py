@@ -1629,6 +1629,14 @@ class ALCCommands(_api.CommandNamespace):
 
         return cast(str | None, self._invoke('alcGetString', {'device': device, 'param': param}))
 
+    def get_strings(self, device: object | None, param: _enums.ALCContextString | int) -> tuple[str, ...]:
+        """Return a NUL-separated string list from ``alcGetString``. Requires a null device and a device-list selector."""
+
+        return cast(
+            tuple[str, ...],
+            self._invoke_string_list('alcGetString', {'device': device, 'param': param}),
+        )
+
     def get_integerv(self, device: object | None, param: _enums.ALCContextInteger | int, size: int) -> tuple[int, ...]:
         """Returns information about the device and the version of OpenAL."""
 

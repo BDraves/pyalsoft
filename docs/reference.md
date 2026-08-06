@@ -557,6 +557,7 @@ Semantic corrections that cannot be represented by the upstream XML are reviewed
 | `get_proc_address(device: object | None, funcname: str | bytes | None) -> object | None` | `alcGetProcAddress` | `core` | Retrieve the address of a function. Given a non-NULL device, the returned function may be device-specific. |
 | `get_enum_value(device: object | None, enumname: str | bytes | None) -> int` | `alcGetEnumValue` | `core` | Retrieve the value of an enum. Given a non-NULL device, the returned value may be device-specific. |
 | `get_string(device: object | None, param: _enums.ALCContextString | int) -> str | None` | `alcGetString` | `core` | Returns information about the device, and error strings. |
+| `get_strings(device: object | None, param: _enums.ALCContextString | int) -> tuple[str, ...]` | `alcGetString` | `core` | Return a NUL-separated string list. |
 | `get_integerv(device: object | None, param: _enums.ALCContextInteger | int, size: int) -> tuple[int, ...]` | `alcGetIntegerv` | `core` | Returns information about the device and the version of OpenAL. |
 | `capture_open_device(devicename: str | bytes | None, frequency: int, format: int, buffersize: int) -> object | None` | `alcCaptureOpenDevice` | `core` | Opens the named capture device with the given frequency, format, and buffer size. |
 | `capture_close_device(device: object | None) -> bool` | `alcCaptureCloseDevice` | `core` | Closes the given capture device. |

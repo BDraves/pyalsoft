@@ -346,13 +346,34 @@ def _render_command_method(
     documentation = documentation.replace('"""', "'''")
     if wrapper.extension is not None:
         documentation += f" Requires ``{wrapper.extension}``."
-    return [
+    lines = [
         f"    def {wrapper.python_name}({signature}) -> {return_annotation}:",
         f'        """{documentation}"""',
         "",
         f"        return cast({return_annotation}, self._invoke({args}))",
         "",
     ]
+    if wrapper.string_list_name is not None:
+        string_list_documentation = (
+            f"Return a NUL-separated string list from ``{wrapper.name}``."
+        )
+        if wrapper.name == "alcGetString":
+            string_list_documentation += (
+                " Requires a null device and a device-list selector."
+            )
+        lines.extend(
+            [
+                f"    def {wrapper.string_list_name}({signature}) -> tuple[str, ...]:",
+                f'        """{string_list_documentation}"""',
+                "",
+                "        return cast(",
+                "            tuple[str, ...],",
+                f"            self._invoke_string_list({args}),",
+                "        )",
+                "",
+            ]
+        )
+    return lines
 
 
 def render_python_commands(

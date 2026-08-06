@@ -127,13 +127,14 @@ def load_semantic_overrides(
     for name, raw_value in command_table.items():
         label = f"command.{name}"
         values = _settings_table(raw_value, label)
-        unknown = set(values) - {"lengths", "directions"}
+        unknown = set(values) - {"lengths", "directions", "string_list_name"}
         if unknown:
             joined = ", ".join(sorted(unknown))
             raise RegistryError(f"unknown {label} setting(s): {joined}")
         commands[name] = CommandOverride(
             lengths=_string_mapping(values, "lengths", label),
             directions=_string_mapping(values, "directions", label),
+            string_list_name=_optional_string(values, "string_list_name", label),
         )
 
     return SemanticOverrides(properties=properties, commands=commands)

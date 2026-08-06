@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pyalsoft"
-version = "0.4.0"
+version = "0.5.0"
 description = "Function-oriented Python audio API and typed OpenAL Soft bindings with bundled runtimes"
 readme = "README.md"
 authors = [
@@ -69,11 +69,11 @@ dev = [
 [tool.mypy]
 files = ["examples", "src", "tools", "tests"]
 strict = true
-exclude = ["^src/pyalsoft/bindings/_generated/"]
+exclude = ["^src/pyalsoft/bindings/"]
 
 [[tool.mypy.overrides]]
-module = "pyalsoft.bindings._generated.*"
-disable_error_code = ["redundant-cast", "valid-type"]
+module = ["pyalsoft.bindings", "pyalsoft.bindings.*"]
+follow_imports = "silent"
 
 [tool.pytest.ini_options]
 addopts = ["--strict-config", "--strict-markers", "-p", "no:cacheprovider", "-ra"]
@@ -128,16 +128,18 @@ test-requires = ["pyinstaller==6.20.0"]
 test-command = [
   "python {project}/examples/play_file.py",
   "python {project}/examples/play_sine.py",
+  "python {project}/examples/select_device_hrtf.py",
   "python {project}/tools/freeze_test.py",
 ]
 environment = { ALSOFT_DRIVERS = "null" }
 
 [tool.cibuildwheel.linux]
-before-all = "dnf install -y alsa-lib-devel pulseaudio-libs-devel"
+before-all = "dnf install -y alsa-lib-devel pulseaudio-libs-devel || (sleep 10 && dnf install -y alsa-lib-devel pulseaudio-libs-devel)"
 test-requires = []
 test-command = [
   "python {project}/examples/play_file.py",
   "python {project}/examples/play_sine.py",
+  "python {project}/examples/select_device_hrtf.py",
 ]
 manylinux-x86_64-image = "manylinux_2_28"
 manylinux-aarch64-image = "manylinux_2_28"

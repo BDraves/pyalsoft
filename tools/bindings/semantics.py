@@ -195,6 +195,21 @@ def _validate_overrides(registry: Registry, overrides: SemanticOverrides) -> Non
                 raise RegistryError(
                     f"command override {name!r} has invalid direction {direction!r}"
                 )
+        if command_override.string_list_name is not None:
+            python_name = command_override.string_list_name
+            if not python_name.isidentifier() or keyword.iskeyword(python_name):
+                raise RegistryError(
+                    f"command override {name!r} has invalid string-list name "
+                    f"{python_name!r}"
+                )
+            known_types = _ctypes_base_expressions(registry, alias_prefix="")
+            base, pointer_depth, _is_const = _split_c_type(
+                command.return_type, known_types
+            )
+            if pointer_depth != 1 or base not in {"char", "ALchar", "ALCchar"}:
+                raise RegistryError(
+                    f"command override {name!r} requires a character-pointer return"
+                )
 
 
 def build_enum_groups(
@@ -430,12 +445,21 @@ def build_command_wrappers(
                 return_group=command.return_group,
                 parameters=parameters,
                 result_size=_needs_result_size(command, outputs),
+                string_list_name=(
+                    override.string_list_name if override is not None else None
+                ),
                 extension=extensions.get(command.name),
                 comment=comment or None,
             )
         )
 
     for namespace in {item.namespace for item in wrappers}:
-        names = [item.python_name for item in wrappers if item.namespace == namespace]
+        names = [
+            name
+            for item in wrappers
+            if item.namespace == namespace
+            for name in (item.python_name, item.string_list_name)
+            if name is not None
+        ]
         _ensure_unique(f"{namespace} Python command", names)
     return tuple(wrappers)

@@ -10,10 +10,14 @@ import pytest
 
 from pyalsoft import (
     PCM,
+    AudioBackendError,
+    HRTFStatus,
     InvalidHandleError,
     InvalidVoiceStateError,
     Listener,
     PlaybackClosedError,
+    PlaybackConfig,
+    PlaybackDevice,
     PlaybackOpenError,
     ResourceInUseError,
     SampleType,
@@ -23,7 +27,9 @@ from pyalsoft import (
     bindings,
     close_playback,
     finish_stream,
+    get_playback_info,
     get_voice_status,
+    list_playback_devices,
     open_playback,
     open_stream,
     pause,
@@ -56,10 +62,17 @@ class FakeAL:
         self.sample_offset_calls: list[tuple[int, int]] = []
         self.listener: dict[int, object] = {}
         self.error = bindings.AL_NO_ERROR
+        self.strings = {
+            bindings.AL_RENDERER: "Fake OpenAL Renderer",
+            bindings.AL_VERSION: "1.1 Fake OpenAL",
+        }
 
     def get_error(self) -> int:
         error, self.error = self.error, bindings.AL_NO_ERROR
         return error
+
+    def get_string(self, parameter: int) -> str | None:
+        return self.strings.get(parameter)
 
     def gen_buffers(self, count: int = 1) -> tuple[int, ...]:
         identifiers = tuple(range(self.next_buffer, self.next_buffer + count))
@@ -170,19 +183,78 @@ class FakeALC:
         self.current_context: object | None = self.previous_context
         self.destroyed_contexts: list[object] = []
         self.closed_devices: list[object] = []
+        self.device_names = ("Speakers", "USB Headset")
+        self.default_device_name = "Speakers"
+        self.opened_device_name: str | bytes | None = None
+        self.context_attributes: tuple[int, ...] | None = None
+        self.extensions = {"ALC_ENUMERATE_ALL_EXT", "ALC_SOFT_HRTF"}
+        self.string_list_queries: list[int] = []
+        self.hrtf_status = bindings.ALC_HRTF_ENABLED_SOFT
+        self.hrtf_name: str | None = "Built-in HRTF"
+        self.error = bindings.ALC_NO_ERROR
+        self.string_list_error = bindings.ALC_NO_ERROR
+        self.hrtf_query_error = bindings.ALC_NO_ERROR
 
     def get_current_context(self) -> object | None:
         return self.current_context
 
     def open_device(self, device_name: str | bytes | None) -> object:
-        del device_name
+        self.opened_device_name = device_name
         return self.device
+
+    def get_error(self, device: object | None) -> int:
+        del device
+        error, self.error = self.error, bindings.ALC_NO_ERROR
+        return error
+
+    def is_extension_present(
+        self, device: object | None, extension: str | bytes | None
+    ) -> bool:
+        del device
+        if isinstance(extension, bytes):
+            extension = extension.decode("ascii")
+        return extension in self.extensions
+
+    def get_strings(self, device: object | None, parameter: int) -> tuple[str, ...]:
+        assert device is None
+        self.string_list_queries.append(parameter)
+        assert parameter in (
+            bindings.ALC_ALL_DEVICES_SPECIFIER,
+            bindings.ALC_DEVICE_SPECIFIER,
+        )
+        self.error = self.string_list_error
+        return self.device_names
+
+    def get_string(self, device: object | None, parameter: int) -> str | None:
+        if device is None:
+            assert parameter in (
+                bindings.ALC_DEFAULT_ALL_DEVICES_SPECIFIER,
+                bindings.ALC_DEFAULT_DEVICE_SPECIFIER,
+            )
+            return self.default_device_name
+        assert device is self.device
+        if parameter == bindings.ALC_DEVICE_SPECIFIER:
+            if isinstance(self.opened_device_name, bytes):
+                return self.opened_device_name.decode("utf-8")
+            return self.opened_device_name or self.default_device_name
+        if parameter == bindings.ALC_HRTF_SPECIFIER_SOFT:
+            return self.hrtf_name
+        raise AssertionError(f"unexpected ALC string parameter {parameter}")
+
+    def get_integerv(
+        self, device: object | None, parameter: int, size: int
+    ) -> tuple[int, ...]:
+        assert device is self.device
+        assert parameter == bindings.ALC_HRTF_STATUS_SOFT
+        assert size == 1
+        self.error = self.hrtf_query_error
+        return (self.hrtf_status,)
 
     def create_context(
         self, device: object, attributes: tuple[int, ...] | None
     ) -> object:
         assert device is self.device
-        assert attributes is None
+        self.context_attributes = attributes
         return self.context
 
     def make_context_current(self, context: object | None) -> bool:
@@ -215,10 +287,14 @@ def test_pcm_and_configuration_are_immutable_data() -> None:
         sample_type=SampleType.INT16,
     )
     config = VoiceConfig(position=(1, 2, 3))
+    playback_config = PlaybackConfig(hrtf=True)
+    device = PlaybackDevice("USB Headset", is_default=True)
 
     assert pcm.frame_count == 2
     assert pcm.duration == 1.0
     assert config.position == (1.0, 2.0, 3.0)
+    assert playback_config.hrtf is True
+    assert device.is_default
     assert replace(config, position=(4.0, 5.0, 6.0)).position == (
         4.0,
         5.0,
@@ -230,6 +306,109 @@ def test_pcm_and_configuration_are_immutable_data() -> None:
         VoiceConfig((1.0, 2.0, 3.0))  # type: ignore[call-arg]
     with pytest.raises(TypeError):
         Listener((1.0, 2.0, 3.0))  # type: ignore[call-arg]
+    with pytest.raises(FrozenInstanceError):
+        playback_config.hrtf = False  # type: ignore[misc]
+    with pytest.raises(TypeError, match="boolean or None"):
+        PlaybackConfig(hrtf=1)  # type: ignore[arg-type]
+
+
+def test_devices_are_enumerated_and_consumed_by_open_playback() -> None:
+    library = FakeLibrary()
+
+    devices = list_playback_devices(library=as_library(library))
+
+    assert devices == (
+        PlaybackDevice("Speakers", is_default=True),
+        PlaybackDevice("USB Headset"),
+    )
+    assert library.alc.string_list_queries == [bindings.ALC_ALL_DEVICES_SPECIFIER]
+
+    with open_playback(
+        devices[1],
+        config=PlaybackConfig(hrtf=True),
+        library=as_library(library),
+    ) as playback:
+        assert library.alc.opened_device_name == "USB Headset"
+        assert library.alc.context_attributes == (bindings.ALC_HRTF_SOFT, 1)
+        assert get_playback_info(playback).device_name == "USB Headset"
+
+
+def test_device_enumeration_falls_back_to_core_specifiers() -> None:
+    library = FakeLibrary()
+    library.alc.extensions.remove("ALC_ENUMERATE_ALL_EXT")
+
+    devices = list_playback_devices(library=as_library(library))
+
+    assert devices[0].is_default
+    assert library.alc.string_list_queries == [bindings.ALC_DEVICE_SPECIFIER]
+
+
+def test_device_enumeration_reports_alc_errors() -> None:
+    library = FakeLibrary()
+    library.alc.string_list_error = bindings.ALC_INVALID_ENUM
+
+    with pytest.raises(AudioBackendError, match="ALC INVALID_ENUM"):
+        list_playback_devices(library=as_library(library))
+
+
+def test_device_enumeration_clears_stale_alc_errors() -> None:
+    library = FakeLibrary()
+    library.alc.error = bindings.ALC_INVALID_VALUE
+
+    assert list_playback_devices(library=as_library(library))
+
+
+@pytest.mark.parametrize(("enabled", "native"), [(True, 1), (False, 0)])
+def test_playback_config_requests_hrtf_when_supported(
+    enabled: bool, native: int
+) -> None:
+    library = FakeLibrary()
+
+    with open_playback(
+        config=PlaybackConfig(hrtf=enabled), library=as_library(library)
+    ):
+        assert library.alc.context_attributes == (bindings.ALC_HRTF_SOFT, native)
+
+
+def test_playback_info_reports_backend_result_and_unavailable_hrtf() -> None:
+    library = FakeLibrary()
+    with open_playback(library=as_library(library)) as playback:
+        info = get_playback_info(playback)
+
+        assert info.renderer == "Fake OpenAL Renderer"
+        assert info.version == "1.1 Fake OpenAL"
+        assert info.hrtf_status is HRTFStatus.ENABLED
+        assert info.hrtf_name == "Built-in HRTF"
+
+    library = FakeLibrary()
+    library.alc.extensions.remove("ALC_SOFT_HRTF")
+    with open_playback(
+        config=PlaybackConfig(hrtf=True), library=as_library(library)
+    ) as playback:
+        info = get_playback_info(playback)
+
+        assert library.alc.context_attributes is None
+        assert info.hrtf_status is HRTFStatus.UNAVAILABLE
+        assert info.hrtf_name is None
+
+
+def test_playback_info_preserves_unknown_future_hrtf_status() -> None:
+    library = FakeLibrary()
+    library.alc.hrtf_status = 0x7FFF
+
+    with open_playback(library=as_library(library)) as playback:
+        assert get_playback_info(playback).hrtf_status is HRTFStatus.UNKNOWN
+
+
+def test_playback_info_reports_alc_errors() -> None:
+    library = FakeLibrary()
+    library.alc.hrtf_query_error = bindings.ALC_INVALID_ENUM
+
+    with (
+        open_playback(library=as_library(library)) as playback,
+        pytest.raises(AudioBackendError, match="ALC INVALID_ENUM"),
+    ):
+        get_playback_info(playback)
 
 
 @pytest.mark.parametrize(
