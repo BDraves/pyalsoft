@@ -155,6 +155,7 @@ class PropertyOverride:
 class CommandOverride:
     lengths: Mapping[str, str]
     directions: Mapping[str, str]
+    string_list_name: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,5 +208,6 @@ class CommandWrapper:
     return_group: str | None
     parameters: tuple[WrapperParameter, ...]
     result_size: bool
+    string_list_name: str | None
     extension: str | None
     comment: str | None

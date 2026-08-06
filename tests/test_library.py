@@ -117,6 +117,32 @@ def test_core_export_is_typed_and_cached(monkeypatch: pytest.MonkeyPatch) -> Non
     assert len(prototype.sources) == 1
 
 
+def test_generated_string_list_wrapper_preserves_embedded_nuls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    encoded = ctypes.create_string_buffer(b"Speakers\0USB Headset\0\0")
+    library = make_library(monkeypatch, {})
+
+    def get_pointer_return_function(
+        name: str, *, device: object | None = None
+    ) -> ForeignFunction:
+        assert name == "alcGetString"
+        assert device is None
+
+        def get_strings(_device: object, _parameter: object) -> int:
+            return ctypes.addressof(encoded)
+
+        return get_strings
+
+    monkeypatch.setattr(
+        library,
+        "_get_pointer_return_function",
+        get_pointer_return_function,
+    )
+
+    assert library.alc.get_strings(None, 0x1013) == ("Speakers", "USB Headset")
+
+
 def test_al_extension_uses_current_context(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[str, object]] = []
 

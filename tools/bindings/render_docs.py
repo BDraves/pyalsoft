@@ -117,6 +117,12 @@ def render_documentation(
                 f"`{wrapper.name}` | `{availability}` | "
                 f"{_markdown(wrapper.comment)} |"
             )
+            if wrapper.string_list_name is not None:
+                lines.append(
+                    f"| `{wrapper.string_list_name}({parameters}) -> tuple[str, ...]` | "
+                    f"`{wrapper.name}` | `{availability}` | "
+                    "Return a NUL-separated string list. |"
+                )
         lines.append("")
 
     lines.extend(["## Enum groups", ""])

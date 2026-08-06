@@ -137,6 +137,11 @@ directions = { mem = "inout" }
 [command.alcCaptureSamples]
 directions = { buffer = "inout" }
 
+# With a null device, enumeration selectors return a sequence of C strings
+# terminated by an empty string rather than one ordinary C string.
+[command.alcGetString]
+string_list_name = "get_strings"
+
 [command.alcRenderSamplesSOFT]
 directions = { buffer = "inout" }
 
