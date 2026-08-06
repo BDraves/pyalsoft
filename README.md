@@ -80,10 +80,33 @@ with open_playback() as playback:
     release(playback, clip)
 ```
 
+### Device selection and HRTF
+
+Playback devices can be enumerated and passed to `open_playback`. Context
+preferences such as HRTF are requested with `PlaybackConfig`; query
+`PlaybackInfo` to see what the audio backend actually enabled:
+
+```python
+from pyalsoft import (
+    PlaybackConfig,
+    get_playback_info,
+    list_playback_devices,
+    open_playback,
+)
+
+devices = list_playback_devices()
+selected = next((device for device in devices if device.is_default), None)
+
+with open_playback(selected, config=PlaybackConfig(hrtf=True)) as playback:
+    info = get_playback_info(playback)
+    print(info.device_name, info.hrtf_status.value, info.hrtf_name)
+```
+
 See [`examples/play_sine.py`](examples/play_sine.py),
 [`examples/move_sine.py`](examples/move_sine.py), and
 [`examples/stream_sine.py`](examples/stream_sine.py) for complete explicit API
-examples.
+examples. Device selection and HRTF are demonstrated in
+[`examples/select_device_hrtf.py`](examples/select_device_hrtf.py).
 
 ## API layers
 
