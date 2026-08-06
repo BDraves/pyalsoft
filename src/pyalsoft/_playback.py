@@ -1,22 +1,33 @@
-"""Functional, managed playback API built on the low-level bindings."""
+"""Function-oriented managed playback API built on the low-level bindings."""
 
 from __future__ import annotations
 
+import atexit
 import math
+import wave
 from collections import deque
 from collections.abc import Buffer
+from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import Enum
+from os import PathLike
+from pathlib import Path
+from threading import RLock
 from types import TracebackType
 from typing import Self, cast, overload
 
 from pyalsoft import bindings
 
 type Vector3 = tuple[float, float, float]
+type AudioPath = str | PathLike[str]
 
 
 class AudioError(Exception):
     """Base exception for the managed audio API."""
+
+
+class AudioFileError(AudioError):
+    """Raised when a file cannot be decoded by the convenience API."""
 
 
 class PlaybackOpenError(AudioError):
@@ -570,7 +581,7 @@ def upload(playback: Playback, pcm: PCM) -> Clip:
     return Clip(playback._token, token, identifier)
 
 
-def play(
+def _play_voice(
     playback: Playback,
     clip: Clip,
     config: VoiceConfig = _DEFAULT_VOICE_CONFIG,
@@ -1060,9 +1071,311 @@ def release(playback: Playback, resource: Clip | Voice | Stream) -> None:
     raise TypeError("resource must be a Clip, Voice, or Stream")
 
 
+@dataclass(slots=True)
+class _SoundRecord:
+    token: object
+    voice: Voice
+    final_status: VoiceStatus | None = None
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class PlayingSound:
+    """One playback instance returned by :func:`play`.
+
+    The default playback runtime owns the native resources, so discarding this
+    object does not stop the sound. Its methods are convenient delegates to the
+    function-oriented managed API.
+    """
+
+    _runtime: _DefaultRuntime
+    _record: _SoundRecord
+
+    @property
+    def status(self) -> VoiceStatus:
+        """Current playback state and offset."""
+
+        return self._runtime.status(self._record)
+
+    @property
+    def state(self) -> VoiceState:
+        """Current playback state."""
+
+        return self.status.state
+
+    @property
+    def playing(self) -> bool:
+        """Whether the sound is currently playing."""
+
+        return self.state is VoiceState.PLAYING
+
+    def pause(self) -> None:
+        """Pause the sound if it is currently playing."""
+
+        self._runtime.pause(self._record)
+
+    def resume(self) -> None:
+        """Resume the sound if it is paused."""
+
+        self._runtime.resume(self._record)
+
+    def stop(self) -> None:
+        """Stop the sound and release its playback voice."""
+
+        self._runtime.stop(self._record)
+
+    def set_config(self, config: VoiceConfig) -> None:
+        """Apply a complete immutable voice configuration."""
+
+        self._runtime.set_config(self._record, config)
+
+    def __repr__(self) -> str:
+        return "PlayingSound(<opaque>)"
+
+
+def _read_wave(path: Path) -> PCM:
+    try:
+        with wave.open(str(path), "rb") as source:
+            if source.getcomptype() != "NONE":
+                raise AudioFileError(f"unsupported compressed WAV file: {path}")
+            channels = source.getnchannels()
+            sample_rate = source.getframerate()
+            sample_width = source.getsampwidth()
+            samples = source.readframes(source.getnframes())
+    except (EOFError, wave.Error) as error:
+        raise AudioFileError(f"could not read WAV file {path}: {error}") from error
+
+    try:
+        sample_type = {
+            1: SampleType.UINT8,
+            2: SampleType.INT16,
+        }[sample_width]
+    except KeyError as error:
+        raise AudioFileError(
+            f"unsupported {sample_width * 8}-bit WAV file: {path}"
+        ) from error
+
+    try:
+        return PCM(
+            samples=samples,
+            channels=channels,
+            sample_rate=sample_rate,
+            sample_type=sample_type,
+        )
+    except (TypeError, ValueError) as error:
+        raise AudioFileError(f"unsupported WAV file {path}: {error}") from error
+
+
+class _DefaultRuntime:
+    """Own the implicit session, cached clips, and active playback voices."""
+
+    __slots__ = ("_active", "_clips", "_closed", "_lock", "_playback")
+
+    def __init__(self) -> None:
+        self._playback: Playback | None = None
+        self._clips: dict[Path, Clip] = {}
+        self._active: dict[object, _SoundRecord] = {}
+        self._closed = False
+        self._lock = RLock()
+
+    def _require_open(self) -> None:
+        if self._closed:
+            raise InvalidVoiceStateError("the sound's playback runtime is closed")
+
+    def _ensure_playback(self) -> Playback:
+        self._require_open()
+        if self._playback is None:
+            self._playback = open_playback()
+        return self._playback
+
+    def _opened_playback(self) -> Playback:
+        self._require_open()
+        if self._playback is None:
+            raise InvalidVoiceStateError("the sound was not started")
+        return self._playback
+
+    def _finalize(self, record: _SoundRecord, status: VoiceStatus) -> None:
+        release(self._opened_playback(), record.voice)
+        record.final_status = status
+        del self._active[record.token]
+
+    def _status(self, record: _SoundRecord) -> VoiceStatus:
+        if record.final_status is not None:
+            return record.final_status
+        self._require_open()
+        status = get_voice_status(self._opened_playback(), record.voice)
+        if status.state is VoiceState.STOPPED:
+            self._finalize(record, status)
+        return status
+
+    def _reap_finished(self) -> None:
+        for record in tuple(self._active.values()):
+            self._status(record)
+
+    def play(self, path: AudioPath, config: VoiceConfig) -> PlayingSound:
+        if not isinstance(config, VoiceConfig):
+            raise TypeError("config must be a VoiceConfig")
+        normalized = Path(path).expanduser().resolve()
+        with self._lock:
+            self._require_open()
+            self._reap_finished()
+            clip = self._clips.get(normalized)
+            if clip is None:
+                pcm = _read_wave(normalized)
+                clip = upload(self._ensure_playback(), pcm)
+                self._clips[normalized] = clip
+            voice = _play_voice(self._opened_playback(), clip, config)
+            token = object()
+            record = _SoundRecord(token, voice)
+            self._active[token] = record
+            return PlayingSound(self, record)
+
+    def status(self, record: _SoundRecord) -> VoiceStatus:
+        with self._lock:
+            return self._status(record)
+
+    def pause(self, record: _SoundRecord) -> None:
+        with self._lock:
+            status = self._status(record)
+            if status.state is VoiceState.PLAYING:
+                pause(self._opened_playback(), record.voice)
+
+    def resume(self, record: _SoundRecord) -> None:
+        with self._lock:
+            status = self._status(record)
+            if status.state is not VoiceState.PAUSED:
+                raise InvalidVoiceStateError(
+                    f"cannot resume a sound in the {status.state.value} state"
+                )
+            resume(self._opened_playback(), record.voice)
+
+    def stop(self, record: _SoundRecord) -> None:
+        with self._lock:
+            if record.final_status is not None:
+                return
+            status = self._status(record)
+            if status.state is VoiceState.STOPPED:
+                return
+            stop(self._opened_playback(), record.voice)
+            self._finalize(
+                record,
+                VoiceStatus(
+                    state=VoiceState.STOPPED,
+                    offset_seconds=status.offset_seconds,
+                ),
+            )
+
+    def set_config(self, record: _SoundRecord, config: VoiceConfig) -> None:
+        if not isinstance(config, VoiceConfig):
+            raise TypeError("config must be a VoiceConfig")
+        with self._lock:
+            status = self._status(record)
+            if status.state is VoiceState.STOPPED:
+                raise InvalidVoiceStateError("cannot configure a stopped sound")
+            set_voice_config(self._opened_playback(), record.voice, config)
+
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            statuses: dict[object, VoiceStatus] = {}
+            for token, record in self._active.items():
+                try:
+                    status = get_voice_status(self._opened_playback(), record.voice)
+                    statuses[token] = VoiceStatus(
+                        state=VoiceState.STOPPED,
+                        offset_seconds=status.offset_seconds,
+                    )
+                except Exception:
+                    statuses[token] = VoiceStatus(
+                        state=VoiceState.STOPPED,
+                        offset_seconds=0.0,
+                    )
+            try:
+                if self._playback is not None:
+                    close_playback(self._playback)
+            finally:
+                for token, record in self._active.items():
+                    record.final_status = statuses[token]
+                self._active.clear()
+                self._clips.clear()
+                self._playback = None
+                self._closed = True
+
+
+_default_runtime: _DefaultRuntime | None = None
+_default_lock = RLock()
+
+
+def _get_default_runtime() -> _DefaultRuntime:
+    global _default_runtime
+    with _default_lock:
+        if _default_runtime is None:
+            _default_runtime = _DefaultRuntime()
+        return _default_runtime
+
+
+@overload
+def play(
+    playback: Playback,
+    clip: Clip,
+    config: VoiceConfig = _DEFAULT_VOICE_CONFIG,
+) -> Voice: ...
+
+
+@overload
+def play(
+    playback: AudioPath,
+    /,
+    *,
+    config: VoiceConfig = _DEFAULT_VOICE_CONFIG,
+) -> PlayingSound: ...
+
+
+def play(
+    playback: Playback | AudioPath,
+    clip: Clip | None = None,
+    config: VoiceConfig = _DEFAULT_VOICE_CONFIG,
+) -> Voice | PlayingSound:
+    """Play an explicit clip or a WAV file through the default runtime.
+
+    ``play(playback, clip, config)`` preserves the explicit managed API.
+    ``play(path, config=config)`` starts asynchronous, fire-and-forget playback
+    and returns an optional control handle.
+    """
+
+    if isinstance(playback, Playback):
+        if clip is None:
+            raise TypeError("clip must be provided with an explicit Playback")
+        return _play_voice(playback, clip, config)
+    if clip is not None:
+        raise TypeError("clip is only valid with an explicit Playback")
+    if not isinstance(playback, (str, PathLike)):
+        raise TypeError("sound must be a path to a WAV file")
+    return _get_default_runtime().play(playback, config)
+
+
+def shutdown() -> None:
+    """Close and forget the default playback runtime, if it was opened."""
+
+    global _default_runtime
+    with _default_lock:
+        runtime, _default_runtime = _default_runtime, None
+        if runtime is not None:
+            runtime.close()
+
+
+def _shutdown_at_exit() -> None:
+    with suppress(Exception):
+        shutdown()
+
+
+atexit.register(_shutdown_at_exit)
+
+
 __all__ = [
     "AudioBackendError",
     "AudioError",
+    "AudioFileError",
     "Clip",
     "InvalidHandleError",
     "InvalidVoiceStateError",
@@ -1071,6 +1384,7 @@ __all__ = [
     "Playback",
     "PlaybackClosedError",
     "PlaybackOpenError",
+    "PlayingSound",
     "ResourceInUseError",
     "SampleType",
     "Stream",
@@ -1093,6 +1407,7 @@ __all__ = [
     "resume",
     "set_listener",
     "set_voice_config",
+    "shutdown",
     "start_stream",
     "stop",
     "try_write_stream",

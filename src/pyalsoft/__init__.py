@@ -1,10 +1,11 @@
-"""Functional, managed playback and low-level OpenAL Soft bindings."""
+"""Function-oriented managed playback and low-level OpenAL Soft bindings."""
 
 from pyalsoft import bindings
 from pyalsoft._playback import (
     PCM,
     AudioBackendError,
     AudioError,
+    AudioFileError,
     Clip,
     InvalidHandleError,
     InvalidVoiceStateError,
@@ -12,6 +13,7 @@ from pyalsoft._playback import (
     Playback,
     PlaybackClosedError,
     PlaybackOpenError,
+    PlayingSound,
     ResourceInUseError,
     SampleType,
     Stream,
@@ -34,6 +36,7 @@ from pyalsoft._playback import (
     resume,
     set_listener,
     set_voice_config,
+    shutdown,
     start_stream,
     stop,
     try_write_stream,
@@ -44,6 +47,7 @@ from pyalsoft._playback import (
 __all__ = [
     "AudioBackendError",
     "AudioError",
+    "AudioFileError",
     "Clip",
     "InvalidHandleError",
     "InvalidVoiceStateError",
@@ -52,6 +56,7 @@ __all__ = [
     "Playback",
     "PlaybackClosedError",
     "PlaybackOpenError",
+    "PlayingSound",
     "ResourceInUseError",
     "SampleType",
     "Stream",
@@ -75,6 +80,7 @@ __all__ = [
     "resume",
     "set_listener",
     "set_voice_config",
+    "shutdown",
     "start_stream",
     "stop",
     "try_write_stream",
