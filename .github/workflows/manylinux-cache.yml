@@ -1,0 +1,88 @@
+name: Warm release caches
+
+on:
+  schedule:
+    - cron: "27 3 * * 0"
+  push:
+    branches: ["development", "master"]
+    paths:
+      - ".github/manylinux/*.Dockerfile"
+      - ".github/workflows/manylinux-cache.yml"
+      - "hatch_build.py"
+      - "tools/build_openal_soft.py"
+      - "tools/openal_soft.py"
+      - "vendor/openal-soft/source.toml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Cache (${{ matrix.image_arch }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            dockerfile: .github/manylinux/x86_64.Dockerfile
+            image_arch: x86_64
+          - os: ubuntu-24.04-arm
+            dockerfile: .github/manylinux/aarch64.Dockerfile
+            image_arch: aarch64
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Warm image cache
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          tags: pyalsoft-manylinux:ci
+          load: true
+          cache-from: type=gha,scope=pyalsoft-manylinux-${{ matrix.image_arch }}
+          cache-to: type=gha,mode=min,scope=pyalsoft-manylinux-${{ matrix.image_arch }}
+
+      - name: Cache built OpenAL runtime
+        id: openal-cache
+        uses: actions/cache@v5
+        with:
+          path: build/native
+          key: openal-v2-${{ matrix.os }}-${{ hashFiles('vendor/openal-soft/source.toml', 'tools/build_openal_soft.py', 'tools/openal_soft.py', 'hatch_build.py', '.github/manylinux/*.Dockerfile') }}
+
+      - name: Build OpenAL runtime on cache miss
+        if: steps.openal-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          docker run --rm \
+            --volume "${{ github.workspace }}:/project" \
+            --workdir /project \
+            --env PYALSOFT_NATIVE_ROOT=/project/build/native \
+            pyalsoft-manylinux:ci \
+            /opt/python/cp312-cp312/bin/python tools/build_openal_soft.py
+
+      - name: Verify OpenAL runtime cache
+        shell: bash
+        env:
+          OPENAL_CACHE_HIT: ${{ steps.openal-cache.outputs.cache-hit }}
+        run: |
+          runtime="$(find build/native -type f -name 'libopenal.so.1' -print -quit)"
+          if [[ -z "$runtime" ]]; then
+            echo "OpenAL runtime was not written to build/native." >&2
+            exit 1
+          fi
+          echo "OpenAL cache hit: ${OPENAL_CACHE_HIT:-false}"
+          echo "Cached $runtime"
