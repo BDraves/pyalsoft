@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "pyalsoft"
 version = "0.3.0"
-description = "Functional Python audio API and typed OpenAL Soft bindings with bundled runtimes"
+description = "Function-oriented Python audio API and typed OpenAL Soft bindings with bundled runtimes"
 readme = "README.md"
 authors = [
   { name = "Brennan Draves", email = "dravesbrennan@gmail.com" },
@@ -126,6 +126,7 @@ build = "cp312-manylinux_* cp312-macosx_* cp312-win_amd64"
 build-frontend = "uv"
 test-requires = ["pyinstaller==6.20.0"]
 test-command = [
+  "python {project}/examples/play_file.py",
   "python {project}/examples/play_sine.py",
   "python {project}/tools/freeze_test.py",
 ]
@@ -134,6 +135,9 @@ environment = { ALSOFT_DRIVERS = "null" }
 [tool.cibuildwheel.linux]
 before-all = "dnf install -y alsa-lib-devel pulseaudio-libs-devel"
 test-requires = []
-test-command = "python {project}/examples/play_sine.py"
+test-command = [
+  "python {project}/examples/play_file.py",
+  "python {project}/examples/play_sine.py",
+]
 manylinux-x86_64-image = "manylinux_2_28"
 manylinux-aarch64-image = "manylinux_2_28"

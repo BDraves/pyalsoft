@@ -7,7 +7,7 @@
 [![OpenAL Soft 1.25.2](https://img.shields.io/badge/OpenAL_Soft-1.25.2-557C94)](https://github.com/kcat/openal-soft/releases/tag/1.25.2)
 <!-- openal-soft-version-badge:end -->
 
-PyALSoft provides a functional, managed playback API and typed bindings for
+PyALSoft provides a function-oriented, managed playback API and typed bindings for
 OpenAL Soft, including core OpenAL, ALC, EFX, and supported extensions. The
 managed API lives at the package root; the complete low-level interface remains
 available through `pyalsoft.bindings`.
@@ -24,55 +24,71 @@ python3 -m pip install pyalsoft
 
 ## Quick start
 
-This example generates a 440 Hz sine wave, plays it, and releases every native
-resource when the `with` block exits:
+`play` starts a WAV file immediately and returns an optional control handle:
 
 ```python
-import math
 import time
-from array import array
 
-from pyalsoft import (
-    PCM,
-    VoiceState,
-    get_voice_status,
-    open_playback,
-    play,
-    release,
-    upload,
+from pyalsoft import play
+
+sound = play("sound.wav")
+while sound.playing:
+    time.sleep(0.1)
+```
+
+Playback is asynchronous. If no control is needed, the return value can be
+ignored without stopping the sound:
+
+```python
+play("notification.wav")
+```
+
+The returned `PlayingSound` has `pause()`, `resume()`, `stop()`, and
+`set_config()` methods, plus `playing`, `state`, and `status` properties. The
+convenience API supports uncompressed mono or stereo WAV files containing 8-bit
+unsigned or 16-bit signed PCM. It opens its default audio session lazily, reuses
+clips loaded from the same resolved path, and releases it automatically at
+process exit. Applications can call `shutdown()` to close it earlier.
+
+The complete example is available as [`examples/play_file.py`](examples/play_file.py)
+and can be run from a source checkout with:
+
+```console
+uv run python examples/play_file.py
+```
+
+## Explicit playback sessions
+
+Applications that generate audio, stream it, select a device, or require fully
+explicit resource lifetimes can use the underlying managed API directly:
+
+```python
+from pyalsoft import PCM, open_playback, play, release, upload
+
+pcm = PCM(
+    # Half a second of mono silence; replace with your application's PCM bytes.
+    samples=b"\0\0" * 22_050,
+    channels=1,
+    sample_rate=44_100,
 )
 
-sample_rate = 44_100
-duration = 0.5
-pcm = array(
-    "h",
-    (
-        round(((1 << 14) - 1) * math.sin(math.tau * 440 * frame / sample_rate))
-        for frame in range(round(sample_rate * duration))
-    ),
-).tobytes()
-
-audio = PCM(samples=pcm, channels=1, sample_rate=sample_rate)
-
 with open_playback() as playback:
-    clip = upload(playback, audio)
+    clip = upload(playback, pcm)
     voice = play(playback, clip)
-    while get_voice_status(playback, voice).state is VoiceState.PLAYING:
-        time.sleep(0.01)
+    # Query or control the voice here.
     release(playback, voice)
     release(playback, clip)
 ```
 
-The same example is available as [`examples/play_sine.py`](examples/play_sine.py)
-and can be run from a source checkout with:
-
-```console
-uv run python examples/play_sine.py
-```
+See [`examples/play_sine.py`](examples/play_sine.py),
+[`examples/move_sine.py`](examples/move_sine.py), and
+[`examples/stream_sine.py`](examples/stream_sine.py) for complete explicit API
+examples.
 
 ## API layers
 
-Automatically generated, CType bindings of OpenAL live at `pyalsoft.bindings`. Only experienced users should touch these. Most users can pretend they do not exist.
+Automatically generated ctypes bindings for OpenAL live at
+`pyalsoft.bindings`. Only experienced users should need them.
 
 `pyalsoft` holds the hand authored Python API, intended to make working with the library more Pythonic and manageable.
 

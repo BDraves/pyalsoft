@@ -14,7 +14,6 @@ def main() -> None:
     """Play the example chime and do fake application work until it finishes."""
 
     sound = play(EXAMPLE_SOUND)
-    tick = 0
     while sound.playing:
         time.sleep(0.1)
 
