@@ -436,9 +436,7 @@ def _clear_al_errors(playback: Playback) -> None:
     raise AudioBackendError("OpenAL error state could not be cleared")
 
 
-def _clear_alc_errors(
-    library: bindings.OpenALLibrary, device: object | None
-) -> None:
+def _clear_alc_errors(library: bindings.OpenALLibrary, device: object | None) -> None:
     for _ in range(16):
         if int(library.alc.get_error(device)) == bindings.ALC_NO_ERROR:
             return

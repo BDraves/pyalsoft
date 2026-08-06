@@ -244,9 +244,7 @@ def _decode_string_list(value: object) -> tuple[str, ...]:
         address += len(encoded) + 1
 
 
-def _validate_string_list_call(
-    name: str, values: Mapping[str, object]
-) -> None:
+def _validate_string_list_call(name: str, values: Mapping[str, object]) -> None:
     if name != "alcGetString":
         raise TypeError(f"{name!r} is not a supported string-list command")
     if values.get("device") is not None:
