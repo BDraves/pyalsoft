@@ -20,6 +20,7 @@ on:
       - "src/pyalsoft/_pyinstaller_hooks/**"
       - "src/pyalsoft/bindings/_library.py"
       - "tools/build_openal_soft.py"
+      - "tools/conformance_test_runtime.py"
       - "tools/freeze_test.py"
       - "tools/openal_soft.py"
       - "tools/smoke_test_runtime.py"

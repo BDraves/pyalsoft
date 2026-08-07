@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pyalsoft"
-version = "0.5.0"
+version = "0.6.0"
 description = "Function-oriented Python audio API and typed OpenAL Soft bindings with bundled runtimes"
 readme = "README.md"
 authors = [
@@ -69,7 +69,7 @@ dev = [
 [tool.mypy]
 files = ["examples", "src", "tools", "tests"]
 strict = true
-exclude = ["^src/pyalsoft/bindings/"]
+exclude = ["^src/pyalsoft/bindings/_generated/"]
 
 [[tool.mypy.overrides]]
 module = ["pyalsoft.bindings", "pyalsoft.bindings.*"]
@@ -129,6 +129,7 @@ test-command = [
   "python {project}/examples/play_file.py",
   "python {project}/examples/play_sine.py",
   "python {project}/examples/select_device_hrtf.py",
+  "python {project}/tools/conformance_test_runtime.py",
   "python {project}/tools/freeze_test.py",
 ]
 environment = { ALSOFT_DRIVERS = "null" }
@@ -140,6 +141,7 @@ test-command = [
   "python {project}/examples/play_file.py",
   "python {project}/examples/play_sine.py",
   "python {project}/examples/select_device_hrtf.py",
+  "python {project}/tools/conformance_test_runtime.py",
 ]
 manylinux-x86_64-image = "manylinux_2_28"
 manylinux-aarch64-image = "manylinux_2_28"

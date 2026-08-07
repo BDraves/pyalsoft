@@ -111,7 +111,10 @@ examples. Device selection and HRTF are demonstrated in
 ## API layers
 
 Automatically generated ctypes bindings for OpenAL live at
-`pyalsoft.bindings`. Only experienced users should need them.
+`pyalsoft.bindings`. The same namespace also provides owned playback, capture,
+loopback, and context handles for deterministic native resource lifetimes. See
+the [owned backend handle guide](docs/backend.md) and the generated
+[bindings reference](docs/reference.md).
 
 `pyalsoft` holds the hand authored Python API, intended to make working with the library more Pythonic and manageable.
 

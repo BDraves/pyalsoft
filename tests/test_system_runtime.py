@@ -8,6 +8,7 @@ from typing import cast
 import pytest
 
 from pyalsoft import bindings
+from tools.conformance_test_runtime import run as run_backend_conformance
 
 pytestmark = [
     pytest.mark.integration,
@@ -43,3 +44,12 @@ def test_system_runtime_can_create_a_context(
         if context:
             library.alcDestroyContext(context)
         assert library.alcCloseDevice(device)
+
+
+def test_system_runtime_passes_backend_conformance() -> None:
+    """Exercise generated marshalling and owned handles with loopback output."""
+
+    path = os.environ.get("PYALSOFT_TEST_LIBRARY")
+    result = run_backend_conformance(bindings.load(path))
+
+    assert result.startswith("backend conformance passed:")
