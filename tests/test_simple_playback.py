@@ -91,6 +91,108 @@ def test_playing_sound_delegates_status_and_controls(
         sound.resume()
 
 
+def test_playing_sound_exposes_timeline_and_individual_source_controls(
+    tmp_path: Path,
+    default_library: FakeLibrary,
+) -> None:
+    path = tmp_path / "controlled.wav"
+    _write_wave(path)
+
+    sound = play(
+        path,
+        config=VoiceConfig(gain=0.1),
+        position=(1.0, 2.0, 3.0),
+        velocity=(4.0, 5.0, 6.0),
+        direction=(0.0, 0.0, 1.0),
+        gain=0.6,
+        pitch=1.25,
+        looping=True,
+        relative=True,
+        min_gain=0.1,
+        max_gain=0.9,
+        reference_distance=2.0,
+        max_distance=20.0,
+        rolloff_factor=0.5,
+        cone_inner_angle=60.0,
+        cone_outer_angle=180.0,
+        cone_outer_gain=0.2,
+        offset_seconds=0.0005,
+    )
+
+    assert sound.duration_seconds == pytest.approx(0.001)
+    assert sound.offset_seconds == pytest.approx(0.0005)
+    assert sound.remaining_seconds == pytest.approx(0.0005)
+    assert sound.progress == pytest.approx(0.5)
+    assert sound.position == (1.0, 2.0, 3.0)
+    assert sound.velocity == (4.0, 5.0, 6.0)
+    assert sound.direction == (0.0, 0.0, 1.0)
+    assert sound.gain == 0.6
+    assert sound.pitch == 1.25
+    assert sound.looping
+    assert sound.relative
+    assert sound.min_gain == 0.1
+    assert sound.max_gain == 0.9
+    assert sound.reference_distance == 2.0
+    assert sound.max_distance == 20.0
+    assert sound.rolloff_factor == 0.5
+    assert sound.cone_inner_angle == 60.0
+    assert sound.cone_outer_angle == 180.0
+    assert sound.cone_outer_gain == 0.2
+
+    source = default_library.al.sources[100]
+    assert source[bindings.AL_REFERENCE_DISTANCE] == 2.0
+    assert source[bindings.AL_MAX_DISTANCE] == 20.0
+    assert source[bindings.AL_ROLLOFF_FACTOR] == 0.5
+    assert source[bindings.AL_CONE_INNER_ANGLE] == 60.0
+    assert source[bindings.AL_CONE_OUTER_ANGLE] == 180.0
+    assert source[bindings.AL_CONE_OUTER_GAIN] == 0.2
+
+    sound.pitch = 1.5
+    sound.position = (-1.0, 0.0, -2.0)
+    assert sound.pitch == 1.5
+    assert sound.gain == 0.6
+    assert source[bindings.AL_PITCH] == 1.5
+    assert source[bindings.AL_POSITION] == (-1.0, 0.0, -2.0)
+
+    sound.seek(0.00075)
+    assert sound.offset_seconds == pytest.approx(0.00075)
+    sound.pause()
+    sound.rewind()
+    assert sound.paused
+    assert sound.offset_seconds == 0.0
+    sound.restart()
+    assert sound.playing
+    assert sound.offset_seconds == 0.0
+
+
+def test_playing_sound_validates_seeks_and_can_restart_after_completion(
+    tmp_path: Path,
+    default_library: FakeLibrary,
+) -> None:
+    path = tmp_path / "restart.wav"
+    _write_wave(path)
+    sound = play(path, gain=0.4)
+
+    with pytest.raises(ValueError, match="at least 0.0"):
+        sound.seek(-0.1)
+    with pytest.raises(ValueError, match="less than the sound duration"):
+        sound.seek(sound.duration_seconds)
+
+    default_library.al.states[100] = bindings.AL_STOPPED
+    assert sound.finished
+    assert sound.done
+    assert sound.stopped
+    assert sound.offset_seconds == sound.duration_seconds
+
+    sound.restart()
+
+    assert sound.playing
+    assert not sound.finished
+    assert sound.gain == 0.4
+    assert set(default_library.al.sources) == {101}
+    assert default_library.al.sources[101][bindings.AL_GAIN] == 0.4
+
+
 def test_ignored_handle_keeps_playing_and_finished_voices_are_reaped(
     tmp_path: Path,
     default_library: FakeLibrary,

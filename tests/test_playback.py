@@ -24,6 +24,7 @@ from pyalsoft import (
     StreamState,
     VoiceConfig,
     VoiceState,
+    VoiceStatus,
     bindings,
     close_playback,
     finish_stream,
@@ -36,7 +37,10 @@ from pyalsoft import (
     play,
     release,
     release_finished,
+    restart,
     resume,
+    rewind,
+    seek,
     set_listener,
     set_voice_config,
     start_stream,
@@ -113,6 +117,8 @@ class FakeAL:
 
     def sourcef(self, identifier: int, parameter: int, value: float) -> None:
         self.sources[identifier][parameter] = value
+        if parameter == bindings.AL_SEC_OFFSET:
+            self.offsets[identifier] = value
 
     def sourcei(self, identifier: int, parameter: int, value: int) -> None:
         self.sources[identifier][parameter] = value
@@ -133,6 +139,10 @@ class FakeAL:
         if identifier in self.queues:
             self.processed[identifier] = len(self.queues[identifier])
 
+    def source_rewind(self, identifier: int) -> None:
+        self.states[identifier] = bindings.AL_INITIAL
+        self.offsets[identifier] = 0.0
+
     def source_stopv(self, sources: tuple[int, ...]) -> None:
         for identifier in sources:
             self.source_stop(identifier)
@@ -150,7 +160,7 @@ class FakeAL:
         assert parameter == bindings.AL_SEC_OFFSET
         if identifier in self.queues:
             return self.offsets.get(identifier, 0.0)
-        return 0.25
+        return self.offsets.get(identifier, 0.25)
 
     def source_queue_buffers(self, identifier: int, buffers: tuple[int, ...]) -> None:
         self.queues.setdefault(identifier, []).extend(buffers)
@@ -310,6 +320,27 @@ def test_pcm_and_configuration_are_immutable_data() -> None:
         playback_config.hrtf = False  # type: ignore[misc]
     with pytest.raises(TypeError, match="boolean or None"):
         PlaybackConfig(hrtf=1)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        ({"min_gain": -0.1}, "min_gain must be between"),
+        ({"max_gain": 1.1}, "max_gain must be between"),
+        ({"min_gain": 0.8, "max_gain": 0.2}, "min_gain cannot exceed"),
+        ({"reference_distance": -1.0}, "reference_distance cannot be negative"),
+        ({"max_distance": -1.0}, "max_distance cannot be negative"),
+        ({"rolloff_factor": -1.0}, "rolloff_factor cannot be negative"),
+        ({"cone_inner_angle": 361.0}, "cone_inner_angle must be between"),
+        ({"cone_outer_angle": -1.0}, "cone_outer_angle must be between"),
+        ({"cone_outer_gain": 1.1}, "cone_outer_gain must be between"),
+    ],
+)
+def test_voice_config_rejects_invalid_spatial_controls(
+    arguments: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        VoiceConfig(**arguments)  # type: ignore[arg-type]
 
 
 def test_devices_are_enumerated_and_consumed_by_open_playback() -> None:
@@ -489,6 +520,32 @@ def test_managed_playback_applies_data_and_controls_lifecycle() -> None:
     assert library.alc.destroyed_contexts == [library.alc.context]
     assert library.alc.closed_devices == [library.alc.device]
     assert library.alc.current_context is library.alc.previous_context
+
+
+def test_static_voice_can_seek_rewind_and_restart() -> None:
+    library = FakeLibrary()
+    with open_playback(library=as_library(library)) as playback:
+        clip = upload(playback, PCM(b"\0\0" * 10, channels=1, sample_rate=10))
+        voice = play(playback, clip)
+
+        pause(playback, voice)
+        seek(playback, voice, 0.5)
+        assert get_voice_status(playback, voice) == VoiceStatus(
+            state=VoiceState.PAUSED,
+            offset_seconds=0.5,
+        )
+
+        rewind(playback, voice)
+        assert get_voice_status(playback, voice) == VoiceStatus(
+            state=VoiceState.INITIAL,
+            offset_seconds=0.0,
+        )
+
+        restart(playback, voice)
+        assert get_voice_status(playback, voice).state is VoiceState.PLAYING
+
+        release(playback, voice)
+        release(playback, clip)
 
 
 def test_release_finished_collects_only_stopped_voices() -> None:

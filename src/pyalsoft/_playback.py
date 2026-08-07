@@ -8,7 +8,7 @@ import wave
 from collections import deque
 from collections.abc import Buffer
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from os import PathLike
 from pathlib import Path
@@ -20,6 +20,8 @@ from pyalsoft import bindings
 
 type Vector3 = tuple[float, float, float]
 type AudioPath = str | PathLike[str]
+
+_FLOAT32_MAX = float.fromhex("0x1.fffffep+127")
 
 
 class AudioError(Exception):
@@ -106,6 +108,16 @@ def _finite_float(name: str, value: float) -> float:
     if not math.isfinite(converted):
         raise ValueError(f"{name} must be finite")
     return converted
+
+
+def _sound_offset(value: float, duration_seconds: float) -> float:
+    offset_seconds = _finite_float("offset_seconds", value)
+    if not 0.0 <= offset_seconds < duration_seconds:
+        raise ValueError(
+            "offset_seconds must be at least 0.0 and less than the "
+            f"sound duration ({duration_seconds:g} seconds)"
+        )
+    return offset_seconds
 
 
 def _vector3(name: str, value: Vector3) -> Vector3:
@@ -209,6 +221,14 @@ class VoiceConfig:
     pitch: float = 1.0
     looping: bool = False
     relative: bool = False
+    min_gain: float = 0.0
+    max_gain: float = 1.0
+    reference_distance: float = 1.0
+    max_distance: float = _FLOAT32_MAX
+    rolloff_factor: float = 1.0
+    cone_inner_angle: float = 360.0
+    cone_outer_angle: float = 360.0
+    cone_outer_gain: float = 0.0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "position", _vector3("position", self.position))
@@ -224,8 +244,44 @@ class VoiceConfig:
             raise TypeError("looping must be a boolean")
         if not isinstance(self.relative, bool):
             raise TypeError("relative must be a boolean")
+        min_gain = _finite_float("min_gain", self.min_gain)
+        if not 0.0 <= min_gain <= 1.0:
+            raise ValueError("min_gain must be between 0.0 and 1.0")
+        max_gain = _finite_float("max_gain", self.max_gain)
+        if not 0.0 <= max_gain <= 1.0:
+            raise ValueError("max_gain must be between 0.0 and 1.0")
+        if min_gain > max_gain:
+            raise ValueError("min_gain cannot exceed max_gain")
+        reference_distance = _finite_float(
+            "reference_distance", self.reference_distance
+        )
+        if reference_distance < 0.0:
+            raise ValueError("reference_distance cannot be negative")
+        max_distance = _finite_float("max_distance", self.max_distance)
+        if max_distance < 0.0:
+            raise ValueError("max_distance cannot be negative")
+        rolloff_factor = _finite_float("rolloff_factor", self.rolloff_factor)
+        if rolloff_factor < 0.0:
+            raise ValueError("rolloff_factor cannot be negative")
+        cone_inner_angle = _finite_float("cone_inner_angle", self.cone_inner_angle)
+        if not 0.0 <= cone_inner_angle <= 360.0:
+            raise ValueError("cone_inner_angle must be between 0.0 and 360.0")
+        cone_outer_angle = _finite_float("cone_outer_angle", self.cone_outer_angle)
+        if not 0.0 <= cone_outer_angle <= 360.0:
+            raise ValueError("cone_outer_angle must be between 0.0 and 360.0")
+        cone_outer_gain = _finite_float("cone_outer_gain", self.cone_outer_gain)
+        if not 0.0 <= cone_outer_gain <= 1.0:
+            raise ValueError("cone_outer_gain must be between 0.0 and 1.0")
         object.__setattr__(self, "gain", gain)
         object.__setattr__(self, "pitch", pitch)
+        object.__setattr__(self, "min_gain", min_gain)
+        object.__setattr__(self, "max_gain", max_gain)
+        object.__setattr__(self, "reference_distance", reference_distance)
+        object.__setattr__(self, "max_distance", max_distance)
+        object.__setattr__(self, "rolloff_factor", rolloff_factor)
+        object.__setattr__(self, "cone_inner_angle", cone_inner_angle)
+        object.__setattr__(self, "cone_outer_angle", cone_outer_angle)
+        object.__setattr__(self, "cone_outer_gain", cone_outer_gain)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -416,6 +472,60 @@ _HRTF_STATUS_BY_ALC = {
 }
 
 
+def _voice_config_with_overrides(
+    config: VoiceConfig | None,
+    *,
+    position: Vector3 | None = None,
+    velocity: Vector3 | None = None,
+    direction: Vector3 | None = None,
+    gain: float | None = None,
+    pitch: float | None = None,
+    looping: bool | None = None,
+    relative: bool | None = None,
+    min_gain: float | None = None,
+    max_gain: float | None = None,
+    reference_distance: float | None = None,
+    max_distance: float | None = None,
+    rolloff_factor: float | None = None,
+    cone_inner_angle: float | None = None,
+    cone_outer_angle: float | None = None,
+    cone_outer_gain: float | None = None,
+) -> VoiceConfig:
+    if config is None:
+        config = _DEFAULT_VOICE_CONFIG
+    elif not isinstance(config, VoiceConfig):
+        raise TypeError("config must be a VoiceConfig or None")
+    return VoiceConfig(
+        position=config.position if position is None else position,
+        velocity=config.velocity if velocity is None else velocity,
+        direction=config.direction if direction is None else direction,
+        gain=config.gain if gain is None else gain,
+        pitch=config.pitch if pitch is None else pitch,
+        looping=config.looping if looping is None else looping,
+        relative=config.relative if relative is None else relative,
+        min_gain=config.min_gain if min_gain is None else min_gain,
+        max_gain=config.max_gain if max_gain is None else max_gain,
+        reference_distance=(
+            config.reference_distance
+            if reference_distance is None
+            else reference_distance
+        ),
+        max_distance=(config.max_distance if max_distance is None else max_distance),
+        rolloff_factor=(
+            config.rolloff_factor if rolloff_factor is None else rolloff_factor
+        ),
+        cone_inner_angle=(
+            config.cone_inner_angle if cone_inner_angle is None else cone_inner_angle
+        ),
+        cone_outer_angle=(
+            config.cone_outer_angle if cone_outer_angle is None else cone_outer_angle
+        ),
+        cone_outer_gain=(
+            config.cone_outer_gain if cone_outer_gain is None else cone_outer_gain
+        ),
+    )
+
+
 def _require_playback(playback: Playback) -> None:
     if not isinstance(playback, Playback):
         raise TypeError("playback must be a Playback")
@@ -533,6 +643,14 @@ def _apply_voice_config(
     al.source3f(identifier, bindings.AL_DIRECTION, *config.direction)
     al.sourcef(identifier, bindings.AL_GAIN, config.gain)
     al.sourcef(identifier, bindings.AL_PITCH, config.pitch)
+    al.sourcef(identifier, bindings.AL_MIN_GAIN, config.min_gain)
+    al.sourcef(identifier, bindings.AL_MAX_GAIN, config.max_gain)
+    al.sourcef(identifier, bindings.AL_REFERENCE_DISTANCE, config.reference_distance)
+    al.sourcef(identifier, bindings.AL_MAX_DISTANCE, config.max_distance)
+    al.sourcef(identifier, bindings.AL_ROLLOFF_FACTOR, config.rolloff_factor)
+    al.sourcef(identifier, bindings.AL_CONE_INNER_ANGLE, config.cone_inner_angle)
+    al.sourcef(identifier, bindings.AL_CONE_OUTER_ANGLE, config.cone_outer_angle)
+    al.sourcef(identifier, bindings.AL_CONE_OUTER_GAIN, config.cone_outer_gain)
     al.sourcei(identifier, bindings.AL_LOOPING, int(config.looping))
     al.sourcei(identifier, bindings.AL_SOURCE_RELATIVE, int(config.relative))
 
@@ -751,11 +869,16 @@ def _play_voice(
     playback: Playback,
     clip: Clip,
     config: VoiceConfig = _DEFAULT_VOICE_CONFIG,
+    *,
+    offset_seconds: float = 0.0,
 ) -> Voice:
     """Create and immediately play one voice using a clip."""
 
     if not isinstance(config, VoiceConfig):
         raise TypeError("config must be a VoiceConfig")
+    offset_seconds = _finite_float("offset_seconds", offset_seconds)
+    if offset_seconds < 0.0:
+        raise ValueError("offset_seconds cannot be negative")
     clip_identifier = _clip_identifier(playback, clip)
     _prepare_al(playback)
     identifiers = playback._library.al.gen_sources()
@@ -766,6 +889,10 @@ def _play_voice(
         _check_al_error(playback, "create voice")
         _apply_voice_config(playback, identifier, config)
         playback._library.al.sourcei(identifier, bindings.AL_BUFFER, clip_identifier)
+        if offset_seconds:
+            playback._library.al.sourcef(
+                identifier, bindings.AL_SEC_OFFSET, offset_seconds
+            )
         playback._library.al.source_play(identifier)
         _check_al_error(playback, "play voice")
     except Exception:
@@ -1031,6 +1158,34 @@ def set_voice_config(
     _check_al_error(playback, "configure voice")
 
 
+def seek(playback: Playback, voice: Voice, offset_seconds: float) -> None:
+    """Move a static voice's playhead to an offset in source-audio seconds."""
+
+    offset_seconds = _finite_float("offset_seconds", offset_seconds)
+    if offset_seconds < 0.0:
+        raise ValueError("offset_seconds cannot be negative")
+    identifier = _voice_identifier(playback, voice)
+    _prepare_al(playback)
+    playback._library.al.sourcef(identifier, bindings.AL_SEC_OFFSET, offset_seconds)
+    _check_al_error(playback, "seek voice")
+
+
+def rewind(playback: Playback, voice: Voice) -> None:
+    """Move a static voice to its beginning and set it to the initial state."""
+
+    _control_voice(playback, voice, "rewind")
+
+
+def restart(playback: Playback, voice: Voice) -> None:
+    """Rewind a static voice and immediately start it playing."""
+
+    identifier = _voice_identifier(playback, voice)
+    _prepare_al(playback)
+    playback._library.al.source_rewind(identifier)
+    playback._library.al.source_play(identifier)
+    _check_al_error(playback, "restart voice")
+
+
 def set_listener(playback: Playback, listener: Listener) -> None:
     """Apply an immutable listener description to the playback context."""
 
@@ -1241,10 +1396,20 @@ def release(playback: Playback, resource: Clip | Voice | Stream) -> None:
 class _SoundRecord:
     token: object
     voice: Voice
+    clip: Clip
+    config: VoiceConfig
+    duration_seconds: float
     final_status: VoiceStatus | None = None
+    finished_naturally: bool = False
 
 
-@dataclass(frozen=True, slots=True, eq=False)
+@dataclass(frozen=True, slots=True)
+class _CachedSoundClip:
+    clip: Clip
+    duration_seconds: float
+
+
+@dataclass(slots=True, eq=False)
 class PlayingSound:
     """One playback instance returned by :func:`play`.
 
@@ -1274,6 +1439,210 @@ class PlayingSound:
 
         return self.state is VoiceState.PLAYING
 
+    @property
+    def paused(self) -> bool:
+        """Whether the sound is currently paused."""
+
+        return self.state is VoiceState.PAUSED
+
+    @property
+    def stopped(self) -> bool:
+        """Whether the sound is no longer playing or resumable."""
+
+        return self.state is VoiceState.STOPPED
+
+    @property
+    def done(self) -> bool:
+        """Whether the sound has completed naturally or was stopped."""
+
+        return self.stopped
+
+    @property
+    def finished(self) -> bool:
+        """Whether playback reached the end naturally."""
+
+        return self._runtime.finished(self._record)
+
+    @property
+    def offset_seconds(self) -> float:
+        """Current playhead position in seconds of source audio."""
+
+        return self.status.offset_seconds
+
+    @property
+    def duration_seconds(self) -> float:
+        """Duration of the source audio, unaffected by pitch."""
+
+        return self._record.duration_seconds
+
+    @property
+    def remaining_seconds(self) -> float:
+        """Source-audio seconds remaining in the current pass."""
+
+        return max(0.0, self.duration_seconds - self.offset_seconds)
+
+    @property
+    def progress(self) -> float:
+        """Current playhead position as a value from 0.0 through 1.0."""
+
+        return min(1.0, max(0.0, self.offset_seconds / self.duration_seconds))
+
+    @property
+    def config(self) -> VoiceConfig:
+        """Current complete voice configuration."""
+
+        return self._runtime.config(self._record)
+
+    @property
+    def position(self) -> Vector3:
+        """Sound location in 3D space."""
+
+        return self.config.position
+
+    @position.setter
+    def position(self, value: Vector3) -> None:
+        self.set_config(replace(self.config, position=value))
+
+    @property
+    def velocity(self) -> Vector3:
+        """Sound velocity used for Doppler shift."""
+
+        return self.config.velocity
+
+    @velocity.setter
+    def velocity(self, value: Vector3) -> None:
+        self.set_config(replace(self.config, velocity=value))
+
+    @property
+    def direction(self) -> Vector3:
+        """Direction the sound's attenuation cone points."""
+
+        return self.config.direction
+
+    @direction.setter
+    def direction(self, value: Vector3) -> None:
+        self.set_config(replace(self.config, direction=value))
+
+    @property
+    def gain(self) -> float:
+        """Linear pre-attenuation amplitude multiplier."""
+
+        return self.config.gain
+
+    @gain.setter
+    def gain(self, value: float) -> None:
+        self.set_config(replace(self.config, gain=value))
+
+    @property
+    def pitch(self) -> float:
+        """Playback-rate and pitch multiplier."""
+
+        return self.config.pitch
+
+    @pitch.setter
+    def pitch(self, value: float) -> None:
+        self.set_config(replace(self.config, pitch=value))
+
+    @property
+    def looping(self) -> bool:
+        """Whether the complete sound repeats after reaching its end."""
+
+        return self.config.looping
+
+    @looping.setter
+    def looping(self, value: bool) -> None:
+        self.set_config(replace(self.config, looping=value))
+
+    @property
+    def relative(self) -> bool:
+        """Whether coordinates are relative to the listener."""
+
+        return self.config.relative
+
+    @relative.setter
+    def relative(self, value: bool) -> None:
+        self.set_config(replace(self.config, relative=value))
+
+    @property
+    def min_gain(self) -> float:
+        """Lower clamp applied after distance and cone attenuation."""
+
+        return self.config.min_gain
+
+    @min_gain.setter
+    def min_gain(self, value: float) -> None:
+        self.set_config(replace(self.config, min_gain=value))
+
+    @property
+    def max_gain(self) -> float:
+        """Upper clamp applied after distance and cone attenuation."""
+
+        return self.config.max_gain
+
+    @max_gain.setter
+    def max_gain(self, value: float) -> None:
+        self.set_config(replace(self.config, max_gain=value))
+
+    @property
+    def reference_distance(self) -> float:
+        """Reference point where distance attenuation has unity gain."""
+
+        return self.config.reference_distance
+
+    @reference_distance.setter
+    def reference_distance(self, value: float) -> None:
+        self.set_config(replace(self.config, reference_distance=value))
+
+    @property
+    def max_distance(self) -> float:
+        """Distance used as the outer bound by clamped distance models."""
+
+        return self.config.max_distance
+
+    @max_distance.setter
+    def max_distance(self, value: float) -> None:
+        self.set_config(replace(self.config, max_distance=value))
+
+    @property
+    def rolloff_factor(self) -> float:
+        """Multiplier controlling how rapidly distance attenuation changes."""
+
+        return self.config.rolloff_factor
+
+    @rolloff_factor.setter
+    def rolloff_factor(self, value: float) -> None:
+        self.set_config(replace(self.config, rolloff_factor=value))
+
+    @property
+    def cone_inner_angle(self) -> float:
+        """Full angle in which a directional sound is unattenuated."""
+
+        return self.config.cone_inner_angle
+
+    @cone_inner_angle.setter
+    def cone_inner_angle(self, value: float) -> None:
+        self.set_config(replace(self.config, cone_inner_angle=value))
+
+    @property
+    def cone_outer_angle(self) -> float:
+        """Full angle beyond which cone_outer_gain is applied."""
+
+        return self.config.cone_outer_angle
+
+    @cone_outer_angle.setter
+    def cone_outer_angle(self, value: float) -> None:
+        self.set_config(replace(self.config, cone_outer_angle=value))
+
+    @property
+    def cone_outer_gain(self) -> float:
+        """Gain applied outside a directional sound's outer cone."""
+
+        return self.config.cone_outer_gain
+
+    @cone_outer_gain.setter
+    def cone_outer_gain(self, value: float) -> None:
+        self.set_config(replace(self.config, cone_outer_gain=value))
+
     def pause(self) -> None:
         """Pause the sound if it is currently playing."""
 
@@ -1288,6 +1657,21 @@ class PlayingSound:
         """Stop the sound and release its playback voice."""
 
         self._runtime.stop(self._record)
+
+    def seek(self, offset_seconds: float) -> None:
+        """Move the playhead to an offset in source-audio seconds."""
+
+        self._runtime.seek(self._record, offset_seconds)
+
+    def rewind(self) -> None:
+        """Move the playhead to the beginning without changing playback state."""
+
+        self.seek(0.0)
+
+    def restart(self) -> None:
+        """Start the sound again from its beginning."""
+
+        self._runtime.restart(self._record)
 
     def set_config(self, config: VoiceConfig) -> None:
         """Apply a complete immutable voice configuration."""
@@ -1338,7 +1722,7 @@ class _DefaultRuntime:
 
     def __init__(self) -> None:
         self._playback: Playback | None = None
-        self._clips: dict[Path, Clip] = {}
+        self._clips: dict[Path, _CachedSoundClip] = {}
         self._active: dict[object, _SoundRecord] = {}
         self._closed = False
         self._lock = RLock()
@@ -1359,9 +1743,16 @@ class _DefaultRuntime:
             raise InvalidVoiceStateError("the sound was not started")
         return self._playback
 
-    def _finalize(self, record: _SoundRecord, status: VoiceStatus) -> None:
+    def _finalize(
+        self,
+        record: _SoundRecord,
+        status: VoiceStatus,
+        *,
+        finished_naturally: bool,
+    ) -> None:
         release(self._opened_playback(), record.voice)
         record.final_status = status
+        record.finished_naturally = finished_naturally
         del self._active[record.token]
 
     def _status(self, record: _SoundRecord) -> VoiceStatus:
@@ -1370,34 +1761,70 @@ class _DefaultRuntime:
         self._require_open()
         status = get_voice_status(self._opened_playback(), record.voice)
         if status.state is VoiceState.STOPPED:
-            self._finalize(record, status)
+            status = VoiceStatus(
+                state=VoiceState.STOPPED,
+                offset_seconds=record.duration_seconds,
+            )
+            self._finalize(record, status, finished_naturally=True)
         return status
 
     def _reap_finished(self) -> None:
         for record in tuple(self._active.values()):
             self._status(record)
 
-    def play(self, path: AudioPath, config: VoiceConfig) -> PlayingSound:
+    def play(
+        self,
+        path: AudioPath,
+        config: VoiceConfig,
+        *,
+        offset_seconds: float = 0.0,
+    ) -> PlayingSound:
         if not isinstance(config, VoiceConfig):
             raise TypeError("config must be a VoiceConfig")
         normalized = Path(path).expanduser().resolve()
         with self._lock:
             self._require_open()
             self._reap_finished()
-            clip = self._clips.get(normalized)
-            if clip is None:
+            cached = self._clips.get(normalized)
+            if cached is None:
                 pcm = _read_wave(normalized)
-                clip = upload(self._ensure_playback(), pcm)
-                self._clips[normalized] = clip
-            voice = _play_voice(self._opened_playback(), clip, config)
+                offset_seconds = _sound_offset(offset_seconds, pcm.duration)
+                cached = _CachedSoundClip(
+                    clip=upload(self._ensure_playback(), pcm),
+                    duration_seconds=pcm.duration,
+                )
+                self._clips[normalized] = cached
+            else:
+                offset_seconds = _sound_offset(offset_seconds, cached.duration_seconds)
+            voice = _play_voice(
+                self._opened_playback(),
+                cached.clip,
+                config,
+                offset_seconds=offset_seconds,
+            )
             token = object()
-            record = _SoundRecord(token, voice)
+            record = _SoundRecord(
+                token=token,
+                voice=voice,
+                clip=cached.clip,
+                config=config,
+                duration_seconds=cached.duration_seconds,
+            )
             self._active[token] = record
             return PlayingSound(self, record)
 
     def status(self, record: _SoundRecord) -> VoiceStatus:
         with self._lock:
             return self._status(record)
+
+    def finished(self, record: _SoundRecord) -> bool:
+        with self._lock:
+            self._status(record)
+            return record.finished_naturally
+
+    def config(self, record: _SoundRecord) -> VoiceConfig:
+        with self._lock:
+            return record.config
 
     def pause(self, record: _SoundRecord) -> None:
         with self._lock:
@@ -1428,7 +1855,31 @@ class _DefaultRuntime:
                     state=VoiceState.STOPPED,
                     offset_seconds=status.offset_seconds,
                 ),
+                finished_naturally=False,
             )
+
+    def seek(self, record: _SoundRecord, offset_seconds: float) -> None:
+        offset_seconds = _sound_offset(offset_seconds, record.duration_seconds)
+        with self._lock:
+            status = self._status(record)
+            if status.state is VoiceState.STOPPED:
+                raise InvalidVoiceStateError("cannot seek a stopped sound")
+            seek(self._opened_playback(), record.voice, offset_seconds)
+
+    def restart(self, record: _SoundRecord) -> None:
+        with self._lock:
+            self._require_open()
+            status = self._status(record)
+            if status.state is VoiceState.STOPPED:
+                record.voice = _play_voice(
+                    self._opened_playback(), record.clip, record.config
+                )
+                record.final_status = None
+                record.finished_naturally = False
+                self._active[record.token] = record
+                return
+            restart(self._opened_playback(), record.voice)
+            record.finished_naturally = False
 
     def set_config(self, record: _SoundRecord, config: VoiceConfig) -> None:
         if not isinstance(config, VoiceConfig):
@@ -1438,6 +1889,7 @@ class _DefaultRuntime:
             if status.state is VoiceState.STOPPED:
                 raise InvalidVoiceStateError("cannot configure a stopped sound")
             set_voice_config(self._opened_playback(), record.voice, config)
+            record.config = config
 
     def close(self) -> None:
         with self._lock:
@@ -1484,7 +1936,24 @@ def _get_default_runtime() -> _DefaultRuntime:
 def play(
     playback: Playback,
     clip: Clip,
-    config: VoiceConfig = _DEFAULT_VOICE_CONFIG,
+    config: VoiceConfig | None = None,
+    *,
+    position: Vector3 | None = None,
+    velocity: Vector3 | None = None,
+    direction: Vector3 | None = None,
+    gain: float | None = None,
+    pitch: float | None = None,
+    looping: bool | None = None,
+    relative: bool | None = None,
+    min_gain: float | None = None,
+    max_gain: float | None = None,
+    reference_distance: float | None = None,
+    max_distance: float | None = None,
+    rolloff_factor: float | None = None,
+    cone_inner_angle: float | None = None,
+    cone_outer_angle: float | None = None,
+    cone_outer_gain: float | None = None,
+    offset_seconds: float = 0.0,
 ) -> Voice: ...
 
 
@@ -1493,31 +1962,92 @@ def play(
     playback: AudioPath,
     /,
     *,
-    config: VoiceConfig = _DEFAULT_VOICE_CONFIG,
+    config: VoiceConfig | None = None,
+    position: Vector3 | None = None,
+    velocity: Vector3 | None = None,
+    direction: Vector3 | None = None,
+    gain: float | None = None,
+    pitch: float | None = None,
+    looping: bool | None = None,
+    relative: bool | None = None,
+    min_gain: float | None = None,
+    max_gain: float | None = None,
+    reference_distance: float | None = None,
+    max_distance: float | None = None,
+    rolloff_factor: float | None = None,
+    cone_inner_angle: float | None = None,
+    cone_outer_angle: float | None = None,
+    cone_outer_gain: float | None = None,
+    offset_seconds: float = 0.0,
 ) -> PlayingSound: ...
 
 
 def play(
     playback: Playback | AudioPath,
     clip: Clip | None = None,
-    config: VoiceConfig = _DEFAULT_VOICE_CONFIG,
+    config: VoiceConfig | None = None,
+    *,
+    position: Vector3 | None = None,
+    velocity: Vector3 | None = None,
+    direction: Vector3 | None = None,
+    gain: float | None = None,
+    pitch: float | None = None,
+    looping: bool | None = None,
+    relative: bool | None = None,
+    min_gain: float | None = None,
+    max_gain: float | None = None,
+    reference_distance: float | None = None,
+    max_distance: float | None = None,
+    rolloff_factor: float | None = None,
+    cone_inner_angle: float | None = None,
+    cone_outer_angle: float | None = None,
+    cone_outer_gain: float | None = None,
+    offset_seconds: float = 0.0,
 ) -> Voice | PlayingSound:
     """Play an explicit clip or a WAV file through the default runtime.
 
     ``play(playback, clip, config)`` preserves the explicit managed API.
     ``play(path, config=config)`` starts asynchronous, fire-and-forget playback
-    and returns an optional control handle.
+    and returns an optional control handle. Individual keyword controls override
+    the corresponding values in ``config``.
     """
 
+    resolved_config = _voice_config_with_overrides(
+        config,
+        position=position,
+        velocity=velocity,
+        direction=direction,
+        gain=gain,
+        pitch=pitch,
+        looping=looping,
+        relative=relative,
+        min_gain=min_gain,
+        max_gain=max_gain,
+        reference_distance=reference_distance,
+        max_distance=max_distance,
+        rolloff_factor=rolloff_factor,
+        cone_inner_angle=cone_inner_angle,
+        cone_outer_angle=cone_outer_angle,
+        cone_outer_gain=cone_outer_gain,
+    )
     if isinstance(playback, Playback):
         if clip is None:
             raise TypeError("clip must be provided with an explicit Playback")
-        return _play_voice(playback, clip, config)
+        return _play_voice(
+            playback,
+            clip,
+            resolved_config,
+            offset_seconds=offset_seconds,
+        )
     if clip is not None:
         raise TypeError("clip is only valid with an explicit Playback")
     if not isinstance(playback, (str, PathLike)):
         raise TypeError("sound must be a path to a WAV file")
-    return _get_default_runtime().play(playback, config)
+    return _get_default_runtime().play(
+        playback,
+        resolved_config,
+        offset_seconds=offset_seconds,
+    )
 
 
 def shutdown() -> None:
@@ -1576,7 +2106,10 @@ __all__ = [
     "play",
     "release",
     "release_finished",
+    "restart",
     "resume",
+    "rewind",
+    "seek",
     "set_listener",
     "set_voice_config",
     "shutdown",
