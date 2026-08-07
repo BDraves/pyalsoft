@@ -8,12 +8,17 @@ on:
     branches: ["master"]
   pull_request:
     branches: ["development", "master"]
+    # Ordinary Python changes are covered by CI's cross-platform test matrix.
+    # Run release builds on PRs only when wheel/native packaging may change.
     paths:
       - ".github/workflows/release.yml"
+      - ".github/manylinux/*.Dockerfile"
       - "examples/**"
       - "hatch_build.py"
       - "pyproject.toml"
-      - "src/pyalsoft/**"
+      - "src/pyalsoft/_pyinstaller.py"
+      - "src/pyalsoft/_pyinstaller_hooks/**"
+      - "src/pyalsoft/bindings/_library.py"
       - "tools/build_openal_soft.py"
       - "tools/freeze_test.py"
       - "tools/openal_soft.py"
@@ -22,6 +27,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -38,12 +47,27 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - ubuntu-24.04-arm
-          - macos-15-intel
-          - macos-latest
-          - windows-latest
+        include:
+          - os: ubuntu-latest
+            manylinux: true
+            dockerfile: .github/manylinux/x86_64.Dockerfile
+            image_arch: x86_64
+          - os: ubuntu-24.04-arm
+            manylinux: true
+            dockerfile: .github/manylinux/aarch64.Dockerfile
+            image_arch: aarch64
+          - os: macos-15-intel
+            manylinux: false
+            dockerfile: ""
+            image_arch: ""
+          - os: macos-latest
+            manylinux: false
+            dockerfile: ""
+            image_arch: ""
+          - os: windows-latest
+            manylinux: false
+            dockerfile: ""
+            image_arch: ""
 
     steps:
       - name: Check out repository
@@ -63,6 +87,20 @@ jobs:
           version: "0.11.29"
           enable-cache: true
 
+      - name: Set up Docker Buildx
+        if: matrix.manylinux
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Load custom manylinux image
+        if: matrix.manylinux
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          tags: pyalsoft-manylinux:ci
+          load: true
+          cache-from: type=gha,scope=pyalsoft-manylinux-${{ matrix.image_arch }}
+
       - name: Cache cibuildwheel tools
         uses: actions/cache@v5
         with:
@@ -73,16 +111,36 @@ jobs:
 
       - name: Cache built OpenAL runtime
         if: runner.os != 'Windows'
+        id: openal-cache
         uses: actions/cache@v5
         with:
           path: build/native
-          key: openal-v1-${{ matrix.os }}-${{ hashFiles('vendor/openal-soft/source.toml', 'tools/build_openal_soft.py', 'tools/openal_soft.py', 'hatch_build.py') }}
+          key: openal-v2-${{ matrix.os }}-${{ hashFiles('vendor/openal-soft/source.toml', 'tools/build_openal_soft.py', 'tools/openal_soft.py', 'hatch_build.py', '.github/manylinux/*.Dockerfile') }}
 
       - name: Build and test native wheel
         env:
           CIBW_ARCHS: native
           CIBW_CACHE_PATH: ${{ runner.temp }}/cibw-cache
+          CIBW_MANYLINUX_X86_64_IMAGE: pyalsoft-manylinux:ci
+          CIBW_MANYLINUX_AARCH64_IMAGE: pyalsoft-manylinux:ci
+          CIBW_ENVIRONMENT_LINUX: >-
+            ALSOFT_DRIVERS=null
+            PYALSOFT_NATIVE_ROOT=/host${{ github.workspace }}/build/native
         run: uv tool run --from cibuildwheel==3.4.1 cibuildwheel --output-dir wheelhouse
+
+      - name: Verify Linux OpenAL runtime cache
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          OPENAL_CACHE_HIT: ${{ steps.openal-cache.outputs.cache-hit }}
+        run: |
+          runtime="$(find build/native -type f -name 'libopenal.so.1' -print -quit)"
+          if [[ -z "$runtime" ]]; then
+            echo "Linux OpenAL runtime was not written to build/native." >&2
+            exit 1
+          fi
+          echo "OpenAL cache hit: ${OPENAL_CACHE_HIT:-false}"
+          echo "Cached $runtime"
 
       - name: Test Linux wheel with PyInstaller
         if: runner.os == 'Linux'
@@ -112,11 +170,14 @@ jobs:
   sdist:
     name: Source distribution
     if: >-
-      github.event_name != 'workflow_run' ||
+      github.event_name != 'pull_request' &&
       (
-        github.event.workflow_run.event == 'push' &&
-        github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.head_repository.full_name == github.repository
+        github.event_name != 'workflow_run' ||
+        (
+          github.event.workflow_run.event == 'push' &&
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.head_repository.full_name == github.repository
+        )
       )
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -163,6 +224,7 @@ jobs:
     concurrency:
       group: pypi-release
       cancel-in-progress: false
+      queue: max
     environment:
       name: pypi
       url: https://pypi.org/p/pyalsoft

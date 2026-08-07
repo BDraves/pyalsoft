@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import platform
 import sys
 import tomllib
@@ -13,6 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 VENDOR = ROOT / "vendor" / "openal-soft"
 CONFIG_PATH = VENDOR / "source.toml"
+NATIVE_ROOT_ENVIRONMENT = "PYALSOFT_NATIVE_ROOT"
 
 
 @dataclass(frozen=True)
@@ -24,6 +26,19 @@ class RuntimeTarget:
     output_pattern: str | None
     cmake_options: tuple[str, ...] = ()
     wheel_platform: str = ""
+
+
+def native_runtime_root(project_root: Path = ROOT) -> Path:
+    """Return the directory used to stage platform-native runtimes."""
+
+    configured = os.environ.get(NATIVE_ROOT_ENVIRONMENT)
+    if configured is None:
+        return project_root / "build" / "native"
+
+    root = Path(configured)
+    if not root.is_absolute():
+        raise ValueError(f"{NATIVE_ROOT_ENVIRONMENT} must be an absolute path")
+    return root
 
 
 def source_configuration(required: Collection[str]) -> dict[str, str]:

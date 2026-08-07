@@ -134,7 +134,7 @@ test-command = [
 environment = { ALSOFT_DRIVERS = "null" }
 
 [tool.cibuildwheel.linux]
-before-all = "dnf install -y alsa-lib-devel pulseaudio-libs-devel || (sleep 10 && dnf install -y alsa-lib-devel pulseaudio-libs-devel)"
+before-all = "test -f /opt/pyalsoft-manylinux-ready || dnf install -y alsa-lib-devel pulseaudio-libs-devel || (sleep 10 && dnf install -y alsa-lib-devel pulseaudio-libs-devel)"
 test-requires = []
 test-command = [
   "python {project}/examples/play_file.py",

@@ -16,6 +16,7 @@ from tools.openal_soft import (
     ROOT,
     VENDOR,
     RuntimeTarget,
+    native_runtime_root,
     runtime_target,
     source_configuration,
     verify_checksum,
@@ -58,9 +59,10 @@ def build_runtime(target: RuntimeTarget | None = None) -> Path:
     """Stage the matching native runtime and return its path."""
 
     selected = target or runtime_target()
+    native_root = native_runtime_root()
 
     if selected.identifier == "win_amd64":
-        staged = ROOT / "build" / "native" / selected.identifier / selected.bundled_name
+        staged = native_root / selected.identifier / selected.bundled_name
         staged.parent.mkdir(parents=True, exist_ok=True)
         source = VENDOR / "runtime" / "win_amd64" / "soft_oal.dll"
         shutil.copy2(source, staged)
@@ -68,9 +70,7 @@ def build_runtime(target: RuntimeTarget | None = None) -> Path:
 
     config = source_configuration({"version", "library_source_sha256"})
     staged = (
-        ROOT
-        / "build"
-        / "native"
+        native_root
         / selected.identifier
         / config["library_source_sha256"][:12]
         / selected.bundled_name
@@ -129,7 +129,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.parse_args()
     path = build_runtime()
-    print(f"staged {path.relative_to(ROOT)}")
+    try:
+        displayed = path.relative_to(ROOT)
+    except ValueError:
+        displayed = path
+    print(f"staged {displayed}")
 
 
 if __name__ == "__main__":
