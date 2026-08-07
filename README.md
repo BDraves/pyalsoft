@@ -71,14 +71,41 @@ sound = play(
 sound.position = (2.0, 0.0, -4.0)
 sound.pitch = 1.25
 sound.seek(3.0)
+
+# Group changes made in the same application update. Only changed OpenAL
+# properties are sent to the backend.
+sound.update(
+    position=(3.0, 0.0, -2.0),
+    velocity=(1.0, 0.0, 0.0),
+    gain=0.6,
+)
 ```
 
 `offset_seconds` is the playhead position on the original source-audio
 timeline. It is not elapsed wall-clock time. For example, at `pitch=2.0` the
 offset advances two source seconds per wall-clock second, while
 `duration_seconds` remains unchanged. `remaining_seconds` and `progress` use
-the same source timeline. `seek()`, `rewind()`, and `restart()` move or restart
-the playhead.
+the same source timeline. For sample-accurate work, use `offset_frames`,
+`remaining_frames`, `frame_count`, and `seek_frames()`. `rewind()` follows
+OpenAL behavior by moving to the beginning and entering the `INITIAL` state;
+`restart()` moves to the beginning and immediately plays.
+
+Format and length information is available without opening an audio device:
+
+```python
+from pyalsoft import get_sound_info
+
+info = get_sound_info("engine.wav")
+print(info.duration_seconds, info.frame_count)
+print(info.channels, info.sample_rate, info.bit_depth)
+```
+
+The same immutable `SoundInfo` is available as `clip.info` and `sound.info`.
+`PlayingSound` also exposes `path`, `channels`, `sample_rate`, and `sample_type`.
+When a sound ends, `end_reason` distinguishes natural completion, an explicit
+`stop()`, runtime shutdown, and a disconnected device when the backend supports
+connection reporting. Stopped sounds retain their configuration, so controls
+can be changed before `rewind()` or `restart()` creates another native source.
 
 The spatial controls describe a sound relative to the playback listener:
 
@@ -102,6 +129,34 @@ OpenAL does not perform independent time stretching.
 
 For conventional positional audio, use a mono sound. OpenAL normally plays
 stereo sources without applying 3D position or direction.
+
+The convenience runtime's listener and global distance/Doppler behavior can be
+configured without opening an explicit `Playback`:
+
+```python
+from pyalsoft import (
+    Acoustics,
+    DistanceModel,
+    Listener,
+    set_acoustics,
+    set_listener,
+    update_listener,
+)
+
+set_listener(Listener(position=(0.0, 1.7, 0.0)))
+set_acoustics(
+    Acoustics(
+        distance_model=DistanceModel.INVERSE_CLAMPED,
+        doppler_factor=1.0,
+        speed_of_sound=343.3,
+    )
+)
+update_listener(position=(2.0, 1.7, 0.0))
+```
+
+`get_listener()`, `get_acoustics()`, `update_listener()`, and
+`update_acoustics()` operate on the convenience runtime by default. Pass an
+explicit `Playback` as the first argument to use that session instead.
 
 The complete example is available as [`examples/play_file.py`](examples/play_file.py)
 and can be run from a source checkout with:

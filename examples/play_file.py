@@ -43,35 +43,41 @@ def main() -> None:
         cone_outer_gain=0.15,
     )
 
+    print(
+        f"{sound.path.name}: {sound.channels} channel, {sound.sample_rate} Hz, "
+        f"{sound.frame_count} frames"
+    )
     show_status("started left", sound.offset_seconds, sound.duration_seconds)
     time.sleep(DEMO_STEP_SECONDS)
 
     # Move from the listener's left to right and describe motion toward them.
-    sound.position = (2.0, 0.0, -2.0)
-    sound.velocity = (-1.0, 0.0, 1.0)
-    sound.direction = (-1.0, 0.0, 1.0)
+    sound.update(
+        position=(2.0, 0.0, -2.0),
+        velocity=(-1.0, 0.0, 1.0),
+        direction=(-1.0, 0.0, 1.0),
+    )
     show_status("moved right", sound.offset_seconds, sound.duration_seconds)
     time.sleep(DEMO_STEP_SECONDS)
 
     # Turn the source away, lower its gain, and increase playback rate/pitch.
-    sound.direction = (1.0, 0.0, -1.0)
-    sound.gain = 0.4
-    sound.pitch = 1.35
+    sound.update(direction=(1.0, 0.0, -1.0), gain=0.4, pitch=1.35)
     show_status("turned away", sound.offset_seconds, sound.duration_seconds)
     time.sleep(DEMO_STEP_SECONDS)
 
     # Offset is the playhead's position on the original audio timeline. Seeking
     # while paused preserves the paused state; pitch does not alter duration.
     sound.pause()
-    sound.seek(sound.duration_seconds / 2.0)
+    sound.seek_frames(sound.frame_count // 2)
     show_status("seeked halfway", sound.offset_seconds, sound.duration_seconds)
     sound.resume()
 
     # Stop looping and allow the last pass to finish.
-    sound.looping = False
+    sound.update(looping=False)
     while sound.playing:
         time.sleep(0.05)
     show_status("finished", sound.offset_seconds, sound.duration_seconds)
+    end_reason = sound.end_reason
+    print(f"end reason: {end_reason.value if end_reason else 'active'}")
 
 
 if __name__ == "__main__":
