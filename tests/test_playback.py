@@ -10,7 +10,9 @@ import pytest
 
 from pyalsoft import (
     PCM,
+    Acoustics,
     AudioBackendError,
+    DistanceModel,
     HRTFStatus,
     InvalidHandleError,
     InvalidVoiceStateError,
@@ -21,12 +23,16 @@ from pyalsoft import (
     PlaybackOpenError,
     ResourceInUseError,
     SampleType,
+    SoundInfo,
     StreamState,
     VoiceConfig,
     VoiceState,
+    VoiceStatus,
     bindings,
     close_playback,
     finish_stream,
+    get_acoustics,
+    get_listener,
     get_playback_info,
     get_voice_status,
     list_playback_devices,
@@ -36,7 +42,12 @@ from pyalsoft import (
     play,
     release,
     release_finished,
+    restart,
     resume,
+    rewind,
+    seek,
+    seek_frames,
+    set_acoustics,
     set_listener,
     set_voice_config,
     start_stream,
@@ -58,9 +69,16 @@ class FakeAL:
         self.queues: dict[int, list[int]] = {}
         self.processed: dict[int, int] = {}
         self.offsets: dict[int, float] = {}
+        self.frame_offsets: dict[int, int] = {}
         self.play_calls: list[int] = []
         self.sample_offset_calls: list[tuple[int, int]] = []
+        self.source_property_calls: list[tuple[int, int]] = []
         self.listener: dict[int, object] = {}
+        self.context_floats = {
+            bindings.AL_DOPPLER_FACTOR: 1.0,
+            bindings.AL_SPEED_OF_SOUND: 343.3,
+        }
+        self.distance_model_value = bindings.AL_INVERSE_DISTANCE_CLAMPED
         self.error = bindings.AL_NO_ERROR
         self.strings = {
             bindings.AL_RENDERER: "Fake OpenAL Renderer",
@@ -105,19 +123,35 @@ class FakeAL:
             self.queues.pop(identifier, None)
             self.processed.pop(identifier, None)
             self.offsets.pop(identifier, None)
+            self.frame_offsets.pop(identifier, None)
 
     def source3f(
         self, identifier: int, parameter: int, x: float, y: float, z: float
     ) -> None:
         self.sources[identifier][parameter] = (x, y, z)
+        self.source_property_calls.append((identifier, parameter))
 
     def sourcef(self, identifier: int, parameter: int, value: float) -> None:
         self.sources[identifier][parameter] = value
+        self.source_property_calls.append((identifier, parameter))
+        if parameter == bindings.AL_SEC_OFFSET:
+            self.offsets[identifier] = value
+            self.frame_offsets[identifier] = round(
+                value * self._source_sample_rate(identifier)
+            )
 
     def sourcei(self, identifier: int, parameter: int, value: int) -> None:
         self.sources[identifier][parameter] = value
+        self.source_property_calls.append((identifier, parameter))
         if parameter == bindings.AL_SAMPLE_OFFSET:
             self.sample_offset_calls.append((identifier, value))
+            self.frame_offsets[identifier] = value
+            self.offsets[identifier] = value / self._source_sample_rate(identifier)
+
+    def _source_sample_rate(self, identifier: int) -> int:
+        attached = self.sources[identifier].get(bindings.AL_BUFFER)
+        buffer = self.queues[identifier][0] if attached is None else cast(int, attached)
+        return self.buffers[buffer][2]
 
     def source_play(self, identifier: int) -> None:
         self.play_calls.append(identifier)
@@ -133,6 +167,11 @@ class FakeAL:
         if identifier in self.queues:
             self.processed[identifier] = len(self.queues[identifier])
 
+    def source_rewind(self, identifier: int) -> None:
+        self.states[identifier] = bindings.AL_INITIAL
+        self.offsets[identifier] = 0.0
+        self.frame_offsets[identifier] = 0
+
     def source_stopv(self, sources: tuple[int, ...]) -> None:
         for identifier in sources:
             self.source_stop(identifier)
@@ -144,13 +183,19 @@ class FakeAL:
             return self.processed.get(identifier, 0)
         if parameter == bindings.AL_BUFFERS_QUEUED:
             return len(self.queues.get(identifier, ()))
+        if parameter == bindings.AL_SAMPLE_OFFSET:
+            default = round(
+                self.offsets.get(identifier, 0.25)
+                * self._source_sample_rate(identifier)
+            )
+            return self.frame_offsets.get(identifier, default)
         raise AssertionError(f"unexpected integer source parameter {parameter}")
 
     def get_sourcef(self, identifier: int, parameter: int) -> float:
         assert parameter == bindings.AL_SEC_OFFSET
         if identifier in self.queues:
             return self.offsets.get(identifier, 0.0)
-        return 0.25
+        return self.offsets.get(identifier, 0.25)
 
     def source_queue_buffers(self, identifier: int, buffers: tuple[int, ...]) -> None:
         self.queues.setdefault(identifier, []).extend(buffers)
@@ -174,6 +219,34 @@ class FakeAL:
     def listenerf(self, parameter: int, value: float) -> None:
         self.listener[parameter] = value
 
+    def get_listener3f(self, parameter: int) -> tuple[float, float, float]:
+        value = self.listener.get(parameter, (0.0, 0.0, 0.0))
+        return cast(tuple[float, float, float], value)
+
+    def get_listenerfv(self, parameter: int, size: int) -> tuple[float, ...]:
+        assert size == 6
+        value = self.listener.get(parameter, (0.0, 0.0, -1.0, 0.0, 1.0, 0.0))
+        return cast(tuple[float, ...], value)
+
+    def get_listenerf(self, parameter: int) -> float:
+        return cast(float, self.listener.get(parameter, 1.0))
+
+    def distance_model(self, value: int) -> None:
+        self.distance_model_value = value
+
+    def doppler_factor(self, value: float) -> None:
+        self.context_floats[bindings.AL_DOPPLER_FACTOR] = value
+
+    def speed_of_sound(self, value: float) -> None:
+        self.context_floats[bindings.AL_SPEED_OF_SOUND] = value
+
+    def get_integer(self, parameter: int) -> int:
+        assert parameter == bindings.AL_DISTANCE_MODEL
+        return self.distance_model_value
+
+    def get_float(self, parameter: int) -> float:
+        return self.context_floats[parameter]
+
 
 class FakeALC:
     def __init__(self) -> None:
@@ -191,6 +264,7 @@ class FakeALC:
         self.string_list_queries: list[int] = []
         self.hrtf_status = bindings.ALC_HRTF_ENABLED_SOFT
         self.hrtf_name: str | None = "Built-in HRTF"
+        self.connected = True
         self.error = bindings.ALC_NO_ERROR
         self.string_list_error = bindings.ALC_NO_ERROR
         self.hrtf_query_error = bindings.ALC_NO_ERROR
@@ -245,8 +319,10 @@ class FakeALC:
         self, device: object | None, parameter: int, size: int
     ) -> tuple[int, ...]:
         assert device is self.device
-        assert parameter == bindings.ALC_HRTF_STATUS_SOFT
         assert size == 1
+        if parameter == bindings.ALC_CONNECTED:
+            return (int(self.connected),)
+        assert parameter == bindings.ALC_HRTF_STATUS_SOFT
         self.error = self.hrtf_query_error
         return (self.hrtf_status,)
 
@@ -310,6 +386,36 @@ def test_pcm_and_configuration_are_immutable_data() -> None:
         playback_config.hrtf = False  # type: ignore[misc]
     with pytest.raises(TypeError, match="boolean or None"):
         PlaybackConfig(hrtf=1)  # type: ignore[arg-type]
+    assert pcm.info == SoundInfo(
+        channels=1,
+        sample_rate=2,
+        sample_type=SampleType.INT16,
+        frame_count=2,
+    )
+    assert pcm.info.duration_seconds == 1.0
+    assert pcm.info.bit_depth == 16
+    assert pcm.info.byte_count == 4
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        ({"min_gain": -0.1}, "min_gain must be between"),
+        ({"max_gain": 1.1}, "max_gain must be between"),
+        ({"min_gain": 0.8, "max_gain": 0.2}, "min_gain cannot exceed"),
+        ({"reference_distance": -1.0}, "reference_distance cannot be negative"),
+        ({"max_distance": -1.0}, "max_distance cannot be negative"),
+        ({"rolloff_factor": -1.0}, "rolloff_factor cannot be negative"),
+        ({"cone_inner_angle": 361.0}, "cone_inner_angle must be between"),
+        ({"cone_outer_angle": -1.0}, "cone_outer_angle must be between"),
+        ({"cone_outer_gain": 1.1}, "cone_outer_gain must be between"),
+    ],
+)
+def test_voice_config_rejects_invalid_spatial_controls(
+    arguments: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        VoiceConfig(**arguments)  # type: ignore[arg-type]
 
 
 def test_devices_are_enumerated_and_consumed_by_open_playback() -> None:
@@ -441,6 +547,12 @@ def test_managed_playback_applies_data_and_controls_lifecycle() -> None:
         voice = play(playback, clip, config)
 
         set_listener(playback, listener)
+        acoustics = Acoustics(
+            distance_model=DistanceModel.LINEAR_CLAMPED,
+            doppler_factor=0.5,
+            speed_of_sound=300.0,
+        )
+        set_acoustics(playback, acoustics)
         status = get_voice_status(playback, voice)
         assert status.state is VoiceState.PLAYING
         assert status.offset_seconds == 0.25
@@ -450,6 +562,11 @@ def test_managed_playback_applies_data_and_controls_lifecycle() -> None:
             3.0,
         )
         assert library.al.sources[100][bindings.AL_GAIN] == 0.5
+        assert clip.info == pcm.info
+        assert clip.duration_seconds == 1.0
+        assert clip.frame_count == 10
+        assert get_listener(playback) == listener
+        assert get_acoustics(playback) == acoustics
         assert library.al.listener[bindings.AL_ORIENTATION] == (
             0.0,
             0.0,
@@ -489,6 +606,41 @@ def test_managed_playback_applies_data_and_controls_lifecycle() -> None:
     assert library.alc.destroyed_contexts == [library.alc.context]
     assert library.alc.closed_devices == [library.alc.device]
     assert library.alc.current_context is library.alc.previous_context
+
+
+def test_static_voice_can_seek_rewind_and_restart() -> None:
+    library = FakeLibrary()
+    with open_playback(library=as_library(library)) as playback:
+        clip = upload(playback, PCM(b"\0\0" * 10, channels=1, sample_rate=10))
+        voice = play(playback, clip)
+
+        pause(playback, voice)
+        seek(playback, voice, 0.5)
+        assert get_voice_status(playback, voice) == VoiceStatus(
+            state=VoiceState.PAUSED,
+            offset_seconds=0.5,
+            offset_frames=5,
+        )
+
+        seek_frames(playback, voice, 7)
+        assert get_voice_status(playback, voice) == VoiceStatus(
+            state=VoiceState.PAUSED,
+            offset_seconds=0.7,
+            offset_frames=7,
+        )
+
+        rewind(playback, voice)
+        assert get_voice_status(playback, voice) == VoiceStatus(
+            state=VoiceState.INITIAL,
+            offset_seconds=0.0,
+            offset_frames=0,
+        )
+
+        restart(playback, voice)
+        assert get_voice_status(playback, voice).state is VoiceState.PLAYING
+
+        release(playback, voice)
+        release(playback, clip)
 
 
 def test_release_finished_collects_only_stopped_voices() -> None:

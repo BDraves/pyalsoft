@@ -43,12 +43,120 @@ ignored without stopping the sound:
 play("notification.wav")
 ```
 
-The returned `PlayingSound` has `pause()`, `resume()`, `stop()`, and
-`set_config()` methods, plus `playing`, `state`, and `status` properties. The
-convenience API supports uncompressed mono or stereo WAV files containing 8-bit
-unsigned or 16-bit signed PCM. It opens its default audio session lazily, reuses
-clips loaded from the same resolved path, and releases it automatically at
-process exit. Applications can call `shutdown()` to close it earlier.
+The returned `PlayingSound` has transport, timeline, gain, pitch, looping, and
+spatial controls. The convenience API supports uncompressed mono or stereo WAV
+files containing 8-bit unsigned or 16-bit signed PCM. It opens its default audio
+session lazily, reuses clips loaded from the same resolved path, and releases it
+automatically at process exit. Applications can call `shutdown()` to close it
+earlier.
+
+### Controlling one sound
+
+Every `VoiceConfig` field can also be passed directly to `play`. Direct keywords
+override the corresponding field when both forms are used:
+
+```python
+sound = play(
+    "engine.wav",
+    gain=0.7,
+    pitch=1.1,
+    looping=True,
+    relative=True,
+    position=(-2.0, 0.0, -4.0),
+    reference_distance=1.0,
+    max_distance=20.0,
+    rolloff_factor=1.0,
+)
+
+sound.position = (2.0, 0.0, -4.0)
+sound.pitch = 1.25
+sound.seek(3.0)
+
+# Group changes made in the same application update. Only changed OpenAL
+# properties are sent to the backend.
+sound.update(
+    position=(3.0, 0.0, -2.0),
+    velocity=(1.0, 0.0, 0.0),
+    gain=0.6,
+)
+```
+
+`offset_seconds` is the playhead position on the original source-audio
+timeline. It is not elapsed wall-clock time. For example, at `pitch=2.0` the
+offset advances two source seconds per wall-clock second, while
+`duration_seconds` remains unchanged. `remaining_seconds` and `progress` use
+the same source timeline. For sample-accurate work, use `offset_frames`,
+`remaining_frames`, `frame_count`, and `seek_frames()`. `rewind()` follows
+OpenAL behavior by moving to the beginning and entering the `INITIAL` state;
+`restart()` moves to the beginning and immediately plays.
+
+Format and length information is available without opening an audio device:
+
+```python
+from pyalsoft import get_sound_info
+
+info = get_sound_info("engine.wav")
+print(info.duration_seconds, info.frame_count)
+print(info.channels, info.sample_rate, info.bit_depth)
+```
+
+The same immutable `SoundInfo` is available as `clip.info` and `sound.info`.
+`PlayingSound` also exposes `path`, `channels`, `sample_rate`, and `sample_type`.
+When a sound ends, `end_reason` distinguishes natural completion, an explicit
+`stop()`, runtime shutdown, and a disconnected device when the backend supports
+connection reporting. Stopped sounds retain their configuration, so controls
+can be changed before `rewind()` or `restart()` creates another native source.
+
+The spatial controls describe a sound relative to the playback listener:
+
+| Control | Meaning |
+| --- | --- |
+| `position` | The sound's `(x, y, z)` location. By default, +X is right, +Y is up, and -Z is forward. |
+| `velocity` | Motion, in coordinate units per second, used for Doppler shift. It does not automatically update `position`. |
+| `direction` | The vector the sound's directional cone points along. `(0, 0, 0)` makes it omnidirectional. |
+| `relative` | When true, position, velocity, and direction use listener-local coordinates; otherwise they use world coordinates. |
+| `reference_distance` | The reference point where distance attenuation has unity gain. Clamped models keep unity distance gain at closer distances. |
+| `max_distance` | The outer distance used by clamped distance models; attenuation no longer changes beyond it. |
+| `rolloff_factor` | Scales distance attenuation. `0` disables distance rolloff; larger values attenuate more rapidly. |
+| `min_gain`, `max_gain` | Lower and upper clamps applied after distance and cone attenuation. |
+| `cone_inner_angle` | Full angle, in degrees, inside which direction causes no cone attenuation. |
+| `cone_outer_angle` | Full angle beyond which the outer-cone gain is used; OpenAL interpolates between the two angles. |
+| `cone_outer_gain` | Gain multiplier used when the listener is outside the outer cone. |
+
+Gain is a linear amplitude multiplier: `1.0` is unchanged, `0.5` is about -6 dB,
+and `0.0` is silent. Pitch changes playback rate and audible pitch together;
+OpenAL does not perform independent time stretching.
+
+For conventional positional audio, use a mono sound. OpenAL normally plays
+stereo sources without applying 3D position or direction.
+
+The convenience runtime's listener and global distance/Doppler behavior can be
+configured without opening an explicit `Playback`:
+
+```python
+from pyalsoft import (
+    Acoustics,
+    DistanceModel,
+    Listener,
+    set_acoustics,
+    set_listener,
+    update_listener,
+)
+
+set_listener(Listener(position=(0.0, 1.7, 0.0)))
+set_acoustics(
+    Acoustics(
+        distance_model=DistanceModel.INVERSE_CLAMPED,
+        doppler_factor=1.0,
+        speed_of_sound=343.3,
+    )
+)
+update_listener(position=(2.0, 1.7, 0.0))
+```
+
+`get_listener()`, `get_acoustics()`, `update_listener()`, and
+`update_acoustics()` operate on the convenience runtime by default. Pass an
+explicit `Playback` as the first argument to use that session instead.
 
 The complete example is available as [`examples/play_file.py`](examples/play_file.py)
 and can be run from a source checkout with:

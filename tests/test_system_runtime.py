@@ -7,7 +7,27 @@ from typing import cast
 
 import pytest
 
-from pyalsoft import bindings
+from pyalsoft import (
+    PCM,
+    Acoustics,
+    DistanceModel,
+    Listener,
+    VoiceState,
+    bindings,
+    get_acoustics,
+    get_listener,
+    get_voice_status,
+    open_playback,
+    pause,
+    play,
+    release,
+    restart,
+    rewind,
+    seek_frames,
+    set_acoustics,
+    set_listener,
+    upload,
+)
 from tools.conformance_test_runtime import run as run_backend_conformance
 
 pytestmark = [
@@ -53,3 +73,43 @@ def test_system_runtime_passes_backend_conformance() -> None:
     result = run_backend_conformance(bindings.load(path))
 
     assert result.startswith("backend conformance passed:")
+
+
+def test_system_runtime_supports_managed_sound_controls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exercise v0.7 static-sound controls against a native backend."""
+
+    monkeypatch.setenv("ALSOFT_DRIVERS", "null")
+    path = os.environ.get("PYALSOFT_TEST_LIBRARY")
+    with open_playback(library=bindings.load(path)) as playback:
+        clip = upload(
+            playback,
+            PCM(bytes(48_000 * 2), channels=1, sample_rate=48_000),
+        )
+        voice = play(playback, clip, offset_frames=1_000)
+        pause(playback, voice)
+        seek_frames(playback, voice, 12_000)
+        status = get_voice_status(playback, voice)
+        assert status.state is VoiceState.PAUSED
+        assert status.offset_frames == 12_000
+        assert status.offset_seconds == pytest.approx(0.25)
+
+        listener = Listener(position=(1.0, 2.0, 3.0), gain=0.5)
+        acoustics = Acoustics(
+            distance_model=DistanceModel.LINEAR_CLAMPED,
+            doppler_factor=0.5,
+            speed_of_sound=300.0,
+        )
+        set_listener(playback, listener)
+        set_acoustics(playback, acoustics)
+        assert get_listener(playback) == listener
+        assert get_acoustics(playback) == acoustics
+
+        rewind(playback, voice)
+        assert get_voice_status(playback, voice).state is VoiceState.INITIAL
+        restart(playback, voice)
+        assert get_voice_status(playback, voice).state is VoiceState.PLAYING
+
+        release(playback, voice)
+        release(playback, clip)
