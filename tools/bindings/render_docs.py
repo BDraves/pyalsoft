@@ -61,6 +61,8 @@ def render_documentation(
         "Extensions are exposed as generated capability objects. For example, "
         "`library.extensions.alc_ext_efx` lists its commands, enums, types, and "
         "dependencies; `is_present(device)` checks runtime availability.",
+        "Owned playback, capture, loopback, and context handles are documented "
+        "in `docs/backend.md`.",
         "",
         "Semantic corrections that cannot be represented by the upstream XML "
         "are reviewed in `tools/semantic_overrides.toml`.",

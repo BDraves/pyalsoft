@@ -6,6 +6,7 @@ import ctypes
 import ctypes.util
 import os
 import sys
+import threading
 from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
@@ -168,6 +169,7 @@ class OpenALLibrary:
         self._al_commands: ALCommands | None = None
         self._alc_commands: ALCCommands | None = None
         self._extension_capabilities: ExtensionCapabilities | None = None
+        self._context_lock = threading.RLock()
 
     @property
     def native_library(self) -> Any:
