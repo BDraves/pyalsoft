@@ -69,7 +69,7 @@ dev = [
 [tool.mypy]
 files = ["examples", "src", "tools", "tests"]
 strict = true
-exclude = ["^src/pyalsoft/bindings/"]
+exclude = ["^src/pyalsoft/bindings/_generated/"]
 
 [[tool.mypy.overrides]]
 module = ["pyalsoft.bindings", "pyalsoft.bindings.*"]

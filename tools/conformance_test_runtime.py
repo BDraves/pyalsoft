@@ -29,6 +29,15 @@ def run(library: bindings.OpenALLibrary | None = None) -> str:
     """Run deterministic core, object, EFX, and callback checks."""
 
     selected = library or bindings.load()
+    if selected.is_alc_extension_present("ALC_SOFT_system_events"):
+        system_registration = selected.register_system_event_callback(
+            lambda _event, _device_type, _device, _message: None,
+            event_types=(bindings.ALC_EVENT_TYPE_DEVICE_ADDED_SOFT,),
+        )
+        selected.clear_system_event_callback()
+        if not system_registration.closed:
+            raise RuntimeError("system-event callback did not close")
+
     sample_rate = 48_000
     channels = bindings.ALC_STEREO_SOFT
     sample_type = bindings.ALC_SHORT_SOFT
@@ -40,6 +49,7 @@ def run(library: bindings.OpenALLibrary | None = None) -> str:
         bindings.ALC_FREQUENCY,
         sample_rate,
     ]
+    callback_supported = False
     with bindings.open_loopback_device(library=selected) as device:
         if device.is_extension_present("ALC_EXT_debug"):
             context_attributes.extend(
@@ -93,6 +103,80 @@ def run(library: bindings.OpenALLibrary | None = None) -> str:
                         )
                     _require_no_al_error(selected, "core loopback rendering")
 
+                    if context.library.is_al_extension_present(
+                        "AL_SOFT_callback_buffer"
+                    ):
+                        callback_supported = True
+                        callback_buffer = al.gen_buffers()[0]
+                        callback_calls = 0
+
+                        def fill_callback(view: memoryview) -> int:
+                            nonlocal callback_calls
+                            callback_calls += 1
+                            view[:] = struct.pack("<h", 2_000) * (len(view) // 2)
+                            return len(view)
+
+                        try:
+                            al.source_stop(source_id)
+                            al.sourcei(source_id, bindings.AL_BUFFER, 0)
+                            with context.register_buffer_callback(
+                                callback_buffer,
+                                bindings.AL_FORMAT_MONO16,
+                                sample_rate,
+                                fill_callback,
+                            ):
+                                al.sourcei(
+                                    source_id,
+                                    bindings.AL_BUFFER,
+                                    callback_buffer,
+                                )
+                                al.source_play(source_id)
+                                callback_render = bytearray(128 * 2 * 2)
+                                device.render_samples(callback_render, 128)
+                                al.source_stop(source_id)
+                                al.sourcei(source_id, bindings.AL_BUFFER, 0)
+                            if callback_calls == 0 or not any(callback_render):
+                                raise RuntimeError(
+                                    "callback buffer did not render sample data"
+                                )
+                            _require_no_al_error(
+                                selected,
+                                "callback buffer rendering",
+                            )
+                        finally:
+                            al.source_stop(source_id)
+                            al.sourcei(source_id, bindings.AL_BUFFER, 0)
+                            al.delete_buffers((callback_buffer,))
+
+                    if context.library.is_al_extension_present("AL_EXT_STATIC_BUFFER"):
+                        static_buffer = al.gen_buffers()[0]
+                        static_pcm = struct.pack("<h", 1_500) * 128
+                        try:
+                            al.source_stop(source_id)
+                            al.sourcei(source_id, bindings.AL_BUFFER, 0)
+                            context.set_static_buffer_data(
+                                static_buffer,
+                                bindings.AL_FORMAT_MONO16,
+                                static_pcm,
+                                sample_rate,
+                            )
+                            al.sourcei(source_id, bindings.AL_BUFFER, static_buffer)
+                            al.source_play(source_id)
+                            static_render = bytearray(128 * 2 * 2)
+                            device.render_samples(static_render, 128)
+                            if not any(static_render):
+                                raise RuntimeError(
+                                    "static buffer did not render sample data"
+                                )
+                            _require_no_al_error(
+                                selected,
+                                "static buffer rendering",
+                            )
+                        finally:
+                            al.source_stop(source_id)
+                            al.sourcei(source_id, bindings.AL_BUFFER, 0)
+                            al.delete_buffers((static_buffer,))
+
                     if not device.is_extension_present("ALC_EXT_EFX"):
                         raise RuntimeError("OpenAL Soft did not expose ALC_EXT_EFX")
                     effect_id = al.gen_effects()[0]
@@ -127,6 +211,28 @@ def run(library: bindings.OpenALLibrary | None = None) -> str:
                     al.delete_sources((source_id,))
                     al.delete_buffers((buffer_id,))
                     _require_no_al_error(selected, "conformance cleanup")
+
+        if callback_supported:
+            teardown_context = device.create_context(context_attributes)
+            with teardown_context.activate():
+                teardown_buffer = selected.al.gen_buffers()[0]
+                teardown_source = selected.al.gen_sources()[0]
+                teardown_registration = teardown_context.register_buffer_callback(
+                    teardown_buffer,
+                    bindings.AL_FORMAT_MONO16,
+                    sample_rate,
+                    lambda view: len(view),
+                )
+                selected.al.sourcei(
+                    teardown_source,
+                    bindings.AL_BUFFER,
+                    teardown_buffer,
+                )
+            teardown_context.close()
+            if not teardown_registration.closed:
+                raise RuntimeError(
+                    "context teardown did not finalize its callback buffer"
+                )
 
     return f"backend conformance passed: {renderer} ({version})"
 

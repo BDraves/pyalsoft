@@ -203,6 +203,61 @@ def test_al_extension_uses_current_context(monkeypatch: pytest.MonkeyPatch) -> N
         ("resolve", b"alDeferUpdatesSOFT"),
     ]
 
+    assert library.get_function("alDeferUpdatesSOFT") is extension_function
+    assert calls == [
+        ("check", b"AL_SOFT_deferred_updates"),
+        ("resolve", b"alDeferUpdatesSOFT"),
+        ("check", b"AL_SOFT_deferred_updates"),
+    ]
+
+
+def test_al_extension_cache_is_context_scoped_and_invalidated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current_context = 0x1000
+    resolved_address = {0x1000: 0x2000, 0x1100: 0x2100}
+
+    def first_function() -> None:
+        pass
+
+    def replacement_function() -> None:
+        pass
+
+    def second_function() -> None:
+        pass
+
+    get_proc_calls: list[int] = []
+
+    def get_proc_address(_name: object) -> int:
+        get_proc_calls.append(current_context)
+        return resolved_address[current_context]
+
+    prototypes = {
+        "alcGetCurrentContext": FakePrototype(lambda: current_context),
+        "alIsExtensionPresent": FakePrototype(lambda _extension: b"\x01"),
+        "alGetProcAddress": FakePrototype(get_proc_address),
+        "alDeferUpdatesSOFT": FakePrototype(
+            addresses={
+                0x2000: first_function,
+                0x2001: replacement_function,
+                0x2100: second_function,
+            }
+        ),
+    }
+    library = make_library(monkeypatch, prototypes)
+
+    assert library.get_function("alDeferUpdatesSOFT") is first_function
+    assert library.get_function("alDeferUpdatesSOFT") is first_function
+    current_context = 0x1100
+    assert library.get_function("alDeferUpdatesSOFT") is second_function
+    assert get_proc_calls == [0x1000, 0x1100]
+
+    current_context = 0x1000
+    resolved_address[0x1000] = 0x2001
+    library._invalidate_context_extensions(current_context)
+    assert library.get_function("alDeferUpdatesSOFT") is replacement_function
+    assert get_proc_calls == [0x1000, 0x1100, 0x1000]
+
 
 def test_alc_extension_uses_supplied_device(
     monkeypatch: pytest.MonkeyPatch,
@@ -235,6 +290,66 @@ def test_alc_extension_uses_supplied_device(
         ("check", device, b"ALC_SOFT_pause_device"),
         ("resolve", device, b"alcDevicePauseSOFT"),
     ]
+
+    assert (
+        library.get_function("alcDevicePauseSOFT", device=device) is extension_function
+    )
+    assert calls == [
+        ("check", device, b"ALC_SOFT_pause_device"),
+        ("resolve", device, b"alcDevicePauseSOFT"),
+        ("check", device, b"ALC_SOFT_pause_device"),
+    ]
+
+
+def test_alc_extension_cache_is_device_scoped_and_clearable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_device = ctypes.c_void_p(0x1000)
+    second_device = ctypes.c_void_p(0x1100)
+    addresses = {0x1000: 0x3000, 0x1100: 0x3100}
+    calls: list[int] = []
+
+    def first_function(_device: object) -> None:
+        pass
+
+    def second_function(_device: object) -> None:
+        pass
+
+    def get_proc_address(device: object, _name: object) -> int:
+        address = ctypes.cast(cast(Any, device), ctypes.c_void_p).value
+        assert address is not None
+        calls.append(address)
+        return addresses[address]
+
+    prototypes = {
+        "alcIsExtensionPresent": FakePrototype(lambda _device, _extension: b"\x01"),
+        "alcGetProcAddress": FakePrototype(get_proc_address),
+        "alcDevicePauseSOFT": FakePrototype(
+            addresses={0x3000: first_function, 0x3100: second_function}
+        ),
+    }
+    library = make_library(monkeypatch, prototypes)
+
+    assert (
+        library.get_function("alcDevicePauseSOFT", device=first_device)
+        is first_function
+    )
+    assert (
+        library.get_function("alcDevicePauseSOFT", device=first_device)
+        is first_function
+    )
+    assert (
+        library.get_function("alcDevicePauseSOFT", device=second_device)
+        is second_function
+    )
+    assert calls == [0x1000, 0x1100]
+
+    library.clear_extension_cache()
+    assert (
+        library.get_function("alcDevicePauseSOFT", device=first_device)
+        is first_function
+    )
+    assert calls == [0x1000, 0x1100, 0x1000]
 
 
 def test_efx_al_command_checks_the_current_device(
@@ -330,8 +445,73 @@ def test_direct_context_extension_can_resolve_through_alc(
     assert library.al.get_error_direct(0x1000, resolution_device=device) == 0
     assert calls == [
         ("check", device, b"AL_EXT_direct_context"),
-        ("resolve", device, b"alGetErrorDirect"),
     ]
+
+
+def test_explicit_resolution_device_wins_over_unrelated_current_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = ctypes.c_void_p(0x1234)
+    calls: list[str] = []
+
+    def extension_function(_context: object) -> int:
+        return 0
+
+    def al_check(_extension: object) -> bytes:
+        calls.append("al-check")
+        return b"\x01"
+
+    def al_resolve(_name: object) -> int:
+        calls.append("al-resolve")
+        return 0x5000
+
+    def alc_check(_device: object, _extension: object) -> bytes:
+        calls.append("alc-check")
+        return b"\x01"
+
+    def alc_resolve(_device: object, _name: object) -> int:
+        calls.append("alc-resolve")
+        return 0x5000
+
+    prototypes = {
+        "alcGetCurrentContext": FakePrototype(lambda: 0x9999),
+        "alIsExtensionPresent": FakePrototype(al_check),
+        "alGetProcAddress": FakePrototype(al_resolve),
+        "alcIsExtensionPresent": FakePrototype(alc_check),
+        "alcGetProcAddress": FakePrototype(alc_resolve),
+        "alGetErrorDirect": FakePrototype(addresses={0x5000: extension_function}),
+    }
+    library = make_library(monkeypatch, prototypes)
+
+    assert library.al.get_error_direct(0x1000, resolution_device=device) == 0
+    assert calls == ["alc-check", "alc-resolve"]
+
+
+def test_unchecked_extension_resolution_does_not_poison_checked_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def is_present(_extension: object) -> bytes:
+        calls.append("check")
+        return b"\x01"
+
+    def get_proc_address(_name: object) -> int:
+        calls.append("resolve")
+        return 0x2000
+
+    prototypes = {
+        "alcGetCurrentContext": FakePrototype(lambda: 0x1000),
+        "alIsExtensionPresent": FakePrototype(is_present),
+        "alGetProcAddress": FakePrototype(get_proc_address),
+        "alDeferUpdatesSOFT": FakePrototype(addresses={0x2000: lambda: None}),
+    }
+    library = make_library(monkeypatch, prototypes)
+
+    library.get_function("alDeferUpdatesSOFT", check_extension=False)
+    library.get_function("alDeferUpdatesSOFT", check_extension=True)
+
+    assert calls == ["resolve", "check", "resolve"]
 
 
 def test_unavailable_extension_is_not_resolved(

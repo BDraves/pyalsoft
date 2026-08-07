@@ -7,7 +7,7 @@ import ctypes.util
 import os
 import sys
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -21,11 +21,14 @@ from pyalsoft.bindings._generated.functions import (
 )
 
 if TYPE_CHECKING:
+    from pyalsoft.bindings._alc import CallbackRegistration
     from pyalsoft.bindings._generated.commands import ALCCommands, ALCommands
     from pyalsoft.bindings._generated.extensions import ExtensionCapabilities
 
 type ForeignFunction = Callable[..., Any]
 type LibraryPath = str | os.PathLike[str]
+type _FunctionScope = tuple[str, int] | None
+type _ExtensionFunctionKey = tuple[str, _FunctionScope, str, bool]
 
 
 class OpenALError(Exception):
@@ -154,6 +157,18 @@ def _encoded_name(value: str, *, label: str) -> bytes:
         raise ValueError(f"{label} must contain only ASCII characters") from error
 
 
+def _function_scope(value: object | None) -> _FunctionScope:
+    """Return a stable cache scope for a native handle or test double."""
+
+    if value is None:
+        return None
+    try:
+        address = _pointer_address(value)
+    except TypeError:
+        return ("object", id(value))
+    return None if address is None else ("pointer", address)
+
+
 class OpenALLibrary:
     """A loaded OpenAL library with typed core and extension functions.
 
@@ -166,9 +181,11 @@ class OpenALLibrary:
     def __init__(self, path: LibraryPath | None = None) -> None:
         self._handle, self.library_name = _load_shared_library(path)
         self._exports: dict[str, ForeignFunction] = {}
+        self._extension_functions: dict[_ExtensionFunctionKey, ForeignFunction] = {}
         self._al_commands: ALCommands | None = None
         self._alc_commands: ALCCommands | None = None
         self._extension_capabilities: ExtensionCapabilities | None = None
+        self._system_event_callback: object | None = None
         self._context_lock = threading.RLock()
 
     @property
@@ -217,19 +234,75 @@ class OpenALLibrary:
                 f"OpenAL command {name!r} is not a direct library export"
             )
 
-        cached = self._exports.get(name)
-        if cached is not None:
-            return cached
+        with self._context_lock:
+            cached = self._exports.get(name)
+            if cached is not None:
+                return cached
 
-        prototype = PROTOTYPES[name]
-        try:
-            function = cast(ForeignFunction, prototype((name, self._handle)))
-        except (AttributeError, OSError, TypeError, ValueError) as error:
-            raise FunctionUnavailableError(
-                f"OpenAL library {self.library_name!r} does not export {name!r}"
-            ) from error
-        self._exports[name] = function
-        return function
+            prototype = PROTOTYPES[name]
+            try:
+                function = cast(ForeignFunction, prototype((name, self._handle)))
+            except (AttributeError, OSError, TypeError, ValueError) as error:
+                raise FunctionUnavailableError(
+                    f"OpenAL library {self.library_name!r} does not export {name!r}"
+                ) from error
+            self._exports[name] = function
+            return function
+
+    def clear_extension_cache(self) -> None:
+        """Clear all cached extension entry points.
+
+        Owned devices and contexts invalidate their own scopes automatically.
+        Applications that destroy or reconfigure raw native handles should
+        clear this cache before a handle address can be reused.
+        """
+
+        with self._context_lock:
+            self._extension_functions.clear()
+
+    def register_system_event_callback(
+        self,
+        callback: Callable[[int, int, object | None, str], None],
+        *,
+        event_types: Sequence[int] = (),
+    ) -> CallbackRegistration:
+        """Register and retain the global ``ALC_SOFT_system_events`` callback."""
+
+        from pyalsoft.bindings._alc import _register_system_event_callback
+
+        return _register_system_event_callback(
+            self,
+            callback,
+            event_types=event_types,
+        )
+
+    def clear_system_event_callback(self) -> None:
+        """Disable events and remove this native library's global callback."""
+
+        from pyalsoft.bindings._alc import _clear_system_event_callback
+
+        _clear_system_event_callback(self)
+
+    def _invalidate_extension_scope(
+        self,
+        resolver: str,
+        handle: object | None,
+    ) -> None:
+        scope = _function_scope(handle)
+        with self._context_lock:
+            stale = tuple(
+                key
+                for key in self._extension_functions
+                if key[0] == resolver and key[1] == scope
+            )
+            for key in stale:
+                self._extension_functions.pop(key, None)
+
+    def _invalidate_context_extensions(self, context: object) -> None:
+        self._invalidate_extension_scope("al", context)
+
+    def _invalidate_device_extensions(self, device: object) -> None:
+        self._invalidate_extension_scope("alc", device)
 
     def _current_context(self) -> object | None:
         function = self.get_export("alcGetCurrentContext")
@@ -310,17 +383,34 @@ class OpenALLibrary:
         device: object | None = None,
         check_extension: bool = True,
     ) -> ForeignFunction:
+        """Resolve and cache an AL extension for the effective context."""
+
+        with self._context_lock:
+            return self._get_al_extension(
+                name,
+                device=device,
+                check_extension=check_extension,
+            )
+
+    def _get_al_extension(
+        self,
+        name: str,
+        *,
+        device: object | None = None,
+        check_extension: bool = True,
+    ) -> ForeignFunction:
         """Resolve an AL extension command for the current context.
 
-        Extensions that also support ALC can be resolved through *device* when
-        there is no current context. This is needed by direct-context APIs.
+        Extensions that also support ALC are resolved through an explicitly
+        supplied *device*. This keeps direct-context APIs independent of an
+        unrelated context that may be current on the calling thread.
         """
 
         extension = self._extension_for(name, "AL")
         extension_apis = EXTENSION_APIS[extension]
         context = self._current_context()
         has_context = _pointer_address(context) is not None
-        use_alc = not has_context and "alc" in extension_apis and device is not None
+        use_alc = "alc" in extension_apis and device is not None
 
         if not has_context and not use_alc and check_extension:
             raise ContextRequiredError(
@@ -336,10 +426,10 @@ class OpenALLibrary:
                         )
                     device = self._device_for_context(context)
                 present = self.is_alc_extension_present(extension, device)
+            elif use_alc:
+                present = self.is_alc_extension_present(extension, device)
             elif has_context and "al" in extension_apis:
                 present = self.is_al_extension_present(extension)
-            elif "alc" in extension_apis and device is not None:
-                present = self.is_alc_extension_present(extension, device)
             else:
                 raise ContextRequiredError(
                     f"no usable context or device can check {extension!r}"
@@ -351,14 +441,44 @@ class OpenALLibrary:
 
         encoded_name = _encoded_name(name, label="command name")
         if use_alc:
+            resolver = "alc"
+            scope = _function_scope(device)
+            cache_key = (resolver, scope, name, check_extension)
+            cached = self._extension_functions.get(cache_key)
+            if cached is not None:
+                return cached
             get_proc_address = self.get_export("alcGetProcAddress")
             address_value = cast(object, get_proc_address(device, encoded_name))
         else:
+            resolver = "al"
+            scope = _function_scope(context)
+            cache_key = (resolver, scope, name, check_extension)
+            cached = self._extension_functions.get(cache_key)
+            if cached is not None:
+                return cached
             get_proc_address = self.get_export("alGetProcAddress")
             address_value = cast(object, get_proc_address(encoded_name))
-        return self._function_from_address(name, address_value)
+        function = self._function_from_address(name, address_value)
+        self._extension_functions[cache_key] = function
+        return function
 
     def get_alc_extension(
+        self,
+        name: str,
+        device: object | None = None,
+        *,
+        check_extension: bool = True,
+    ) -> ForeignFunction:
+        """Resolve and cache an ALC extension for *device*."""
+
+        with self._context_lock:
+            return self._get_alc_extension(
+                name,
+                device,
+                check_extension=check_extension,
+            )
+
+    def _get_alc_extension(
         self,
         name: str,
         device: object | None = None,
@@ -384,12 +504,19 @@ class OpenALLibrary:
                     f"OpenAL extension {extension!r} is not available"
                 )
 
+        cache_key = ("alc", _function_scope(device), name, check_extension)
+        cached = self._extension_functions.get(cache_key)
+        if cached is not None:
+            return cached
+
         get_proc_address = self.get_export("alcGetProcAddress")
         address_value = cast(
             object,
             get_proc_address(device, _encoded_name(name, label="command name")),
         )
-        return self._function_from_address(name, address_value)
+        function = self._function_from_address(name, address_value)
+        self._extension_functions[cache_key] = function
+        return function
 
     def get_function(
         self,

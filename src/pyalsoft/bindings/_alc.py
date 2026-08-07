@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import ctypes
 import threading
 from collections.abc import Callable, Iterator, Sequence
-from contextlib import contextmanager, suppress
+from contextlib import AbstractContextManager, ExitStack, contextmanager, suppress
 from typing import Self, cast
 
 from pyalsoft.bindings._generated import constants as _constants
 from pyalsoft.bindings._generated import enums as _enums
 from pyalsoft.bindings._generated import types as _types
+from pyalsoft.bindings._generated.objects import Buffer
 from pyalsoft.bindings._library import (
     LibraryNotFoundError,
     LibraryPath,
@@ -21,6 +23,9 @@ from pyalsoft.bindings._library import (
 
 type EventCallback = Callable[[int, int, int, str], None]
 type DebugCallback = Callable[[int, int, int, int, str], None]
+type SystemEventCallback = Callable[[int, int, object | None, str], None]
+type BufferCallback = Callable[[memoryview], int]
+type FoldbackCallback = Callable[[int, int], None]
 
 
 class ALCHandleError(OpenALError):
@@ -47,6 +52,14 @@ class HandleClosedError(ALCHandleError):
     """Raised when an operation requires an open device or context."""
 
 
+class NativeCallError(ALCHandleError):
+    """Raised when a lifetime-sensitive native operation reports an error."""
+
+
+class CallbackControlError(NativeCallError):
+    """Raised when native callback state cannot be enabled or removed safely."""
+
+
 def _same_pointer(left: object | None, right: object | None) -> bool:
     """Compare native handles while remaining friendly to test doubles."""
 
@@ -58,7 +71,7 @@ def _same_pointer(left: object | None, right: object | None) -> bool:
         return False
 
 
-def _enum_or_int[T](enum_type: type[T], value: int) -> T | int:
+def _enum_or_int[T](enum_type: Callable[[int], T], value: int) -> T | int:
     try:
         return enum_type(value)
     except ValueError:
@@ -70,6 +83,123 @@ def _message_text(message: bytes | None, length: int) -> str:
         return ""
     encoded = message[: max(0, length)].rstrip(b"\0")
     return encoded.decode("utf-8", errors="replace")
+
+
+def _buffer_identifier(value: Buffer | int, library: OpenALLibrary) -> int:
+    if isinstance(value, Buffer):
+        if value.library is not library:
+            raise ValueError("buffer belongs to a different OpenAL library")
+        identifier = value.identifier
+    else:
+        identifier = value
+    if isinstance(identifier, bool) or not isinstance(identifier, int):
+        raise TypeError("buffer must be an integer or Buffer")
+    if identifier <= 0:
+        raise ValueError("buffer must be positive")
+    return identifier
+
+
+def _integer_value(value: object, *, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{label} must be an integer")
+    return int(value)
+
+
+def _positive_integer(value: object, *, label: str) -> int:
+    value = _integer_value(value, label=label)
+    if value <= 0:
+        raise ValueError(f"{label} must be positive")
+    return value
+
+
+def _require_no_al_error(
+    library: OpenALLibrary,
+    operation: str,
+    *,
+    preexisting: bool = False,
+) -> None:
+    error = library.al.get_error()
+    error_value = int(error)
+    if error_value == _constants.AL_NO_ERROR:
+        return
+    error_name = getattr(error, "name", f"0x{error_value:04x}")
+    if preexisting:
+        raise NativeCallError(
+            f"{operation} cannot begin with pre-existing OpenAL error {error_name}"
+        )
+    raise NativeCallError(f"{operation} failed with OpenAL error {error_name}")
+
+
+def _retained_byte_buffer(data: object) -> tuple[object, int, tuple[object, ...]]:
+    if isinstance(data, bytes):
+        backing = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
+        return backing, len(data), (data, backing)
+    if isinstance(data, bytearray):
+        if not data:
+            backing = (ctypes.c_ubyte * 0)()
+        else:
+            backing = (ctypes.c_ubyte * len(data)).from_buffer(data)
+        return backing, len(data), (data, backing)
+    if isinstance(data, memoryview):
+        try:
+            view = data.cast("B")
+        except (TypeError, ValueError) as error:
+            raise TypeError("data must be a contiguous byte buffer") from error
+        array_type = ctypes.c_ubyte * view.nbytes
+        if not view.nbytes:
+            backing = array_type()
+        elif view.readonly:
+            backing = array_type.from_buffer_copy(view)
+        else:
+            backing = array_type.from_buffer(view)
+        return backing, view.nbytes, (data, view, backing)
+    raise TypeError("data must be bytes, bytearray, or memoryview")
+
+
+def _retained_float_buffer(
+    memory: object,
+) -> tuple[object, int, tuple[object, ...]]:
+    if isinstance(memory, ctypes.Array):
+        element_type = getattr(memory, "_type_", None)
+        if element_type is not _types.ALfloat:
+            raise TypeError("ctypes foldback memory must be an ALfloat array")
+        if not len(memory):
+            raise ValueError("foldback memory cannot be empty")
+        return memory, len(memory), (memory,)
+    if isinstance(memory, (bytearray, memoryview)):
+        source = memoryview(memory)
+        try:
+            view = source.cast("B")
+        except (TypeError, ValueError) as error:
+            raise TypeError("foldback memory must be contiguous") from error
+        if view.readonly:
+            raise TypeError("foldback memory must be writable")
+        item_size = ctypes.sizeof(_types.ALfloat)
+        if view.nbytes % item_size:
+            raise ValueError("foldback memory size must be a multiple of ALfloat")
+        if not view.nbytes:
+            raise ValueError("foldback memory cannot be empty")
+        backing = (_types.ALfloat * (view.nbytes // item_size)).from_buffer(view)
+        return backing, len(backing), (memory, source, view, backing)
+    if isinstance(memory, Sequence) and not isinstance(memory, (str, bytes)):
+        if len(memory) == 0:
+            raise ValueError("foldback memory cannot be empty")
+        try:
+            backing = (_types.ALfloat * len(memory))(*memory)
+        except (TypeError, ValueError) as error:
+            raise TypeError("foldback memory must contain real numbers") from error
+        return backing, len(backing), (memory, backing)
+    raise TypeError(
+        "foldback memory must be an ALfloat array, writable buffer, or sequence"
+    )
+
+
+def _callback_buffer(address_value: object, size: int) -> memoryview:
+    address = _pointer_address(address_value)
+    if address is None:
+        raise ValueError("OpenAL supplied a null callback sample buffer")
+    array = (ctypes.c_ubyte * size).from_address(address)
+    return memoryview(array).cast("B")
 
 
 class CallbackRegistration:
@@ -85,12 +215,36 @@ class CallbackRegistration:
         callback: object,
         close: Callable[[CallbackRegistration], None],
         errors: list[BaseException],
+        *,
+        resources: Sequence[object] = (),
+        owner_locks: Sequence[AbstractContextManager[object]] = (),
     ) -> None:
         self._callback = callback
         self._close = close
         self._errors = errors
         self._lock = threading.RLock()
+        self._condition = threading.Condition(self._lock)
         self._closed = False
+        self._closing = False
+        self._closing_thread: int | None = None
+        self._callback_threads: dict[int, int] = {}
+        self._resources = tuple(resources)
+        self._owner_locks = tuple(owner_locks)
+
+    @contextmanager
+    def _serialized(self) -> Iterator[None]:
+        with ExitStack() as stack:
+            for lock in self._owner_locks:
+                stack.enter_context(lock)
+            yield
+
+    def _finish_close_locked(self) -> None:
+        self._closed = True
+        self._closing = False
+        self._closing_thread = None
+        self._callback = None
+        self._resources = ()
+        self._condition.notify_all()
 
     @property
     def closed(self) -> bool:
@@ -119,15 +273,84 @@ class CallbackRegistration:
         with self._lock:
             self._errors.append(error)
 
+    def _begin_callback(self) -> None:
+        with self._condition:
+            thread = threading.get_ident()
+            self._callback_threads[thread] = self._callback_threads.get(thread, 0) + 1
+
+    def _end_callback(self) -> None:
+        with self._condition:
+            thread = threading.get_ident()
+            remaining = self._callback_threads[thread] - 1
+            if remaining:
+                self._callback_threads[thread] = remaining
+            else:
+                self._callback_threads.pop(thread)
+            self._condition.notify_all()
+
     def close(self) -> None:
         """Unregister the callback. Calling this more than once is harmless."""
 
-        with self._lock:
-            if self._closed:
-                return
-            self._close(self)
-            self._closed = True
-            self._callback = None
+        thread = threading.get_ident()
+        while True:
+            initiated = False
+            with self._serialized():
+                with self._condition:
+                    if thread in self._callback_threads:
+                        raise CallbackControlError(
+                            "callback registration cannot be closed from its callback"
+                        )
+                    if self._closed:
+                        return
+                    if self._closing_thread == thread:
+                        raise CallbackControlError(
+                            "callback registration close cannot be re-entered"
+                        )
+                    if not self._closing:
+                        self._closing = True
+                        self._closing_thread = thread
+                        initiated = True
+
+                if initiated:
+                    try:
+                        self._close(self)
+                    except BaseException:
+                        with self._condition:
+                            self._closing = False
+                            self._closing_thread = None
+                            self._condition.notify_all()
+                        raise
+
+            with self._condition:
+                if initiated:
+                    while self._callback_threads:
+                        self._condition.wait()
+                    self._finish_close_locked()
+                    return
+                while self._closing:
+                    self._condition.wait()
+
+    def _owner_closed(self) -> None:
+        """Finalize after the native owner has destroyed callback state."""
+
+        thread = threading.get_ident()
+        while True:
+            initiated = False
+            with self._serialized(), self._condition:
+                if self._closed:
+                    return
+                if not self._closing:
+                    self._closing = True
+                    self._closing_thread = thread
+                    initiated = True
+            with self._condition:
+                if initiated:
+                    while self._callback_threads:
+                        self._condition.wait()
+                    self._finish_close_locked()
+                    return
+                while self._closing:
+                    self._condition.wait()
 
     def __enter__(self) -> CallbackRegistration:
         if self.closed:
@@ -141,6 +364,84 @@ class CallbackRegistration:
         traceback: object | None,
     ) -> None:
         self.close()
+
+
+class FoldbackRegistration(CallbackRegistration):
+    """Own an active foldback request and its writable sample storage."""
+
+    def __init__(
+        self,
+        callback: object,
+        close: Callable[[CallbackRegistration], None],
+        errors: list[BaseException],
+        memory: object,
+        *,
+        resources: Sequence[object] = (),
+        owner_locks: Sequence[AbstractContextManager[object]] = (),
+    ) -> None:
+        super().__init__(
+            callback,
+            close,
+            errors,
+            resources=(memory, *resources),
+            owner_locks=owner_locks,
+        )
+        self.memory = memory
+        self._stop_requested = False
+        self._stop_received = False
+
+    @property
+    def stopping(self) -> bool:
+        """Whether native foldback stop has been requested."""
+
+        with self._lock:
+            return self._stop_requested and not self._closed
+
+    def _native_stopped(self) -> None:
+        with self._condition:
+            self._stop_received = True
+            self._condition.notify_all()
+
+    def close(self) -> None:
+        """Request foldback stop and wait for the native STOP event."""
+
+        with self._serialized():
+            with self._condition:
+                thread = threading.get_ident()
+                if self._closed:
+                    return
+                if thread in self._callback_threads:
+                    raise CallbackControlError(
+                        "foldback cannot be closed from its native callback"
+                    )
+                if self._closing:
+                    if self._closing_thread == thread:
+                        raise CallbackControlError(
+                            "foldback close cannot be re-entered"
+                        )
+                    while not self._closed:
+                        self._condition.wait()
+                    return
+                self._closing = True
+                self._closing_thread = thread
+                stop_received = self._stop_received
+
+            try:
+                if not stop_received:
+                    self._close(self)
+            except BaseException:
+                with self._condition:
+                    self._closing = False
+                    self._closing_thread = None
+                    self._condition.notify_all()
+                raise
+
+            with self._condition:
+                if not stop_received:
+                    self._stop_requested = True
+                while not self._stop_received or self._callback_threads:
+                    self._condition.wait()
+                self._finish_close_locked()
 
 
 class Device:
@@ -342,7 +643,7 @@ class Device:
     def close(self) -> None:
         """Close owned contexts and then the native device."""
 
-        with self._lock:
+        with self.library._context_lock, self._lock:
             if self._handle is None:
                 return
             for context in reversed(tuple(self._contexts)):
@@ -350,13 +651,14 @@ class Device:
             handle = self._handle
             if not self._close_native(handle):
                 raise DeviceCloseError("OpenAL refused to close the ALC device")
+            self.library._invalidate_device_extensions(handle)
             self._handle = None
 
     def _close_native(self, handle: object) -> bool:
         return self.library.alc.close_device(handle)
 
     def _forget_context(self, context: Context) -> None:
-        with suppress(ValueError):
+        with self._lock, suppress(ValueError):
             self._contexts.remove(context)
 
     def __enter__(self) -> Self:
@@ -383,7 +685,7 @@ class PlaybackDevice(Device):
     def create_context(self, attributes: Sequence[int] | None = None) -> Context:
         """Create an owned context attached to this device."""
 
-        with self._lock:
+        with self.library._context_lock, self._lock:
             handle = self.library.alc.create_context(self.handle, attributes)
             if handle is None or _pointer_address(handle) is None:
                 raise ContextCreateError(
@@ -498,6 +800,9 @@ class Context:
         self.library = device.library
         self._handle: object | None = handle
         self._callbacks: dict[str, CallbackRegistration] = {}
+        self._buffer_callbacks: dict[int, CallbackRegistration] = {}
+        self._foldback: FoldbackRegistration | None = None
+        self._static_buffers: dict[int, tuple[object, ...]] = {}
         self._lock = threading.RLock()
 
     @property
@@ -667,49 +972,73 @@ class Context:
 
         if not callable(callback):
             raise TypeError("callback must be callable")
-        self.require_extension("AL_SOFT_events")
-        enabled_types = tuple(int(item) for item in event_types)
-        previous = self._callbacks.get("event")
-        if previous is not None:
-            previous.close()
-        errors: list[BaseException] = []
+        enabled_types = tuple(
+            _integer_value(item, label="event type") for item in event_types
+        )
+        owner_locks = (self.library._context_lock, self._lock)
 
-        def receive(
-            event_type: int,
-            object_id: int,
-            parameter: int,
-            length: int,
-            message: bytes | None,
-            _user_parameter: object | None,
-        ) -> None:
+        with self.library._context_lock, self._lock:
+            self.require_extension("AL_SOFT_events")
+            previous = self._callbacks.get("event")
+            if previous is not None:
+                previous.close()
+            errors: list[BaseException] = []
+
+            def receive(
+                event_type: int,
+                object_id: int,
+                parameter: int,
+                length: int,
+                message: bytes | None,
+                _user_parameter: object | None,
+            ) -> None:
+                registration._begin_callback()
+                try:
+                    callback(
+                        int(event_type),
+                        int(object_id),
+                        int(parameter),
+                        _message_text(message, int(length)),
+                    )
+                except BaseException as error:
+                    registration._record_error(error)
+                finally:
+                    registration._end_callback()
+
+            native_callback = _types.ALEVENTPROCSOFT(receive)
+
+            def unregister(registration: CallbackRegistration) -> None:
+                if self._callbacks.get("event") is not registration:
+                    return
+                with self.activate():
+                    self.library.al.event_callback_soft(_types.ALEVENTPROCSOFT(), None)
+                    if enabled_types:
+                        self.library.al.event_control_soft(enabled_types, False)
+                self._callbacks.pop("event", None)
+
+            registration = CallbackRegistration(
+                native_callback,
+                unregister,
+                errors,
+                owner_locks=owner_locks,
+            )
             try:
-                callback(
-                    int(event_type),
-                    int(object_id),
-                    int(parameter),
-                    _message_text(message, int(length)),
-                )
-            except BaseException as error:
-                registration._record_error(error)
-
-        native_callback = _types.ALEVENTPROCSOFT(receive)
-
-        def unregister(registration: CallbackRegistration) -> None:
-            if self._callbacks.get("event") is not registration:
-                return
-            with self.activate():
-                self.library.al.event_callback_soft(_types.ALEVENTPROCSOFT(), None)
-                if enabled_types:
-                    self.library.al.event_control_soft(enabled_types, False)
-            self._callbacks.pop("event", None)
-
-        registration = CallbackRegistration(native_callback, unregister, errors)
-        with self.activate():
-            self.library.al.event_callback_soft(native_callback, None)
-            if enabled_types:
-                self.library.al.event_control_soft(enabled_types, True)
-        self._callbacks["event"] = registration
-        return registration
+                with self.activate():
+                    self.library.al.event_callback_soft(native_callback, None)
+                    if enabled_types:
+                        self.library.al.event_control_soft(enabled_types, True)
+            except BaseException:
+                with suppress(BaseException), self.activate():
+                    if enabled_types:
+                        with suppress(BaseException):
+                            self.library.al.event_control_soft(enabled_types, False)
+                    with suppress(BaseException):
+                        self.library.al.event_callback_soft(
+                            _types.ALEVENTPROCSOFT(), None
+                        )
+                raise
+            self._callbacks["event"] = registration
+            return registration
 
     def register_debug_callback(
         self,
@@ -721,63 +1050,341 @@ class Context:
 
         if not callable(callback):
             raise TypeError("callback must be callable")
-        self.require_extension("AL_EXT_debug")
-        previous = self._callbacks.get("debug")
-        if previous is not None:
-            previous.close()
-        errors: list[BaseException] = []
+        owner_locks = (self.library._context_lock, self._lock)
 
-        def receive(
-            source: int,
-            type: int,
-            identifier: int,
-            severity: int,
-            length: int,
-            message: bytes | None,
-            _user_parameter: object | None,
-        ) -> None:
-            try:
-                callback(
-                    int(source),
-                    int(type),
-                    int(identifier),
-                    int(severity),
-                    _message_text(message, int(length)),
-                )
-            except BaseException as error:
-                registration._record_error(error)
+        with self.library._context_lock, self._lock:
+            self.require_extension("AL_EXT_debug")
+            previous = self._callbacks.get("debug")
+            if previous is not None:
+                previous.close()
+            errors: list[BaseException] = []
 
-        native_callback = _types.ALDEBUGPROCEXT(receive)
-        with self.activate():
-            was_enabled = self.library.al.is_enabled(_constants.AL_DEBUG_OUTPUT_EXT)
+            def receive(
+                source: int,
+                type: int,
+                identifier: int,
+                severity: int,
+                length: int,
+                message: bytes | None,
+                _user_parameter: object | None,
+            ) -> None:
+                registration._begin_callback()
+                try:
+                    callback(
+                        int(source),
+                        int(type),
+                        int(identifier),
+                        int(severity),
+                        _message_text(message, int(length)),
+                    )
+                except BaseException as error:
+                    registration._record_error(error)
+                finally:
+                    registration._end_callback()
 
-        def unregister(registration: CallbackRegistration) -> None:
-            if self._callbacks.get("debug") is not registration:
-                return
+            native_callback = _types.ALDEBUGPROCEXT(receive)
             with self.activate():
-                self.library.al.debug_message_callback_ext(
-                    _types.ALDEBUGPROCEXT(), None
-                )
-                if enable_output and not was_enabled:
-                    self.library.al.disable(_constants.AL_DEBUG_OUTPUT_EXT)
-            self._callbacks.pop("debug", None)
+                was_enabled = self.library.al.is_enabled(_constants.AL_DEBUG_OUTPUT_EXT)
 
-        registration = CallbackRegistration(native_callback, unregister, errors)
-        with self.activate():
-            self.library.al.debug_message_callback_ext(native_callback, None)
-            if enable_output and not was_enabled:
-                self.library.al.enable(_constants.AL_DEBUG_OUTPUT_EXT)
-        self._callbacks["debug"] = registration
-        return registration
+            def unregister(registration: CallbackRegistration) -> None:
+                if self._callbacks.get("debug") is not registration:
+                    return
+                with self.activate():
+                    self.library.al.debug_message_callback_ext(
+                        _types.ALDEBUGPROCEXT(), None
+                    )
+                    if enable_output and not was_enabled:
+                        self.library.al.disable(_constants.AL_DEBUG_OUTPUT_EXT)
+                self._callbacks.pop("debug", None)
+
+            registration = CallbackRegistration(
+                native_callback,
+                unregister,
+                errors,
+                owner_locks=owner_locks,
+            )
+            try:
+                with self.activate():
+                    self.library.al.debug_message_callback_ext(native_callback, None)
+                    if enable_output and not was_enabled:
+                        self.library.al.enable(_constants.AL_DEBUG_OUTPUT_EXT)
+            except BaseException:
+                with suppress(BaseException), self.activate():
+                    with suppress(BaseException):
+                        self.library.al.debug_message_callback_ext(
+                            _types.ALDEBUGPROCEXT(), None
+                        )
+                    if enable_output and not was_enabled:
+                        with suppress(BaseException):
+                            self.library.al.disable(_constants.AL_DEBUG_OUTPUT_EXT)
+                raise
+            self._callbacks["debug"] = registration
+            return registration
+
+    def register_buffer_callback(
+        self,
+        buffer: Buffer | int,
+        format: _enums.ALFormat | int,
+        frequency: int,
+        callback: BufferCallback,
+    ) -> CallbackRegistration:
+        """Register a lifetime-safe ``AL_SOFT_callback_buffer`` callback.
+
+        The callback receives a writable byte view valid only for that callback
+        invocation and must return the number of bytes written. Python callback
+        execution is not guaranteed to satisfy hard real-time constraints.
+        """
+
+        if not callable(callback):
+            raise TypeError("callback must be callable")
+        buffer_id = _buffer_identifier(buffer, self.library)
+        frequency = _positive_integer(frequency, label="frequency")
+        format_value = _integer_value(format, label="format")
+        owner_locks = (self.library._context_lock, self._lock)
+
+        with self.library._context_lock, self._lock:
+            self.require_extension("AL_SOFT_callback_buffer")
+            previous = self._buffer_callbacks.get(buffer_id)
+            if previous is not None:
+                previous.close()
+            errors: list[BaseException] = []
+
+            def receive(
+                _user_pointer: object | None,
+                sample_data: object | None,
+                requested_bytes: int,
+            ) -> int:
+                view: memoryview | None = None
+                registration._begin_callback()
+                try:
+                    requested = int(requested_bytes)
+                    view = _callback_buffer(sample_data, requested)
+                    written = callback(view)
+                    if isinstance(written, bool) or not isinstance(written, int):
+                        raise TypeError("buffer callback must return an integer")
+                    if written < 0 or written > requested:
+                        raise ValueError(
+                            "buffer callback byte count must be between zero and "
+                            f"{requested}"
+                        )
+                    return written
+                except BaseException as error:
+                    registration._record_error(error)
+                    return 0
+                finally:
+                    if view is not None:
+                        view.release()
+                    registration._end_callback()
+
+            native_callback = _types.ALBUFFERCALLBACKTYPESOFT(receive)
+
+            def unregister(registration: CallbackRegistration) -> None:
+                if self._buffer_callbacks.get(buffer_id) is not registration:
+                    return
+                with self.activate():
+                    current = self.library.al.get_buffer_ptr_soft(
+                        buffer_id,
+                        _constants.AL_BUFFER_CALLBACK_FUNCTION_SOFT,
+                    )
+                    if _same_pointer(current, native_callback):
+                        self.library.al.buffer_data(
+                            buffer_id,
+                            format_value,
+                            b"",
+                            frequency,
+                        )
+                        remaining = self.library.al.get_buffer_ptr_soft(
+                            buffer_id,
+                            _constants.AL_BUFFER_CALLBACK_FUNCTION_SOFT,
+                        )
+                        if _same_pointer(remaining, native_callback):
+                            raise CallbackControlError(
+                                "OpenAL did not remove the buffer callback"
+                            )
+                self._buffer_callbacks.pop(buffer_id, None)
+
+            registration = CallbackRegistration(
+                native_callback,
+                unregister,
+                errors,
+                owner_locks=owner_locks,
+            )
+            with self.activate():
+                self.library.al.buffer_callback_soft(
+                    buffer_id,
+                    format_value,
+                    frequency,
+                    native_callback,
+                    None,
+                )
+                installed = self.library.al.get_buffer_ptr_soft(
+                    buffer_id,
+                    _constants.AL_BUFFER_CALLBACK_FUNCTION_SOFT,
+                )
+                if not _same_pointer(installed, native_callback):
+                    try:
+                        self.library.al.buffer_data(
+                            buffer_id,
+                            format_value,
+                            b"",
+                            frequency,
+                        )
+                        remaining = self.library.al.get_buffer_ptr_soft(
+                            buffer_id,
+                            _constants.AL_BUFFER_CALLBACK_FUNCTION_SOFT,
+                        )
+                    except BaseException as error:
+                        self._buffer_callbacks[buffer_id] = registration
+                        raise CallbackControlError(
+                            "OpenAL callback installation rollback failed; "
+                            "the trampoline is retained until context close"
+                        ) from error
+                    if _same_pointer(remaining, native_callback):
+                        self._buffer_callbacks[buffer_id] = registration
+                        raise CallbackControlError(
+                            "OpenAL did not remove a failed callback installation; "
+                            "the trampoline is retained until context close"
+                        )
+                    raise CallbackControlError(
+                        "OpenAL did not install the buffer callback"
+                    )
+            self._static_buffers.pop(buffer_id, None)
+            self._buffer_callbacks[buffer_id] = registration
+            return registration
+
+    def start_foldback(
+        self,
+        mode: _enums.ALFoldbackMode | int,
+        count: int,
+        length: int,
+        memory: object,
+        callback: FoldbackCallback,
+    ) -> FoldbackRegistration:
+        """Start an owned ``AL_EXT_FOLDBACK`` request."""
+
+        if not callable(callback):
+            raise TypeError("callback must be callable")
+        count = _positive_integer(count, label="count")
+        if count < 2:
+            raise ValueError("count must be at least two")
+        length = _positive_integer(length, label="length")
+        mode_value = _integer_value(mode, label="mode")
+        if mode_value == _constants.AL_FOLDBACK_MODE_MONO:
+            channel_count = 1
+        elif mode_value == _constants.AL_FOLDBACK_MODE_STEREO:
+            channel_count = 2
+        else:
+            raise ValueError("mode must be AL_FOLDBACK_MODE_MONO or STEREO")
+        backing, capacity, resources = _retained_float_buffer(memory)
+        required_capacity = count * length * channel_count
+        if capacity < required_capacity:
+            raise ValueError(
+                f"foldback memory requires at least {required_capacity} ALfloat values"
+            )
+        owner_locks = (self.library._context_lock, self._lock)
+
+        with self.library._context_lock, self._lock:
+            self.require_extension("AL_EXT_FOLDBACK")
+            if self._foldback is not None:
+                self._foldback.close()
+            errors: list[BaseException] = []
+
+            def receive(event_type: int, block_index: int) -> None:
+                registration._begin_callback()
+                try:
+                    callback(int(event_type), int(block_index))
+                except BaseException as error:
+                    registration._record_error(error)
+                finally:
+                    registration._end_callback()
+                    if int(event_type) == _constants.AL_FOLDBACK_EVENT_STOP:
+                        registration._native_stopped()
+
+            native_callback = _types.LPALFOLDBACKCALLBACK(receive)
+
+            def unregister(registration: CallbackRegistration) -> None:
+                if self._foldback is not registration:
+                    return
+                with self.activate():
+                    prior_error = self.library.al.get_error()
+                    if int(prior_error) != _constants.AL_NO_ERROR:
+                        prior_value = int(prior_error)
+                        prior_name = getattr(
+                            prior_error, "name", f"0x{prior_value:04x}"
+                        )
+                        registration._record_error(
+                            NativeCallError(
+                                "discarded pre-existing OpenAL error before "
+                                f"foldback stop: {prior_name}"
+                            )
+                        )
+                    self.library.al.request_foldback_stop()
+                    _require_no_al_error(self.library, "foldback stop")
+
+            registration = FoldbackRegistration(
+                native_callback,
+                unregister,
+                errors,
+                backing,
+                resources=resources,
+                owner_locks=owner_locks,
+            )
+            with self.activate():
+                _require_no_al_error(
+                    self.library,
+                    "foldback start",
+                    preexisting=True,
+                )
+                self.library.al.request_foldback_start(
+                    mode_value,
+                    count,
+                    length,
+                    backing,
+                    native_callback,
+                )
+                _require_no_al_error(self.library, "foldback start")
+            self._foldback = registration
+            return registration
+
+    def set_static_buffer_data(
+        self,
+        buffer: Buffer | int,
+        format: _enums.ALFormat | int,
+        data: bytes | bytearray | memoryview,
+        frequency: int,
+    ) -> None:
+        """Set ``AL_EXT_STATIC_BUFFER`` data and retain its native backing."""
+
+        buffer_id = _buffer_identifier(buffer, self.library)
+        frequency = _positive_integer(frequency, label="frequency")
+        format_value = _integer_value(format, label="format")
+        backing, size, resources = _retained_byte_buffer(data)
+
+        with self.library._context_lock, self._lock:
+            self.require_extension("AL_EXT_STATIC_BUFFER")
+            previous = self._buffer_callbacks.get(buffer_id)
+            if previous is not None:
+                previous.close()
+            with self.activate():
+                _require_no_al_error(
+                    self.library,
+                    "static buffer update",
+                    preexisting=True,
+                )
+                function = self.library.get_function("alBufferDataStatic")
+                function(buffer_id, format_value, backing, size, frequency)
+                _require_no_al_error(self.library, "static buffer update")
+            self._static_buffers[buffer_id] = (backing, *resources)
 
     def close(self) -> None:
-        """Unregister callbacks, detach, and destroy the native context."""
+        """Stop foldback, detach, and destroy the native context."""
 
+        registrations: tuple[CallbackRegistration, ...]
         with self.library._context_lock, self._lock:
             if self._handle is None:
                 return
-            for registration in reversed(tuple(self._callbacks.values())):
-                registration.close()
+            if self._foldback is not None:
+                self._foldback.close()
             handle = self._handle
             if _same_pointer(
                 self.library.alc.get_current_context(), handle
@@ -794,8 +1401,22 @@ class Context:
                         "OpenAL could not detach the thread-local context"
                     )
             self.library.alc.destroy_context(handle)
+            self.library._invalidate_context_extensions(handle)
+            registrations = (
+                *self._buffer_callbacks.values(),
+                *self._callbacks.values(),
+            )
+            if self._foldback is not None:
+                registrations = (*registrations, self._foldback)
+            self._buffer_callbacks.clear()
+            self._callbacks.clear()
+            self._foldback = None
+            self._static_buffers.clear()
             self._handle = None
             self.device._forget_context(self)
+
+        for registration in registrations:
+            registration._owner_closed()
 
     def __enter__(self) -> Self:
         if self.closed:
@@ -813,6 +1434,128 @@ class Context:
     def __repr__(self) -> str:
         state = "closed" if self.closed else f"handle={self._handle!r}"
         return f"Context(device={self.device!r}, {state})"
+
+
+_SYSTEM_EVENT_LOCK = threading.RLock()
+_SYSTEM_EVENT_CALLBACKS: dict[tuple[str, int], CallbackRegistration] = {}
+
+
+def _system_event_key(library: OpenALLibrary) -> tuple[str, int]:
+    native_library = getattr(library, "native_library", None)
+    native_handle = getattr(native_library, "_handle", None)
+    if isinstance(native_handle, int):
+        return ("native", native_handle)
+    return ("library", id(library))
+
+
+def _register_system_event_callback(
+    library: OpenALLibrary,
+    callback: SystemEventCallback,
+    *,
+    event_types: Sequence[int] = (),
+) -> CallbackRegistration:
+    """Implement library-owned ``ALC_SOFT_system_events`` registration."""
+
+    if not callable(callback):
+        raise TypeError("callback must be callable")
+    enabled_types = tuple(
+        _integer_value(item, label="event type") for item in event_types
+    )
+    event_key = _system_event_key(library)
+    owner_locks = (_SYSTEM_EVENT_LOCK, library._context_lock)
+
+    with _SYSTEM_EVENT_LOCK, library._context_lock:
+        library.extensions["ALC_SOFT_system_events"].require()
+        previous = _SYSTEM_EVENT_CALLBACKS.get(event_key)
+        if previous is not None:
+            previous.close()
+        errors: list[BaseException] = []
+
+        def receive(
+            event_type: int,
+            device_type: int,
+            device: object | None,
+            length: int,
+            message: bytes | None,
+            _user_parameter: object | None,
+        ) -> None:
+            registration._begin_callback()
+            try:
+                callback_device = None if _pointer_address(device) is None else device
+                callback(
+                    int(event_type),
+                    int(device_type),
+                    callback_device,
+                    _message_text(message, int(length)),
+                )
+            except BaseException as error:
+                registration._record_error(error)
+            finally:
+                registration._end_callback()
+
+        native_callback = _types.ALCEVENTPROCTYPESOFT(receive)
+
+        def unregister(registration: CallbackRegistration) -> None:
+            with _SYSTEM_EVENT_LOCK:
+                if _SYSTEM_EVENT_CALLBACKS.get(event_key) is not registration:
+                    return
+                if enabled_types and not library.alc.event_control_soft(
+                    enabled_types,
+                    False,
+                ):
+                    registration._record_error(
+                        CallbackControlError(
+                            "OpenAL could not disable one or more system event types"
+                        )
+                    )
+                library.alc.event_callback_soft(
+                    _types.ALCEVENTPROCTYPESOFT(),
+                    None,
+                )
+                _SYSTEM_EVENT_CALLBACKS.pop(event_key, None)
+                if library._system_event_callback is registration:
+                    library._system_event_callback = None
+
+        registration = CallbackRegistration(
+            native_callback,
+            unregister,
+            errors,
+            owner_locks=owner_locks,
+        )
+        try:
+            library.alc.event_callback_soft(native_callback, None)
+            if enabled_types and not library.alc.event_control_soft(
+                enabled_types,
+                True,
+            ):
+                raise CallbackControlError(
+                    "OpenAL could not enable one or more system event types"
+                )
+        except BaseException:
+            if enabled_types:
+                with suppress(BaseException):
+                    library.alc.event_control_soft(enabled_types, False)
+            with suppress(BaseException):
+                library.alc.event_callback_soft(
+                    _types.ALCEVENTPROCTYPESOFT(),
+                    None,
+                )
+            raise
+        library._system_event_callback = registration
+        _SYSTEM_EVENT_CALLBACKS[event_key] = registration
+        return registration
+
+
+def _clear_system_event_callback(library: OpenALLibrary) -> None:
+    """Clear the global system-event callback for a loaded native library."""
+
+    event_key = _system_event_key(library)
+    with _SYSTEM_EVENT_LOCK, library._context_lock:
+        registration = _SYSTEM_EVENT_CALLBACKS.get(event_key)
+        if registration is not None:
+            registration.close()
+        elif library._system_event_callback is not None:
+            library._system_event_callback = None
 
 
 def _selected_library(
@@ -898,6 +1641,8 @@ def open_capture_device(
 
 __all__ = [
     "ALCHandleError",
+    "BufferCallback",
+    "CallbackControlError",
     "CallbackRegistration",
     "CaptureDevice",
     "Context",
@@ -908,9 +1653,13 @@ __all__ = [
     "DeviceCloseError",
     "DeviceOpenError",
     "EventCallback",
+    "FoldbackCallback",
+    "FoldbackRegistration",
     "HandleClosedError",
     "LoopbackDevice",
+    "NativeCallError",
     "PlaybackDevice",
+    "SystemEventCallback",
     "open_capture_device",
     "open_device",
     "open_loopback_device",
