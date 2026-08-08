@@ -7,10 +7,10 @@
 [![OpenAL Soft 1.25.2](https://img.shields.io/badge/OpenAL_Soft-1.25.2-557C94)](https://github.com/kcat/openal-soft/releases/tag/1.25.2)
 <!-- openal-soft-version-badge:end -->
 
-PyALSoft provides a function-oriented, managed playback API and typed bindings for
-OpenAL Soft, including core OpenAL, ALC, EFX, and supported extensions. The
-managed API lives at the package root; the complete low-level interface remains
-available through `pyalsoft.bindings`.
+PyALSoft provides function-oriented managed playback and capture APIs, plus typed
+bindings for OpenAL Soft, including core OpenAL, ALC, EFX, and supported
+extensions. The managed API lives at the package root; the complete low-level
+interface remains available through `pyalsoft.bindings`.
 
 > PyALSoft is an independent project and is not affiliated with or endorsed by the OpenAL Soft project.
 
@@ -163,6 +163,36 @@ and can be run from a source checkout with:
 
 ```console
 uv run python examples/play_file.py
+```
+
+## Recording
+
+The managed capture API collects audio in memory while your application does
+other work. Native capture buffers are drained on a background thread, so the
+common API returns one `PCM` value instead of exposing chunks:
+
+```python
+from pyalsoft import start_recording, stop_recording
+
+recording = start_recording()
+input("Speak now, then press Enter to stop... ")
+captured = stop_recording(recording)
+```
+
+`start_recording` uses the default input device and records 48 kHz, mono,
+16-bit PCM unless told otherwise. Use `list_capture_devices()` to select a
+specific input. For a known duration, `record(3.0)` is the blocking equivalent.
+Captured and generated `PCM` values can be passed directly to `play`:
+
+```python
+sound = play(captured)
+```
+
+[`examples/record_and_play.py`](examples/record_and_play.py) records until Enter
+is pressed and then plays the complete recording:
+
+```console
+uv run python examples/record_and_play.py
 ```
 
 ## Explicit playback sessions

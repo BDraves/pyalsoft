@@ -10,7 +10,9 @@ import pytest
 
 import pyalsoft._playback as playback
 from pyalsoft import (
+    PCM,
     Acoustics,
+    AudioError,
     AudioFileError,
     DistanceModel,
     InvalidVoiceStateError,
@@ -102,6 +104,64 @@ def test_playing_sound_delegates_status_and_controls(
     assert len(default_library.al.allocated_buffers) == 1
     with pytest.raises(InvalidVoiceStateError, match="stopped"):
         sound.resume()
+
+
+def test_default_runtime_plays_in_memory_pcm(
+    default_library: FakeLibrary,
+) -> None:
+    pcm = PCM(
+        samples=b"\x01\x00\x02\x00\x03\x00\x04\x00",
+        channels=1,
+        sample_rate=8_000,
+    )
+
+    sound = play(pcm)
+
+    assert sound.playing
+    assert sound.info == pcm.info
+    assert default_library.al.buffers[1] == (
+        bindings.AL_FORMAT_MONO16,
+        pcm.samples,
+        8_000,
+    )
+    with pytest.raises(AudioError, match="no source path"):
+        _ = sound.path
+
+    sound.stop()
+
+    assert default_library.al.allocated_buffers == set()
+    assert sound.info == pcm.info
+
+    sound.restart()
+
+    assert sound.playing
+    assert default_library.al.buffers[2] == (
+        bindings.AL_FORMAT_MONO16,
+        pcm.samples,
+        8_000,
+    )
+    default_library.al.states[101] = bindings.AL_STOPPED
+    assert sound.finished
+    assert default_library.al.allocated_buffers == set()
+
+
+def test_default_runtime_releases_pcm_when_voice_creation_fails(
+    default_library: FakeLibrary,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pcm = PCM(samples=b"\x01\x00\x02\x00", channels=1, sample_rate=8_000)
+
+    def fail_to_play(identifier: int) -> None:
+        del identifier
+        raise RuntimeError("could not play")
+
+    monkeypatch.setattr(default_library.al, "source_play", fail_to_play)
+
+    with pytest.raises(RuntimeError, match="could not play"):
+        play(pcm)
+
+    assert default_library.al.sources == {}
+    assert default_library.al.allocated_buffers == set()
 
 
 def test_default_runtime_exposes_listener_and_acoustics_controls(
