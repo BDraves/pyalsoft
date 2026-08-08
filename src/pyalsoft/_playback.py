@@ -1726,8 +1726,10 @@ def release(playback: Playback, resource: Clip | Voice | Stream) -> None:
 class _SoundRecord:
     token: object
     voice: Voice
-    clip: Clip
-    path: Path
+    clip: Clip | None
+    info: SoundInfo
+    path: Path | None
+    pcm: PCM | None
     config: VoiceConfig
     final_status: VoiceStatus | None = None
     end_reason: SoundEndReason | None = None
@@ -1814,12 +1816,18 @@ class PlayingSound:
     def info(self) -> SoundInfo:
         """Format and length information for the source audio."""
 
-        return self._record.clip.info
+        return self._record.info
 
     @property
     def path(self) -> Path:
-        """Resolved path from which the source audio was loaded."""
+        """Resolved source path for file-backed audio.
 
+        In-memory PCM audio has no source path, so querying this property for
+        such a sound raises :class:`AudioError`.
+        """
+
+        if self._record.path is None:
+            raise AudioError("in-memory PCM audio has no source path")
         return self._record.path
 
     @property
@@ -2216,10 +2224,50 @@ class _DefaultRuntime:
         *,
         end_reason: SoundEndReason,
     ) -> None:
-        release(self._opened_playback(), record.voice)
-        record.final_status = status
-        record.end_reason = end_reason
-        del self._active[record.token]
+        playback = self._opened_playback()
+        release(playback, record.voice)
+        try:
+            if record.pcm is not None:
+                assert record.clip is not None
+                release(playback, record.clip)
+        finally:
+            if record.pcm is not None:
+                record.clip = None
+            record.final_status = status
+            record.end_reason = end_reason
+            del self._active[record.token]
+
+    def _create_replacement_voice(
+        self,
+        record: _SoundRecord,
+        *,
+        offset_seconds: float = 0.0,
+        offset_frames: int | None = None,
+        start: bool,
+    ) -> Voice:
+        playback = self._opened_playback()
+        clip = record.clip
+        uploaded = False
+        if clip is None:
+            assert record.pcm is not None
+            clip = upload(playback, record.pcm)
+            uploaded = True
+        try:
+            voice = _create_voice(
+                playback,
+                clip,
+                record.config,
+                offset_seconds=offset_seconds,
+                offset_frames=offset_frames,
+                start=start,
+            )
+        except BaseException:
+            if uploaded:
+                with suppress(Exception):
+                    release(playback, clip)
+            raise
+        record.clip = clip
+        return voice
 
     def _device_disconnected(self) -> bool:
         playback = self._opened_playback()
@@ -2245,8 +2293,8 @@ class _DefaultRuntime:
                 end_reason = SoundEndReason.FINISHED
                 status = VoiceStatus(
                     state=VoiceState.STOPPED,
-                    offset_seconds=record.clip.info.duration_seconds,
-                    offset_frames=record.clip.info.frame_count,
+                    offset_seconds=record.info.duration_seconds,
+                    offset_frames=record.info.frame_count,
                 )
             self._finalize(record, status, end_reason=end_reason)
         return status
@@ -2257,7 +2305,7 @@ class _DefaultRuntime:
 
     def play(
         self,
-        path: AudioPath,
+        sound: AudioPath | PCM,
         config: VoiceConfig,
         *,
         offset_seconds: float = 0.0,
@@ -2265,37 +2313,56 @@ class _DefaultRuntime:
     ) -> PlayingSound:
         if not isinstance(config, VoiceConfig):
             raise TypeError("config must be a VoiceConfig")
-        normalized = Path(path).expanduser().resolve()
+        normalized = (
+            None if isinstance(sound, PCM) else Path(sound).expanduser().resolve()
+        )
         with self._lock:
             self._require_open()
             self._reap_finished()
-            cached = self._clips.get(normalized)
-            if cached is None:
-                pcm = _read_wave(normalized)
+            if isinstance(sound, PCM):
+                pcm = sound
                 offset_seconds, offset_frames = _validate_offsets(
                     pcm.info, offset_seconds, offset_frames
                 )
-                cached = _CachedSoundClip(
-                    clip=upload(self._ensure_playback(), pcm),
-                )
-                self._clips[normalized] = cached
+                clip = upload(self._ensure_playback(), pcm)
             else:
-                offset_seconds, offset_frames = _validate_offsets(
-                    cached.clip.info, offset_seconds, offset_frames
+                assert normalized is not None
+                cached = self._clips.get(normalized)
+                if cached is None:
+                    pcm = _read_wave(normalized)
+                    offset_seconds, offset_frames = _validate_offsets(
+                        pcm.info, offset_seconds, offset_frames
+                    )
+                    cached = _CachedSoundClip(
+                        clip=upload(self._ensure_playback(), pcm),
+                    )
+                    self._clips[normalized] = cached
+                else:
+                    offset_seconds, offset_frames = _validate_offsets(
+                        cached.clip.info, offset_seconds, offset_frames
+                    )
+                clip = cached.clip
+            try:
+                voice = _play_voice(
+                    self._opened_playback(),
+                    clip,
+                    config,
+                    offset_seconds=offset_seconds,
+                    offset_frames=offset_frames,
                 )
-            voice = _play_voice(
-                self._opened_playback(),
-                cached.clip,
-                config,
-                offset_seconds=offset_seconds,
-                offset_frames=offset_frames,
-            )
+            except BaseException:
+                if isinstance(sound, PCM):
+                    with suppress(Exception):
+                        release(self._opened_playback(), clip)
+                raise
             token = object()
             record = _SoundRecord(
                 token=token,
                 voice=voice,
-                clip=cached.clip,
+                clip=clip,
+                info=clip.info,
                 path=normalized,
+                pcm=sound if isinstance(sound, PCM) else None,
                 config=config,
             )
             self._active[token] = record
@@ -2348,17 +2415,13 @@ class _DefaultRuntime:
             )
 
     def seek(self, record: _SoundRecord, offset_seconds: float) -> None:
-        offset_seconds = _sound_offset(
-            offset_seconds, record.clip.info.duration_seconds
-        )
+        offset_seconds = _sound_offset(offset_seconds, record.info.duration_seconds)
         with self._lock:
             self._require_open()
             status = self._status(record)
             if status.state is VoiceState.STOPPED:
-                record.voice = _create_voice(
-                    self._opened_playback(),
-                    record.clip,
-                    record.config,
+                record.voice = self._create_replacement_voice(
+                    record,
                     offset_seconds=offset_seconds,
                     start=False,
                 )
@@ -2369,15 +2432,13 @@ class _DefaultRuntime:
             seek(self._opened_playback(), record.voice, offset_seconds)
 
     def seek_frames(self, record: _SoundRecord, offset_frames: int) -> None:
-        offset_frames = _frame_offset(offset_frames, record.clip.info.frame_count)
+        offset_frames = _frame_offset(offset_frames, record.info.frame_count)
         with self._lock:
             self._require_open()
             status = self._status(record)
             if status.state is VoiceState.STOPPED:
-                record.voice = _create_voice(
-                    self._opened_playback(),
-                    record.clip,
-                    record.config,
+                record.voice = self._create_replacement_voice(
+                    record,
                     offset_frames=offset_frames,
                     start=False,
                 )
@@ -2392,8 +2453,9 @@ class _DefaultRuntime:
             self._require_open()
             status = self._status(record)
             if status.state is VoiceState.STOPPED:
-                record.voice = _create_voice(
-                    self._opened_playback(), record.clip, record.config, start=False
+                record.voice = self._create_replacement_voice(
+                    record,
+                    start=False,
                 )
                 record.final_status = None
                 record.end_reason = None
@@ -2407,8 +2469,9 @@ class _DefaultRuntime:
             self._require_open()
             status = self._status(record)
             if status.state is VoiceState.STOPPED:
-                record.voice = _play_voice(
-                    self._opened_playback(), record.clip, record.config
+                record.voice = self._create_replacement_voice(
+                    record,
+                    start=True,
                 )
                 record.final_status = None
                 record.end_reason = None
@@ -2696,7 +2759,7 @@ def play(
 
 @overload
 def play(
-    playback: AudioPath,
+    playback: AudioPath | PCM,
     /,
     *,
     config: VoiceConfig | None = None,
@@ -2721,7 +2784,7 @@ def play(
 
 
 def play(
-    playback: Playback | AudioPath,
+    playback: Playback | AudioPath | PCM,
     clip: Clip | None = None,
     config: VoiceConfig | None = None,
     *,
@@ -2743,12 +2806,13 @@ def play(
     offset_seconds: float = 0.0,
     offset_frames: int | None = None,
 ) -> Voice | PlayingSound:
-    """Play an explicit clip or a WAV file through the default runtime.
+    """Play an explicit clip, WAV file, or PCM value.
 
     ``play(playback, clip, config)`` preserves the explicit managed API.
-    ``play(path, config=config)`` starts asynchronous, fire-and-forget playback
-    and returns an optional control handle. Individual keyword controls override
-    the corresponding values in ``config``.
+    ``play(sound, config=config)`` starts asynchronous, fire-and-forget playback
+    through the default runtime and returns an optional control handle. *sound*
+    may be a WAV path or an in-memory :class:`PCM` value. Individual keyword
+    controls override the corresponding values in ``config``.
     """
 
     resolved_config = _voice_config_with_overrides(
@@ -2781,8 +2845,8 @@ def play(
         )
     if clip is not None:
         raise TypeError("clip is only valid with an explicit Playback")
-    if not isinstance(playback, (str, PathLike)):
-        raise TypeError("sound must be a path to a WAV file")
+    if not isinstance(playback, (str, PathLike, PCM)):
+        raise TypeError("sound must be a path to a WAV file or a PCM value")
     return _get_default_runtime().play(
         playback,
         resolved_config,

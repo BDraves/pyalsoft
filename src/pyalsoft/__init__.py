@@ -1,6 +1,15 @@
-"""Function-oriented managed playback and low-level OpenAL Soft bindings."""
+"""Function-oriented managed audio and low-level OpenAL Soft bindings."""
 
 from pyalsoft import bindings
+from pyalsoft._capture import (
+    CaptureDevice,
+    CaptureOpenError,
+    Recording,
+    list_capture_devices,
+    record,
+    start_recording,
+    stop_recording,
+)
 from pyalsoft._playback import (
     PCM,
     Acoustics,
@@ -69,6 +78,8 @@ __all__ = [
     "AudioBackendError",
     "AudioError",
     "AudioFileError",
+    "CaptureDevice",
+    "CaptureOpenError",
     "Clip",
     "DistanceModel",
     "HRTFStatus",
@@ -83,6 +94,7 @@ __all__ = [
     "PlaybackInfo",
     "PlaybackOpenError",
     "PlayingSound",
+    "Recording",
     "ResourceInUseError",
     "SampleType",
     "SoundEndReason",
@@ -103,6 +115,7 @@ __all__ = [
     "get_playback_info",
     "get_sound_info",
     "get_voice_status",
+    "list_capture_devices",
     "list_playback_devices",
     "open_playback",
     "open_stream",
@@ -110,6 +123,7 @@ __all__ = [
     "play",
     "release",
     "release_finished",
+    "record",
     "restart",
     "resume",
     "rewind",
@@ -119,8 +133,10 @@ __all__ = [
     "set_listener",
     "set_voice_config",
     "shutdown",
+    "start_recording",
     "start_stream",
     "stop",
+    "stop_recording",
     "try_write_stream",
     "update_acoustics",
     "update_listener",
