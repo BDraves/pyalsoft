@@ -8,7 +8,7 @@ import wave
 from collections import deque
 from collections.abc import Buffer
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from os import PathLike
 from pathlib import Path
@@ -22,6 +22,16 @@ type Vector3 = tuple[float, float, float]
 type AudioPath = str | PathLike[str]
 
 _FLOAT32_MAX = float.fromhex("0x1.fffffep+127")
+
+
+class _UnsetType:
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<omitted>"
+
+
+_UNSET = _UnsetType()
 
 
 class AudioError(Exception):
@@ -128,6 +138,13 @@ def _finite_float(name: str, value: float) -> float:
     converted = float(value)
     if not math.isfinite(converted):
         raise ValueError(f"{name} must be finite")
+    return converted
+
+
+def _bounded_float(name: str, value: float, minimum: float, maximum: float) -> float:
+    converted = _finite_float(name, value)
+    if not minimum <= converted <= maximum:
+        raise ValueError(f"{name} must be between {minimum:g} and {maximum:g}")
     return converted
 
 
@@ -320,6 +337,111 @@ class PCM:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class Reverb:
+    """Immutable standard EFX reverb parameters."""
+
+    density: float = 1.0
+    diffusion: float = 1.0
+    gain: float = 0.32
+    high_frequency_gain: float = 0.89
+    decay_time: float = 1.49
+    high_frequency_decay_ratio: float = 0.83
+    reflections_gain: float = 0.05
+    reflections_delay: float = 0.007
+    late_reverb_gain: float = 1.26
+    late_reverb_delay: float = 0.011
+    air_absorption_high_frequency_gain: float = 0.994
+    room_rolloff_factor: float = 0.0
+    high_frequency_decay_limit: bool = True
+
+    def __post_init__(self) -> None:
+        ranges = (
+            ("density", self.density, 0.0, 1.0),
+            ("diffusion", self.diffusion, 0.0, 1.0),
+            ("gain", self.gain, 0.0, 1.0),
+            ("high_frequency_gain", self.high_frequency_gain, 0.0, 1.0),
+            ("decay_time", self.decay_time, 0.1, 20.0),
+            (
+                "high_frequency_decay_ratio",
+                self.high_frequency_decay_ratio,
+                0.1,
+                2.0,
+            ),
+            ("reflections_gain", self.reflections_gain, 0.0, 3.16),
+            ("reflections_delay", self.reflections_delay, 0.0, 0.3),
+            ("late_reverb_gain", self.late_reverb_gain, 0.0, 10.0),
+            ("late_reverb_delay", self.late_reverb_delay, 0.0, 0.1),
+            (
+                "air_absorption_high_frequency_gain",
+                self.air_absorption_high_frequency_gain,
+                0.892,
+                1.0,
+            ),
+            ("room_rolloff_factor", self.room_rolloff_factor, 0.0, 10.0),
+        )
+        for name, value, minimum, maximum in ranges:
+            object.__setattr__(
+                self,
+                name,
+                _bounded_float(name, value, minimum, maximum),
+            )
+        if not isinstance(self.high_frequency_decay_limit, bool):
+            raise TypeError("high_frequency_decay_limit must be a boolean")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LowPassFilter:
+    """An EFX filter that attenuates the high-frequency signal."""
+
+    gain: float = 1.0
+    high_frequency_gain: float = 1.0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "gain", _bounded_float("gain", self.gain, 0.0, 1.0))
+        object.__setattr__(
+            self,
+            "high_frequency_gain",
+            _bounded_float("high_frequency_gain", self.high_frequency_gain, 0.0, 1.0),
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class HighPassFilter:
+    """An EFX filter that attenuates the low-frequency signal."""
+
+    gain: float = 1.0
+    low_frequency_gain: float = 1.0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "gain", _bounded_float("gain", self.gain, 0.0, 1.0))
+        object.__setattr__(
+            self,
+            "low_frequency_gain",
+            _bounded_float("low_frequency_gain", self.low_frequency_gain, 0.0, 1.0),
+        )
+
+
+type Filter = LowPassFilter | HighPassFilter
+_OMITTED_FILTER = cast(Filter | None, _UNSET)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class EffectSend:
+    """One auxiliary effect route, with an optional filter on its wet signal."""
+
+    effect: Reverb
+    filter: Filter | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.effect, Reverb):
+            raise TypeError("effect must be a Reverb")
+        if self.filter is not None and not isinstance(
+            self.filter, (LowPassFilter, HighPassFilter)
+        ):
+            raise TypeError("filter must be a LowPassFilter, HighPassFilter, or None")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class VoiceConfig:
     """Desired configurable state for one playing voice."""
 
@@ -338,6 +460,8 @@ class VoiceConfig:
     cone_inner_angle: float = 360.0
     cone_outer_angle: float = 360.0
     cone_outer_gain: float = 0.0
+    filter: Filter | None = None
+    effect_sends: tuple[EffectSend, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "position", _vector3("position", self.position))
@@ -381,6 +505,15 @@ class VoiceConfig:
         cone_outer_gain = _finite_float("cone_outer_gain", self.cone_outer_gain)
         if not 0.0 <= cone_outer_gain <= 1.0:
             raise ValueError("cone_outer_gain must be between 0.0 and 1.0")
+        if self.filter is not None and not isinstance(
+            self.filter, (LowPassFilter, HighPassFilter)
+        ):
+            raise TypeError("filter must be a LowPassFilter, HighPassFilter, or None")
+        if not isinstance(self.effect_sends, (tuple, list)):
+            raise TypeError("effect_sends must be a tuple or list")
+        effect_sends = tuple(self.effect_sends)
+        if not all(isinstance(send, EffectSend) for send in effect_sends):
+            raise TypeError("effect_sends must contain only EffectSend values")
         object.__setattr__(self, "gain", gain)
         object.__setattr__(self, "pitch", pitch)
         object.__setattr__(self, "min_gain", min_gain)
@@ -391,6 +524,7 @@ class VoiceConfig:
         object.__setattr__(self, "cone_inner_angle", cone_inner_angle)
         object.__setattr__(self, "cone_outer_angle", cone_outer_angle)
         object.__setattr__(self, "cone_outer_gain", cone_outer_gain)
+        object.__setattr__(self, "effect_sends", effect_sends)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -517,6 +651,33 @@ class Stream:
 
 
 @dataclass(frozen=True, slots=True)
+class _EfxResources:
+    direct_filter: int | None = None
+    effects: tuple[int, ...] = ()
+    slots: tuple[int, ...] = ()
+    send_filters: tuple[int | None, ...] = ()
+
+    @property
+    def filters(self) -> tuple[int, ...]:
+        identifiers = () if self.direct_filter is None else (self.direct_filter,)
+        return identifiers + tuple(
+            identifier for identifier in self.send_filters if identifier is not None
+        )
+
+
+_EMPTY_EFX_RESOURCES = _EfxResources()
+
+
+@dataclass(frozen=True, slots=True)
+class _EfxReplacement:
+    current: _EfxResources
+    created: _EfxResources
+    retired: _EfxResources
+    direct_filter_changed: bool
+    effect_sends_changed: bool
+
+
+@dataclass(frozen=True, slots=True)
 class _StreamChunk:
     buffer: int
     frame_count: int
@@ -532,6 +693,8 @@ class _StreamRecord:
     channels: int
     sample_rate: int
     sample_type: SampleType
+    config: VoiceConfig
+    efx: _EfxResources = _EMPTY_EFX_RESOURCES
     state: StreamState = StreamState.INITIAL
     input_finished: bool = False
     underrun_count: int = 0
@@ -556,6 +719,8 @@ class Playback:
         "_streams",
         "_token",
         "_voice_clips",
+        "_voice_configs",
+        "_voice_efx",
         "_voices",
     )
 
@@ -575,6 +740,8 @@ class Playback:
         self._clip_infos: dict[object, SoundInfo] = {}
         self._voices: dict[object, int] = {}
         self._voice_clips: dict[object, object] = {}
+        self._voice_configs: dict[object, VoiceConfig] = {}
+        self._voice_efx: dict[object, _EfxResources] = {}
         self._streams: dict[object, _StreamRecord] = {}
         self._closed = False
 
@@ -655,6 +822,8 @@ def _voice_config_with_overrides(
     cone_inner_angle: float | None = None,
     cone_outer_angle: float | None = None,
     cone_outer_gain: float | None = None,
+    filter: Filter | None = _OMITTED_FILTER,
+    effect_sends: tuple[EffectSend, ...] | list[EffectSend] | None = None,
 ) -> VoiceConfig:
     if config is None:
         config = _DEFAULT_VOICE_CONFIG
@@ -687,6 +856,10 @@ def _voice_config_with_overrides(
         ),
         cone_outer_gain=(
             config.cone_outer_gain if cone_outer_gain is None else cone_outer_gain
+        ),
+        filter=config.filter if isinstance(filter, _UnsetType) else filter,
+        effect_sends=(
+            config.effect_sends if effect_sends is None else tuple(effect_sends)
         ),
     )
 
@@ -805,6 +978,306 @@ def _validate_stream_layout(
         raise TypeError("buffer_count must be an integer")
     if buffer_count <= 0:
         raise ValueError("buffer_count must be positive")
+
+
+def _require_efx_support(playback: Playback, send_count: int) -> None:
+    """Ensure the active device supports the requested EFX routing."""
+
+    library = playback._library
+    _clear_alc_errors(library, playback._device)
+    supported = library.alc.is_extension_present(playback._device, "ALC_EXT_EFX")
+    _check_alc_error(library, playback._device, "query EFX support")
+    if not supported:
+        raise AudioBackendError("the playback device does not support EFX")
+    if not send_count:
+        return
+    maximum = library.alc.get_integerv(
+        playback._device,
+        bindings.ALC_MAX_AUXILIARY_SENDS,
+        1,
+    )[0]
+    _check_alc_error(library, playback._device, "query auxiliary send limit")
+    if send_count > maximum:
+        raise AudioBackendError(
+            f"the playback device supports at most {maximum} auxiliary effect sends"
+        )
+
+
+def _configure_filter(playback: Playback, identifier: int, config: Filter) -> None:
+    al = playback._library.al
+    if isinstance(config, LowPassFilter):
+        al.filteri(identifier, bindings.AL_FILTER_TYPE, bindings.AL_FILTER_LOWPASS)
+        al.filterf(identifier, bindings.AL_LOWPASS_GAIN, config.gain)
+        al.filterf(
+            identifier,
+            bindings.AL_LOWPASS_GAINHF,
+            config.high_frequency_gain,
+        )
+    else:
+        al.filteri(identifier, bindings.AL_FILTER_TYPE, bindings.AL_FILTER_HIGHPASS)
+        al.filterf(identifier, bindings.AL_HIGHPASS_GAIN, config.gain)
+        al.filterf(
+            identifier,
+            bindings.AL_HIGHPASS_GAINLF,
+            config.low_frequency_gain,
+        )
+
+
+def _configure_reverb(playback: Playback, identifier: int, config: Reverb) -> None:
+    al = playback._library.al
+    al.effecti(identifier, bindings.AL_EFFECT_TYPE, bindings.AL_EFFECT_REVERB)
+    float_properties = (
+        (bindings.AL_REVERB_DENSITY, config.density),
+        (bindings.AL_REVERB_DIFFUSION, config.diffusion),
+        (bindings.AL_REVERB_GAIN, config.gain),
+        (bindings.AL_REVERB_GAINHF, config.high_frequency_gain),
+        (bindings.AL_REVERB_DECAY_TIME, config.decay_time),
+        (
+            bindings.AL_REVERB_DECAY_HFRATIO,
+            config.high_frequency_decay_ratio,
+        ),
+        (bindings.AL_REVERB_REFLECTIONS_GAIN, config.reflections_gain),
+        (bindings.AL_REVERB_REFLECTIONS_DELAY, config.reflections_delay),
+        (bindings.AL_REVERB_LATE_REVERB_GAIN, config.late_reverb_gain),
+        (bindings.AL_REVERB_LATE_REVERB_DELAY, config.late_reverb_delay),
+        (
+            bindings.AL_REVERB_AIR_ABSORPTION_GAINHF,
+            config.air_absorption_high_frequency_gain,
+        ),
+        (bindings.AL_REVERB_ROOM_ROLLOFF_FACTOR, config.room_rolloff_factor),
+    )
+    for parameter, value in float_properties:
+        al.effectf(identifier, parameter, value)
+    al.effecti(
+        identifier,
+        bindings.AL_REVERB_DECAY_HFLIMIT,
+        int(config.high_frequency_decay_limit),
+    )
+
+
+def _delete_efx_resources(
+    playback: Playback,
+    resources: _EfxResources,
+    *,
+    operation: str,
+) -> None:
+    if resources == _EMPTY_EFX_RESOURCES:
+        return
+    al = playback._library.al
+    if resources.slots:
+        al.delete_auxiliary_effect_slots(resources.slots)
+    if resources.effects:
+        al.delete_effects(resources.effects)
+    if resources.filters:
+        al.delete_filters(resources.filters)
+    _check_al_error(playback, operation)
+
+
+def _create_efx_resources(
+    playback: Playback,
+    direct_filter_config: Filter | None,
+    effect_sends: tuple[EffectSend, ...],
+) -> _EfxResources:
+    if direct_filter_config is None and not effect_sends:
+        return _EMPTY_EFX_RESOURCES
+    _require_efx_support(playback, len(effect_sends))
+    al = playback._library.al
+    direct_filter: int | None = None
+    effects: list[int] = []
+    slots: list[int] = []
+    send_filters: list[int | None] = []
+    try:
+        if direct_filter_config is not None:
+            identifiers = al.gen_filters()
+            if len(identifiers) != 1:
+                raise AudioBackendError("OpenAL did not create exactly one filter")
+            direct_filter = identifiers[0]
+            _check_al_error(playback, "create direct filter")
+            _configure_filter(playback, direct_filter, direct_filter_config)
+            _check_al_error(playback, "configure direct filter")
+
+        for send in effect_sends:
+            effect_ids = al.gen_effects()
+            if len(effect_ids) != 1:
+                raise AudioBackendError("OpenAL did not create exactly one effect")
+            effect = effect_ids[0]
+            effects.append(effect)
+            _check_al_error(playback, "create effect")
+            _configure_reverb(playback, effect, send.effect)
+            _check_al_error(playback, "configure reverb")
+
+            slot_ids = al.gen_auxiliary_effect_slots()
+            if len(slot_ids) != 1:
+                raise AudioBackendError(
+                    "OpenAL did not create exactly one auxiliary effect slot"
+                )
+            slot = slot_ids[0]
+            slots.append(slot)
+            _check_al_error(playback, "create auxiliary effect slot")
+            al.auxiliary_effect_sloti(slot, bindings.AL_EFFECTSLOT_EFFECT, effect)
+            _check_al_error(playback, "attach effect to auxiliary slot")
+
+            if send.filter is None:
+                send_filters.append(None)
+            else:
+                filter_ids = al.gen_filters()
+                if len(filter_ids) != 1:
+                    raise AudioBackendError(
+                        "OpenAL did not create exactly one send filter"
+                    )
+                send_filter = filter_ids[0]
+                send_filters.append(send_filter)
+                _check_al_error(playback, "create send filter")
+                _configure_filter(playback, send_filter, send.filter)
+                _check_al_error(playback, "configure send filter")
+    except BaseException:
+        _clear_al_errors(playback)
+        resources = _EfxResources(
+            direct_filter=direct_filter,
+            effects=tuple(effects),
+            slots=tuple(slots),
+            send_filters=tuple(send_filters),
+        )
+        with suppress(Exception):
+            _delete_efx_resources(
+                playback,
+                resources,
+                operation="clean up incomplete EFX resources",
+            )
+        playback._library.al.get_error()
+        raise
+    return _EfxResources(
+        direct_filter=direct_filter,
+        effects=tuple(effects),
+        slots=tuple(slots),
+        send_filters=tuple(send_filters),
+    )
+
+
+def _attach_efx_resources(
+    playback: Playback,
+    source: int,
+    resources: _EfxResources,
+    *,
+    clear_send_count: int,
+    attach_direct_filter: bool = True,
+    attach_effect_sends: bool = True,
+) -> None:
+    al = playback._library.al
+    if attach_direct_filter:
+        al.sourcei(
+            source,
+            bindings.AL_DIRECT_FILTER,
+            resources.direct_filter or bindings.AL_FILTER_NULL,
+        )
+    if attach_effect_sends:
+        for index, slot in enumerate(resources.slots):
+            send_filter = resources.send_filters[index]
+            al.source3i(
+                source,
+                bindings.AL_AUXILIARY_SEND_FILTER,
+                slot,
+                index,
+                send_filter or bindings.AL_FILTER_NULL,
+            )
+        for index in range(len(resources.slots), clear_send_count):
+            al.source3i(
+                source,
+                bindings.AL_AUXILIARY_SEND_FILTER,
+                bindings.AL_EFFECTSLOT_NULL,
+                index,
+                bindings.AL_FILTER_NULL,
+            )
+    _check_al_error(playback, "configure voice EFX routing")
+
+
+def _install_efx_resources(
+    playback: Playback,
+    source: int,
+    config: VoiceConfig,
+) -> _EfxResources:
+    if config.filter is None and not config.effect_sends:
+        return _EMPTY_EFX_RESOURCES
+    current = _create_efx_resources(
+        playback,
+        config.filter,
+        config.effect_sends,
+    )
+    try:
+        _attach_efx_resources(
+            playback,
+            source,
+            current,
+            clear_send_count=0,
+        )
+    except BaseException:
+        with suppress(Exception):
+            _clear_al_errors(playback)
+        with suppress(Exception):
+            _attach_efx_resources(
+                playback,
+                source,
+                _EMPTY_EFX_RESOURCES,
+                clear_send_count=len(current.slots),
+            )
+        with suppress(Exception):
+            _clear_al_errors(playback)
+        with suppress(Exception):
+            _delete_efx_resources(
+                playback,
+                current,
+                operation="clean up replacement EFX resources",
+            )
+        playback._library.al.get_error()
+        raise
+    return current
+
+
+def _prepare_efx_replacement(
+    playback: Playback,
+    previous_config: VoiceConfig,
+    previous: _EfxResources,
+    current_config: VoiceConfig,
+) -> _EfxReplacement:
+    direct_filter_changed = current_config.filter != previous_config.filter
+    effect_sends_changed = current_config.effect_sends != previous_config.effect_sends
+    if not direct_filter_changed and not effect_sends_changed:
+        return _EfxReplacement(
+            current=previous,
+            created=_EMPTY_EFX_RESOURCES,
+            retired=_EMPTY_EFX_RESOURCES,
+            direct_filter_changed=False,
+            effect_sends_changed=False,
+        )
+
+    created = _create_efx_resources(
+        playback,
+        current_config.filter if direct_filter_changed else None,
+        current_config.effect_sends if effect_sends_changed else (),
+    )
+    current = _EfxResources(
+        direct_filter=(
+            created.direct_filter if direct_filter_changed else previous.direct_filter
+        ),
+        effects=created.effects if effect_sends_changed else previous.effects,
+        slots=created.slots if effect_sends_changed else previous.slots,
+        send_filters=(
+            created.send_filters if effect_sends_changed else previous.send_filters
+        ),
+    )
+    retired = _EfxResources(
+        direct_filter=previous.direct_filter if direct_filter_changed else None,
+        effects=previous.effects if effect_sends_changed else (),
+        slots=previous.slots if effect_sends_changed else (),
+        send_filters=previous.send_filters if effect_sends_changed else (),
+    )
+    return _EfxReplacement(
+        current=current,
+        created=created,
+        retired=retired,
+        direct_filter_changed=direct_filter_changed,
+        effect_sends_changed=effect_sends_changed,
+    )
 
 
 def _apply_voice_config(
@@ -1024,6 +1497,31 @@ def close_playback(playback: Playback) -> None:
                 if source_ids:
                     playback._library.al.source_stopv(source_ids)
                     playback._library.al.delete_sources(source_ids)
+                efx_resources = tuple(playback._voice_efx.values()) + tuple(
+                    record.efx for record in playback._streams.values()
+                )
+                combined_efx = _EfxResources(
+                    effects=tuple(
+                        identifier
+                        for resources in efx_resources
+                        for identifier in resources.effects
+                    ),
+                    slots=tuple(
+                        identifier
+                        for resources in efx_resources
+                        for identifier in resources.slots
+                    ),
+                    send_filters=tuple(
+                        identifier
+                        for resources in efx_resources
+                        for identifier in resources.filters
+                    ),
+                )
+                _delete_efx_resources(
+                    playback,
+                    combined_efx,
+                    operation="EFX cleanup",
+                )
                 buffer_ids = tuple(playback._clips.values()) + tuple(
                     identifier
                     for record in playback._streams.values()
@@ -1053,6 +1551,8 @@ def close_playback(playback: Playback) -> None:
             remember(error)
         playback._voices.clear()
         playback._voice_clips.clear()
+        playback._voice_configs.clear()
+        playback._voice_efx.clear()
         playback._streams.clear()
         playback._clips.clear()
         playback._clip_infos.clear()
@@ -1116,6 +1616,7 @@ def _create_voice(
     if len(identifiers) != 1:
         raise AudioBackendError("OpenAL did not create exactly one source")
     identifier = identifiers[0]
+    efx = _EMPTY_EFX_RESOURCES
     try:
         _check_al_error(playback, "create voice")
         _apply_voice_config(playback, identifier, config)
@@ -1128,6 +1629,11 @@ def _create_voice(
             playback._library.al.sourcef(
                 identifier, bindings.AL_SEC_OFFSET, offset_seconds
             )
+        efx = _install_efx_resources(
+            playback,
+            identifier,
+            config,
+        )
         if start:
             playback._library.al.source_play(identifier)
         _check_al_error(playback, "play voice" if start else "create voice")
@@ -1135,11 +1641,19 @@ def _create_voice(
         _clear_al_errors(playback)
         playback._library.al.source_stop(identifier)
         playback._library.al.delete_sources((identifier,))
+        with suppress(Exception):
+            _delete_efx_resources(
+                playback,
+                efx,
+                operation="clean up incomplete voice EFX resources",
+            )
         playback._library.al.get_error()
         raise
     token = object()
     playback._voices[token] = identifier
     playback._voice_clips[token] = clip._token
+    playback._voice_configs[token] = config
+    playback._voice_efx[token] = efx
     return Voice(playback._token, token, identifier)
 
 
@@ -1183,6 +1697,7 @@ def open_stream(
     _prepare_al(playback)
     source_ids: tuple[int, ...] = ()
     buffer_ids: tuple[int, ...] = ()
+    efx = _EMPTY_EFX_RESOURCES
     try:
         source_ids = playback._library.al.gen_sources()
         if len(source_ids) != 1:
@@ -1195,12 +1710,23 @@ def open_stream(
             )
         _check_al_error(playback, "create stream buffers")
         _apply_voice_config(playback, source_ids[0], config)
+        efx = _install_efx_resources(
+            playback,
+            source_ids[0],
+            config,
+        )
         _check_al_error(playback, "configure stream")
     except Exception:
         _clear_al_errors(playback)
         if source_ids:
             playback._library.al.source_stopv(source_ids)
             playback._library.al.delete_sources(source_ids)
+        with suppress(Exception):
+            _delete_efx_resources(
+                playback,
+                efx,
+                operation="clean up incomplete stream EFX resources",
+            )
         if buffer_ids:
             playback._library.al.delete_buffers(buffer_ids)
         playback._library.al.get_error()
@@ -1216,6 +1742,8 @@ def open_stream(
         channels=channels,
         sample_rate=sample_rate,
         sample_type=sample_type,
+        config=config,
+        efx=efx,
     )
     return Stream(playback._token, token, identifier)
 
@@ -1396,22 +1924,97 @@ def finish_stream(playback: Playback, stream: Stream) -> None:
         record.state = StreamState.FINISHED
 
 
+def _set_voice_config(
+    playback: Playback,
+    voice: Voice | Stream,
+    config: VoiceConfig,
+    *,
+    changed_only: bool,
+) -> None:
+    if not isinstance(config, VoiceConfig):
+        raise TypeError("config must be a VoiceConfig")
+    if isinstance(voice, Stream):
+        record = _stream_record(playback, voice)
+        identifier = record.identifier
+        if config.looping:
+            raise ValueError("streaming voices cannot loop")
+        previous = record.config
+        previous_efx = record.efx
+    else:
+        identifier = _voice_identifier(playback, voice)
+        previous = playback._voice_configs[voice._token]
+        previous_efx = playback._voice_efx[voice._token]
+    _prepare_al(playback)
+    replacement = _prepare_efx_replacement(
+        playback,
+        previous,
+        previous_efx,
+        config,
+    )
+    try:
+        if changed_only:
+            _apply_voice_config_changes(playback, identifier, previous, config)
+        else:
+            _apply_voice_config(playback, identifier, config)
+        _check_al_error(playback, "configure voice")
+        if replacement.direct_filter_changed or replacement.effect_sends_changed:
+            _attach_efx_resources(
+                playback,
+                identifier,
+                replacement.current,
+                clear_send_count=len(previous_efx.slots),
+                attach_direct_filter=replacement.direct_filter_changed,
+                attach_effect_sends=replacement.effect_sends_changed,
+            )
+    except BaseException:
+        with suppress(Exception):
+            _clear_al_errors(playback)
+        with suppress(Exception):
+            _apply_voice_config(playback, identifier, previous)
+            _check_al_error(playback, "restore voice configuration")
+        with suppress(Exception):
+            _clear_al_errors(playback)
+        if replacement.direct_filter_changed or replacement.effect_sends_changed:
+            with suppress(Exception):
+                _attach_efx_resources(
+                    playback,
+                    identifier,
+                    previous_efx,
+                    clear_send_count=len(replacement.current.slots),
+                    attach_direct_filter=replacement.direct_filter_changed,
+                    attach_effect_sends=replacement.effect_sends_changed,
+                )
+        with suppress(Exception):
+            _clear_al_errors(playback)
+        with suppress(Exception):
+            _delete_efx_resources(
+                playback,
+                replacement.created,
+                operation="clean up failed voice configuration",
+            )
+        playback._library.al.get_error()
+        raise
+
+    if isinstance(voice, Stream):
+        record.config = config
+        record.efx = replacement.current
+    else:
+        playback._voice_configs[voice._token] = config
+        playback._voice_efx[voice._token] = replacement.current
+
+    _delete_efx_resources(
+        playback,
+        replacement.retired,
+        operation="release replaced EFX resources",
+    )
+
+
 def set_voice_config(
     playback: Playback, voice: Voice | Stream, config: VoiceConfig
 ) -> None:
     """Apply a complete immutable configuration to a live voice or stream."""
 
-    if not isinstance(config, VoiceConfig):
-        raise TypeError("config must be a VoiceConfig")
-    if isinstance(voice, Stream):
-        identifier = _stream_record(playback, voice).identifier
-        if config.looping:
-            raise ValueError("streaming voices cannot loop")
-    else:
-        identifier = _voice_identifier(playback, voice)
-    _prepare_al(playback)
-    _apply_voice_config(playback, identifier, config)
-    _check_al_error(playback, "configure voice")
+    _set_voice_config(playback, voice, config, changed_only=False)
 
 
 def seek(playback: Playback, voice: Voice, offset_seconds: float) -> None:
@@ -1665,12 +2268,33 @@ def release_finished(playback: Playback) -> int:
         return 0
 
     playback._library.al.delete_sources(stopped_identifiers + stream_identifiers)
+    released_efx = tuple(
+        playback._voice_efx[token] for token in stopped_tokens
+    ) + tuple(playback._streams[token].efx for token in stream_tokens)
+    combined_efx = _EfxResources(
+        effects=tuple(
+            identifier for resources in released_efx for identifier in resources.effects
+        ),
+        slots=tuple(
+            identifier for resources in released_efx for identifier in resources.slots
+        ),
+        send_filters=tuple(
+            identifier for resources in released_efx for identifier in resources.filters
+        ),
+    )
+    _delete_efx_resources(
+        playback,
+        combined_efx,
+        operation="release finished voice EFX resources",
+    )
     if stream_buffers:
         playback._library.al.delete_buffers(stream_buffers)
     _check_al_error(playback, "release finished voices and streams")
     for token in stopped_tokens:
         del playback._voices[token]
         del playback._voice_clips[token]
+        del playback._voice_configs[token]
+        del playback._voice_efx[token]
     for token in stream_tokens:
         del playback._streams[token]
     return len(stopped_tokens) + len(stream_tokens)
@@ -1696,6 +2320,11 @@ def release(playback: Playback, resource: Clip | Voice | Stream) -> None:
         _prepare_al(playback)
         playback._library.al.source_stop(record.identifier)
         playback._library.al.delete_sources((record.identifier,))
+        _delete_efx_resources(
+            playback,
+            record.efx,
+            operation="release stream EFX resources",
+        )
         playback._library.al.delete_buffers(record.buffers)
         _check_al_error(playback, "release stream")
         del playback._streams[resource._token]
@@ -1705,9 +2334,16 @@ def release(playback: Playback, resource: Clip | Voice | Stream) -> None:
         _prepare_al(playback)
         playback._library.al.source_stop(identifier)
         playback._library.al.delete_sources((identifier,))
+        _delete_efx_resources(
+            playback,
+            playback._voice_efx[resource._token],
+            operation="release voice EFX resources",
+        )
         _check_al_error(playback, "release voice")
         del playback._voices[resource._token]
         del playback._voice_clips[resource._token]
+        del playback._voice_configs[resource._token]
+        del playback._voice_efx[resource._token]
         return
     if isinstance(resource, Clip):
         identifier = _clip_identifier(playback, resource)
@@ -2034,6 +2670,26 @@ class PlayingSound:
     def cone_outer_gain(self, value: float) -> None:
         self.update(cone_outer_gain=value)
 
+    @property
+    def filter(self) -> Filter | None:
+        """Direct EFX filter applied to the sound's dry signal."""
+
+        return self.config.filter
+
+    @filter.setter
+    def filter(self, value: Filter | None) -> None:
+        self.set_config(replace(self.config, filter=value))
+
+    @property
+    def effect_sends(self) -> tuple[EffectSend, ...]:
+        """Ordered auxiliary EFX routes applied to this sound."""
+
+        return self.config.effect_sends
+
+    @effect_sends.setter
+    def effect_sends(self, value: tuple[EffectSend, ...] | list[EffectSend]) -> None:
+        self.set_config(replace(self.config, effect_sends=tuple(value)))
+
     def pause(self) -> None:
         """Pause the sound if it is currently playing."""
 
@@ -2092,6 +2748,8 @@ class PlayingSound:
         cone_inner_angle: float | None = None,
         cone_outer_angle: float | None = None,
         cone_outer_gain: float | None = None,
+        filter: Filter | None = _OMITTED_FILTER,
+        effect_sends: tuple[EffectSend, ...] | list[EffectSend] | None = None,
     ) -> None:
         """Validate and apply a batch of partial source-control changes."""
 
@@ -2112,6 +2770,8 @@ class PlayingSound:
             cone_inner_angle=cone_inner_angle,
             cone_outer_angle=cone_outer_angle,
             cone_outer_gain=cone_outer_gain,
+            filter=filter,
+            effect_sends=effect_sends,
         )
 
     def __repr__(self) -> str:
@@ -2512,6 +3172,8 @@ class _DefaultRuntime:
         cone_inner_angle: float | None = None,
         cone_outer_angle: float | None = None,
         cone_outer_gain: float | None = None,
+        filter: Filter | None = _OMITTED_FILTER,
+        effect_sends: tuple[EffectSend, ...] | list[EffectSend] | None = None,
     ) -> None:
         with self._lock:
             current = record.config
@@ -2532,6 +3194,8 @@ class _DefaultRuntime:
                 cone_inner_angle=cone_inner_angle,
                 cone_outer_angle=cone_outer_angle,
                 cone_outer_gain=cone_outer_gain,
+                filter=filter,
+                effect_sends=effect_sends,
             )
             status = self._status(record)
             if status.state is VoiceState.STOPPED:
@@ -2539,12 +3203,12 @@ class _DefaultRuntime:
                     self._require_open()
                 record.config = updated
                 return
-            identifier = _voice_identifier(self._opened_playback(), record.voice)
-            _prepare_al(self._opened_playback())
-            _apply_voice_config_changes(
-                self._opened_playback(), identifier, current, updated
+            _set_voice_config(
+                self._opened_playback(),
+                record.voice,
+                updated,
+                changed_only=True,
             )
-            _check_al_error(self._opened_playback(), "update voice configuration")
             record.config = updated
 
     def listener(self) -> Listener:
@@ -2752,6 +3416,8 @@ def play(
     cone_inner_angle: float | None = None,
     cone_outer_angle: float | None = None,
     cone_outer_gain: float | None = None,
+    filter: Filter | None = None,
+    effect_sends: tuple[EffectSend, ...] | list[EffectSend] | None = None,
     offset_seconds: float = 0.0,
     offset_frames: int | None = None,
 ) -> Voice: ...
@@ -2778,6 +3444,8 @@ def play(
     cone_inner_angle: float | None = None,
     cone_outer_angle: float | None = None,
     cone_outer_gain: float | None = None,
+    filter: Filter | None = None,
+    effect_sends: tuple[EffectSend, ...] | list[EffectSend] | None = None,
     offset_seconds: float = 0.0,
     offset_frames: int | None = None,
 ) -> PlayingSound: ...
@@ -2803,6 +3471,8 @@ def play(
     cone_inner_angle: float | None = None,
     cone_outer_angle: float | None = None,
     cone_outer_gain: float | None = None,
+    filter: Filter | None = _OMITTED_FILTER,
+    effect_sends: tuple[EffectSend, ...] | list[EffectSend] | None = None,
     offset_seconds: float = 0.0,
     offset_frames: int | None = None,
 ) -> Voice | PlayingSound:
@@ -2832,6 +3502,8 @@ def play(
         cone_inner_angle=cone_inner_angle,
         cone_outer_angle=cone_outer_angle,
         cone_outer_gain=cone_outer_gain,
+        filter=filter,
+        effect_sends=effect_sends,
     )
     if isinstance(playback, Playback):
         if clip is None:
@@ -2880,10 +3552,14 @@ __all__ = [
     "AudioFileError",
     "Clip",
     "DistanceModel",
+    "EffectSend",
+    "Filter",
     "HRTFStatus",
+    "HighPassFilter",
     "InvalidHandleError",
     "InvalidVoiceStateError",
     "Listener",
+    "LowPassFilter",
     "PCM",
     "Playback",
     "PlaybackConfig",
@@ -2893,6 +3569,7 @@ __all__ = [
     "PlaybackOpenError",
     "PlayingSound",
     "ResourceInUseError",
+    "Reverb",
     "SampleType",
     "SoundEndReason",
     "SoundInfo",

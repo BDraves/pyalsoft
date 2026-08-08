@@ -13,15 +13,19 @@ from pyalsoft import (
     Acoustics,
     AudioBackendError,
     DistanceModel,
+    EffectSend,
+    HighPassFilter,
     HRTFStatus,
     InvalidHandleError,
     InvalidVoiceStateError,
     Listener,
+    LowPassFilter,
     PlaybackClosedError,
     PlaybackConfig,
     PlaybackDevice,
     PlaybackOpenError,
     ResourceInUseError,
+    Reverb,
     SampleType,
     SoundInfo,
     StreamState,
@@ -62,9 +66,19 @@ class FakeAL:
     def __init__(self) -> None:
         self.next_buffer = 1
         self.next_source = 100
+        self.next_effect = 200
+        self.next_filter = 300
+        self.next_effect_slot = 400
         self.allocated_buffers: set[int] = set()
+        self.allocated_effects: set[int] = set()
+        self.allocated_filters: set[int] = set()
+        self.allocated_effect_slots: set[int] = set()
         self.buffers: dict[int, tuple[int, bytes, int]] = {}
+        self.effects: dict[int, dict[int, object]] = {}
+        self.filters: dict[int, dict[int, object]] = {}
+        self.effect_slots: dict[int, dict[int, object]] = {}
         self.sources: dict[int, dict[int, object]] = {}
+        self.source_sends: dict[tuple[int, int], tuple[int, int]] = {}
         self.states: dict[int, int] = {}
         self.queues: dict[int, list[int]] = {}
         self.processed: dict[int, int] = {}
@@ -108,6 +122,62 @@ class FakeAL:
     ) -> None:
         self.buffers[identifier] = (int(format_name), bytes(data), sample_rate)
 
+    def gen_effects(self, count: int = 1) -> tuple[int, ...]:
+        identifiers = tuple(range(self.next_effect, self.next_effect + count))
+        self.next_effect += count
+        self.allocated_effects.update(identifiers)
+        for identifier in identifiers:
+            self.effects[identifier] = {}
+        return identifiers
+
+    def delete_effects(self, effects: tuple[int, ...]) -> None:
+        for identifier in effects:
+            self.allocated_effects.discard(identifier)
+            self.effects.pop(identifier, None)
+
+    def effecti(self, identifier: int, parameter: int, value: int) -> None:
+        self.effects[identifier][parameter] = value
+
+    def effectf(self, identifier: int, parameter: int, value: float) -> None:
+        self.effects[identifier][parameter] = value
+
+    def gen_filters(self, count: int = 1) -> tuple[int, ...]:
+        identifiers = tuple(range(self.next_filter, self.next_filter + count))
+        self.next_filter += count
+        self.allocated_filters.update(identifiers)
+        for identifier in identifiers:
+            self.filters[identifier] = {}
+        return identifiers
+
+    def delete_filters(self, filters: tuple[int, ...]) -> None:
+        for identifier in filters:
+            self.allocated_filters.discard(identifier)
+            self.filters.pop(identifier, None)
+
+    def filteri(self, identifier: int, parameter: int, value: int) -> None:
+        self.filters[identifier][parameter] = value
+
+    def filterf(self, identifier: int, parameter: int, value: float) -> None:
+        self.filters[identifier][parameter] = value
+
+    def gen_auxiliary_effect_slots(self, count: int = 1) -> tuple[int, ...]:
+        identifiers = tuple(range(self.next_effect_slot, self.next_effect_slot + count))
+        self.next_effect_slot += count
+        self.allocated_effect_slots.update(identifiers)
+        for identifier in identifiers:
+            self.effect_slots[identifier] = {}
+        return identifiers
+
+    def delete_auxiliary_effect_slots(self, slots: tuple[int, ...]) -> None:
+        for identifier in slots:
+            self.allocated_effect_slots.discard(identifier)
+            self.effect_slots.pop(identifier, None)
+
+    def auxiliary_effect_sloti(
+        self, identifier: int, parameter: int, value: int
+    ) -> None:
+        self.effect_slots[identifier][parameter] = value
+
     def gen_sources(self, count: int = 1) -> tuple[int, ...]:
         identifiers = tuple(range(self.next_source, self.next_source + count))
         self.next_source += count
@@ -124,6 +194,9 @@ class FakeAL:
             self.processed.pop(identifier, None)
             self.offsets.pop(identifier, None)
             self.frame_offsets.pop(identifier, None)
+            for key in tuple(self.source_sends):
+                if key[0] == identifier:
+                    del self.source_sends[key]
 
     def source3f(
         self, identifier: int, parameter: int, x: float, y: float, z: float
@@ -147,6 +220,18 @@ class FakeAL:
             self.sample_offset_calls.append((identifier, value))
             self.frame_offsets[identifier] = value
             self.offsets[identifier] = value / self._source_sample_rate(identifier)
+
+    def source3i(
+        self,
+        identifier: int,
+        parameter: int,
+        value1: int,
+        value2: int,
+        value3: int,
+    ) -> None:
+        assert parameter == bindings.AL_AUXILIARY_SEND_FILTER
+        self.source_sends[(identifier, value2)] = (value1, value3)
+        self.source_property_calls.append((identifier, parameter))
 
     def _source_sample_rate(self, identifier: int) -> int:
         attached = self.sources[identifier].get(bindings.AL_BUFFER)
@@ -260,7 +345,12 @@ class FakeALC:
         self.default_device_name = "Speakers"
         self.opened_device_name: str | bytes | None = None
         self.context_attributes: tuple[int, ...] | None = None
-        self.extensions = {"ALC_ENUMERATE_ALL_EXT", "ALC_SOFT_HRTF"}
+        self.extensions = {
+            "ALC_ENUMERATE_ALL_EXT",
+            "ALC_EXT_EFX",
+            "ALC_SOFT_HRTF",
+        }
+        self.max_auxiliary_sends = 2
         self.string_list_queries: list[int] = []
         self.hrtf_status = bindings.ALC_HRTF_ENABLED_SOFT
         self.hrtf_name: str | None = "Built-in HRTF"
@@ -322,6 +412,8 @@ class FakeALC:
         assert size == 1
         if parameter == bindings.ALC_CONNECTED:
             return (int(self.connected),)
+        if parameter == bindings.ALC_MAX_AUXILIARY_SENDS:
+            return (self.max_auxiliary_sends,)
         assert parameter == bindings.ALC_HRTF_STATUS_SOFT
         self.error = self.hrtf_query_error
         return (self.hrtf_status,)
@@ -416,6 +508,34 @@ def test_voice_config_rejects_invalid_spatial_controls(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         VoiceConfig(**arguments)  # type: ignore[arg-type]
+
+
+def test_efx_descriptions_are_validated_immutable_values() -> None:
+    reverb = Reverb(decay_time=2, high_frequency_decay_ratio=0.5)
+    low_pass = LowPassFilter(gain=1, high_frequency_gain=0.25)
+    high_pass = HighPassFilter(gain=1, low_frequency_gain=0.4)
+    send = EffectSend(effect=reverb, filter=high_pass)
+    config = VoiceConfig(filter=low_pass, effect_sends=(send,))
+
+    assert reverb.decay_time == 2.0
+    assert low_pass.high_frequency_gain == 0.25
+    assert high_pass.low_frequency_gain == 0.4
+    assert config.effect_sends == (send,)
+    assert replace(reverb, decay_time=3.0).decay_time == 3.0
+    with pytest.raises(FrozenInstanceError):
+        reverb.gain = 0.5  # type: ignore[misc]
+    with pytest.raises(ValueError, match="decay_time must be between"):
+        Reverb(decay_time=20.1)
+    with pytest.raises(ValueError, match="high_frequency_gain must be between"):
+        LowPassFilter(high_frequency_gain=-0.1)
+    with pytest.raises(ValueError, match="low_frequency_gain must be between"):
+        HighPassFilter(low_frequency_gain=1.1)
+    with pytest.raises(TypeError, match="high_frequency_decay_limit"):
+        Reverb(high_frequency_decay_limit=1)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="effect must be a Reverb"):
+        EffectSend(effect=low_pass)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="effect_sends must contain"):
+        VoiceConfig(effect_sends=(reverb,))  # type: ignore[arg-type]
 
 
 def test_devices_are_enumerated_and_consumed_by_open_playback() -> None:
@@ -608,6 +728,147 @@ def test_managed_playback_applies_data_and_controls_lifecycle() -> None:
     assert library.alc.current_context is library.alc.previous_context
 
 
+def test_voice_efx_are_created_replaced_and_released_with_the_voice() -> None:
+    library = FakeLibrary()
+    reverb = Reverb(gain=0.2, decay_time=0.6, high_frequency_decay_ratio=0.8)
+    with open_playback(library=as_library(library)) as playback:
+        clip = upload(playback, PCM(b"\0\0" * 10, channels=1, sample_rate=10))
+        voice = play(
+            playback,
+            clip,
+            filter=LowPassFilter(high_frequency_gain=0.1),
+            effect_sends=(
+                EffectSend(
+                    effect=reverb,
+                    filter=HighPassFilter(low_frequency_gain=0.25),
+                ),
+            ),
+        )
+
+        assert library.al.sources[100][bindings.AL_DIRECT_FILTER] == 300
+        assert library.al.filters[300] == {
+            bindings.AL_FILTER_TYPE: bindings.AL_FILTER_LOWPASS,
+            bindings.AL_LOWPASS_GAIN: 1.0,
+            bindings.AL_LOWPASS_GAINHF: 0.1,
+        }
+        assert library.al.effects[200][bindings.AL_EFFECT_TYPE] == (
+            bindings.AL_EFFECT_REVERB
+        )
+        assert library.al.effects[200][bindings.AL_REVERB_GAIN] == 0.2
+        assert library.al.effects[200][bindings.AL_REVERB_DECAY_TIME] == 0.6
+        assert library.al.effect_slots[400] == {bindings.AL_EFFECTSLOT_EFFECT: 200}
+        assert library.al.source_sends[(100, 0)] == (400, 301)
+        assert library.al.filters[301][bindings.AL_FILTER_TYPE] == (
+            bindings.AL_FILTER_HIGHPASS
+        )
+
+        set_voice_config(
+            playback,
+            voice,
+            VoiceConfig(filter=HighPassFilter(low_frequency_gain=0.1)),
+        )
+
+        assert library.al.sources[100][bindings.AL_DIRECT_FILTER] == 302
+        assert library.al.source_sends[(100, 0)] == (
+            bindings.AL_EFFECTSLOT_NULL,
+            bindings.AL_FILTER_NULL,
+        )
+        assert library.al.allocated_effects == set()
+        assert library.al.allocated_effect_slots == set()
+        assert library.al.allocated_filters == {302}
+
+        set_voice_config(playback, voice, VoiceConfig())
+        assert library.al.sources[100][bindings.AL_DIRECT_FILTER] == (
+            bindings.AL_FILTER_NULL
+        )
+        assert library.al.allocated_filters == set()
+        release(playback, voice)
+        release(playback, clip)
+
+    assert library.al.allocated_effects == set()
+    assert library.al.allocated_effect_slots == set()
+    assert library.al.allocated_filters == set()
+
+
+def test_failed_voice_efx_update_restores_config_and_native_resources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = FakeLibrary()
+    previous = VoiceConfig(
+        gain=0.75,
+        effect_sends=(EffectSend(effect=Reverb(decay_time=0.5)),),
+    )
+    replacement = VoiceConfig(
+        gain=0.25,
+        effect_sends=(EffectSend(effect=Reverb(decay_time=1.0)),),
+    )
+    with open_playback(library=as_library(library)) as playback:
+        clip = upload(playback, PCM(b"\0\0" * 10, channels=1, sample_rate=10))
+        voice = play(playback, clip, previous)
+        original_source3i = library.al.source3i
+        fail_next_attachment = True
+
+        def fail_one_attachment(
+            identifier: int,
+            parameter: int,
+            value1: int,
+            value2: int,
+            value3: int,
+        ) -> None:
+            nonlocal fail_next_attachment
+            original_source3i(identifier, parameter, value1, value2, value3)
+            if fail_next_attachment:
+                fail_next_attachment = False
+                library.al.error = bindings.AL_INVALID_OPERATION
+
+        monkeypatch.setattr(library.al, "source3i", fail_one_attachment)
+
+        with pytest.raises(AudioBackendError, match="configure voice EFX routing"):
+            set_voice_config(playback, voice, replacement)
+
+        assert library.al.sources[100][bindings.AL_GAIN] == 0.75
+        assert library.al.source_sends[(100, 0)] == (400, bindings.AL_FILTER_NULL)
+        assert library.al.allocated_effects == {200}
+        assert library.al.allocated_effect_slots == {400}
+        assert library.al.allocated_filters == set()
+        assert playback._voice_configs[voice._token] == previous
+
+
+def test_voice_efx_require_device_support_and_available_send_slots() -> None:
+    library = FakeLibrary()
+    library.alc.extensions.remove("ALC_EXT_EFX")
+    with open_playback(library=as_library(library)) as playback:
+        clip = upload(playback, PCM(b"\0\0", channels=1, sample_rate=1))
+        with pytest.raises(AudioBackendError, match="does not support EFX"):
+            play(playback, clip, filter=LowPassFilter())
+        assert library.al.sources == {}
+        assert library.al.allocated_filters == set()
+
+    library = FakeLibrary()
+    library.alc.max_auxiliary_sends = 1
+    sends = (
+        EffectSend(effect=Reverb(decay_time=0.5)),
+        EffectSend(effect=Reverb(decay_time=1.0)),
+    )
+    with open_playback(library=as_library(library)) as playback:
+        clip = upload(playback, PCM(b"\0\0", channels=1, sample_rate=1))
+        voice = play(playback, clip)
+        with pytest.raises(AudioBackendError, match="at most 1"):
+            set_voice_config(
+                playback,
+                voice,
+                VoiceConfig(gain=0.25, effect_sends=sends),
+            )
+        assert library.al.sources[100][bindings.AL_GAIN] == 1.0
+        assert playback._voice_configs[voice._token] == VoiceConfig()
+        release(playback, voice)
+
+        with pytest.raises(AudioBackendError, match="at most 1"):
+            play(playback, clip, effect_sends=sends)
+        assert library.al.sources == {}
+        assert library.al.allocated_effects == set()
+
+
 def test_static_voice_can_seek_rewind_and_restart() -> None:
     library = FakeLibrary()
     with open_playback(library=as_library(library)) as playback:
@@ -647,7 +908,11 @@ def test_release_finished_collects_only_stopped_voices() -> None:
     library = FakeLibrary()
     with open_playback(library=as_library(library)) as playback:
         clip = upload(playback, PCM(b"\0\0", channels=1, sample_rate=1))
-        finished = play(playback, clip)
+        finished = play(
+            playback,
+            clip,
+            filter=LowPassFilter(high_frequency_gain=0.5),
+        )
         paused = play(playback, clip)
         library.al.states[100] = bindings.AL_STOPPED
         pause(playback, paused)
@@ -656,6 +921,7 @@ def test_release_finished_collects_only_stopped_voices() -> None:
         assert release_finished(playback) == 0
         with pytest.raises(InvalidHandleError, match="released"):
             get_voice_status(playback, finished)
+        assert library.al.allocated_filters == set()
         assert get_voice_status(playback, paused).state is VoiceState.PAUSED
 
         release(playback, paused)
@@ -681,13 +947,19 @@ def test_close_releases_live_resources_and_is_idempotent() -> None:
     library = FakeLibrary()
     playback = open_playback(library=as_library(library))
     clip = upload(playback, PCM(b"\0\0", channels=1, sample_rate=1))
-    play(playback, clip)
+    play(
+        playback,
+        clip,
+        effect_sends=(EffectSend(effect=Reverb(decay_time=0.5)),),
+    )
 
     close_playback(playback)
     close_playback(playback)
 
     assert library.al.sources == {}
     assert library.al.buffers == {}
+    assert library.al.allocated_effects == set()
+    assert library.al.allocated_effect_slots == set()
     assert library.alc.destroyed_contexts == [library.alc.context]
     with pytest.raises(PlaybackClosedError):
         upload(playback, PCM(b"\0\0", channels=1, sample_rate=1))
@@ -730,7 +1002,11 @@ def test_stream_uses_bounded_reusable_buffers_and_drains_finished_input() -> Non
             channels=1,
             sample_rate=10,
             buffer_count=2,
-            config=VoiceConfig(gain=0.5),
+            config=VoiceConfig(
+                gain=0.5,
+                filter=HighPassFilter(low_frequency_gain=0.5),
+                effect_sends=(EffectSend(effect=Reverb(decay_time=0.5)),),
+            ),
         )
         assert len(library.al.allocated_buffers) == 2
         assert library.al.sources[100][bindings.AL_GAIN] == 0.5
@@ -763,6 +1039,9 @@ def test_stream_uses_bounded_reusable_buffers_and_drains_finished_input() -> Non
             update_stream(playback, stream)
 
     assert library.al.allocated_buffers == set()
+    assert library.al.allocated_effects == set()
+    assert library.al.allocated_effect_slots == set()
+    assert library.al.allocated_filters == set()
 
 
 def test_stream_update_reclaims_offsets_and_counts_underrun_episodes() -> None:

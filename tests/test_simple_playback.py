@@ -15,9 +15,13 @@ from pyalsoft import (
     AudioError,
     AudioFileError,
     DistanceModel,
+    EffectSend,
+    HighPassFilter,
     InvalidVoiceStateError,
     Listener,
+    LowPassFilter,
     PlayingSound,
+    Reverb,
     SampleType,
     SoundEndReason,
     VoiceConfig,
@@ -158,10 +162,17 @@ def test_default_runtime_releases_pcm_when_voice_creation_fails(
     monkeypatch.setattr(default_library.al, "source_play", fail_to_play)
 
     with pytest.raises(RuntimeError, match="could not play"):
-        play(pcm)
+        play(
+            pcm,
+            filter=LowPassFilter(high_frequency_gain=0.5),
+            effect_sends=(EffectSend(effect=Reverb(decay_time=0.5)),),
+        )
 
     assert default_library.al.sources == {}
     assert default_library.al.allocated_buffers == set()
+    assert default_library.al.allocated_effects == set()
+    assert default_library.al.allocated_effect_slots == set()
+    assert default_library.al.allocated_filters == set()
 
 
 def test_default_runtime_exposes_listener_and_acoustics_controls(
@@ -301,7 +312,11 @@ def test_playing_sound_validates_seeks_and_can_restart_after_completion(
 ) -> None:
     path = tmp_path / "restart.wav"
     _write_wave(path)
-    sound = play(path, gain=0.4)
+    sound = play(
+        path,
+        gain=0.4,
+        filter=LowPassFilter(high_frequency_gain=0.5),
+    )
 
     with pytest.raises(ValueError, match="at least 0.0"):
         sound.seek(-0.1)
@@ -314,15 +329,23 @@ def test_playing_sound_validates_seeks_and_can_restart_after_completion(
     assert sound.done
     assert sound.stopped
     assert sound.offset_seconds == sound.duration_seconds
+    assert default_library.al.allocated_filters == set()
 
-    sound.update(gain=0.8, position=(2.0, 0.0, -1.0))
+    high_pass = HighPassFilter(low_frequency_gain=0.25)
+    sound.update(
+        gain=0.8,
+        position=(2.0, 0.0, -1.0),
+        filter=high_pass,
+    )
     assert sound.gain == 0.8
+    assert sound.config.filter == high_pass
     assert default_library.al.sources == {}
 
     sound.rewind()
     assert sound.state is VoiceState.INITIAL
     assert sound.end_reason is None
     assert default_library.al.sources[101][bindings.AL_GAIN] == 0.8
+    assert default_library.al.allocated_filters == {301}
 
     sound.restart()
 
@@ -331,6 +354,80 @@ def test_playing_sound_validates_seeks_and_can_restart_after_completion(
     assert sound.gain == 0.8
     assert set(default_library.al.sources) == {101}
     assert default_library.al.sources[101][bindings.AL_GAIN] == 0.8
+
+
+def test_playing_sound_exposes_live_efx_controls(
+    tmp_path: Path,
+    default_library: FakeLibrary,
+) -> None:
+    path = tmp_path / "efx.wav"
+    _write_wave(path)
+    room = Reverb(gain=0.2, decay_time=0.6)
+    send = EffectSend(effect=room)
+    low_pass = LowPassFilter(high_frequency_gain=0.1)
+
+    sound = play(
+        path,
+        looping=True,
+        filter=low_pass,
+        effect_sends=(send,),
+    )
+
+    assert sound.effect_sends == (send,)
+    assert default_library.al.allocated_filters == {300}
+    assert default_library.al.allocated_effects == {200}
+    assert default_library.al.allocated_effect_slots == {400}
+
+    sound.update(gain=0.5)
+    assert sound.filter == low_pass
+    assert default_library.al.allocated_filters == {300}
+    assert default_library.al.allocated_effects == {200}
+    assert default_library.al.allocated_effect_slots == {400}
+
+    high_pass = HighPassFilter(low_frequency_gain=0.25)
+    sound.update(filter=high_pass)
+    assert sound.config.filter == high_pass
+    assert default_library.al.allocated_filters == {301}
+    assert default_library.al.allocated_effects == {200}
+    assert default_library.al.allocated_effect_slots == {400}
+
+    sound.update(filter=None)
+    assert sound.filter is None
+    assert default_library.al.allocated_filters == set()
+    assert default_library.al.allocated_effects == {200}
+    assert default_library.al.allocated_effect_slots == {400}
+
+    sound.effect_sends = ()
+    assert sound.effect_sends == ()
+    assert default_library.al.allocated_effects == set()
+    assert default_library.al.allocated_effect_slots == set()
+    sound.stop()
+
+
+def test_explicit_none_filter_overrides_a_filtered_play_config(
+    tmp_path: Path,
+    default_library: FakeLibrary,
+) -> None:
+    path = tmp_path / "filter-override.wav"
+    _write_wave(path)
+    filtered_config = VoiceConfig(
+        filter=LowPassFilter(high_frequency_gain=0.1),
+    )
+
+    filtered_sound = play(path, config=filtered_config)
+    assert filtered_sound.filter == filtered_config.filter
+    assert default_library.al.allocated_filters == {300}
+    filtered_sound.stop()
+
+    sound = play(
+        path,
+        config=filtered_config,
+        filter=None,
+    )
+
+    assert sound.filter is None
+    assert default_library.al.allocated_filters == set()
+    sound.stop()
 
 
 def test_frame_offsets_are_validated_before_opening_the_default_device(

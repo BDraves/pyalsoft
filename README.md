@@ -165,6 +165,52 @@ and can be run from a source checkout with:
 uv run python examples/play_file.py
 ```
 
+## Effects and filters
+
+EFX configuration uses immutable values just like the other managed playback
+controls. Reverb is routed through an auxiliary `EffectSend`; `filter` is the
+sound's one direct filter:
+
+```python
+from pyalsoft import EffectSend, LowPassFilter, Reverb, play
+
+room = Reverb(
+    gain=0.2,
+    decay_time=0.6,
+    high_frequency_decay_ratio=0.8,
+)
+sound = play(
+    "voice.wav",
+    filter=LowPassFilter(high_frequency_gain=0.1),
+    effect_sends=(EffectSend(effect=room),),
+)
+```
+
+`LowPassFilter` and `HighPassFilter` expose EFX gain controls rather than a
+cutoff frequency. A filter may also be placed on an `EffectSend` to shape only
+the wet signal. Send tuple order determines the native auxiliary-send index,
+and the playback device determines how many simultaneous sends it supports.
+
+Live sounds accept replacement values through `update`. Pass `filter=None` or
+an empty `effect_sends` tuple to restore the dry, unfiltered signal; the same
+values can be assigned through the corresponding properties:
+
+```python
+from pyalsoft import HighPassFilter
+
+sound.update(filter=HighPassFilter(low_frequency_gain=0.1))
+sound.update(filter=None)
+sound.effect_sends = ()
+```
+
+The same fields are available on `VoiceConfig` for explicit voices and streams.
+PyALSoft owns their native filters, effects, and auxiliary slots and releases
+them with the voice. Configuring EFX raises `AudioBackendError` when the selected
+device does not expose EFX or cannot provide the requested number of sends.
+
+See [`examples/play_with_reverb.py`](examples/play_with_reverb.py) and
+[`examples/filter_sound.py`](examples/filter_sound.py) for complete examples.
+
 ## Recording
 
 The managed capture API collects audio in memory while your application does
