@@ -965,6 +965,25 @@ def test_close_releases_live_resources_and_is_idempotent() -> None:
         upload(playback, PCM(b"\0\0", channels=1, sample_rate=1))
 
 
+def test_playback_sessions_can_close_out_of_opening_order() -> None:
+    library = FakeLibrary()
+    original_context = library.alc.context
+    previous_context = library.alc.previous_context
+    first = open_playback(library=as_library(library))
+    second_context = object()
+    library.alc.context = second_context
+    second = open_playback(library=as_library(library))
+
+    close_playback(first)
+
+    assert library.alc.current_context is second_context
+
+    close_playback(second)
+
+    assert library.alc.current_context is previous_context
+    assert library.alc.destroyed_contexts == [original_context, second_context]
+
+
 def test_handles_cannot_cross_playback_sessions() -> None:
     first_library = FakeLibrary()
     second_library = FakeLibrary()

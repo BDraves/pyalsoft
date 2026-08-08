@@ -17,6 +17,7 @@ from types import TracebackType
 from typing import Self, cast, overload
 
 from pyalsoft import bindings
+from pyalsoft.bindings._library import _pointer_address
 
 type Vector3 = tuple[float, float, float]
 type AudioPath = str | PathLike[str]
@@ -716,6 +717,7 @@ class Playback:
         "_device",
         "_library",
         "_previous_context",
+        "_previous_playback",
         "_streams",
         "_token",
         "_voice_clips",
@@ -730,11 +732,13 @@ class Playback:
         device: object,
         context: object,
         previous_context: object | None,
+        previous_playback: Playback | None,
     ) -> None:
         self._library = library
         self._device = device
         self._context = context
         self._previous_context = previous_context
+        self._previous_playback = previous_playback
         self._token = object()
         self._clips: dict[object, int] = {}
         self._clip_infos: dict[object, SoundInfo] = {}
@@ -762,6 +766,52 @@ class Playback:
             if exception is None:
                 raise
             exception.add_note(f"audio cleanup also failed: {cleanup_error}")
+
+
+_active_playbacks: set[Playback] = set()
+_active_playbacks_lock = RLock()
+
+
+def _same_context(left: object | None, right: object | None) -> bool:
+    """Compare native context handles while supporting test doubles."""
+
+    if left is right:
+        return True
+    try:
+        return _pointer_address(left) == _pointer_address(right)
+    except TypeError:
+        return False
+
+
+def _playback_for_context(
+    library: bindings.OpenALLibrary,
+    context: object | None,
+) -> Playback | None:
+    if context is None:
+        return None
+    return next(
+        (
+            playback
+            for playback in _active_playbacks
+            if playback._library is library
+            and not playback._closed
+            and _same_context(playback._context, context)
+        ),
+        None,
+    )
+
+
+def _live_previous_context(playback: Playback) -> object | None:
+    """Follow closed managed predecessors to the nearest live context."""
+
+    predecessor = playback._previous_playback
+    while predecessor is not None:
+        if not predecessor._closed:
+            return predecessor._context
+        if predecessor._previous_playback is None:
+            return predecessor._previous_context
+        predecessor = predecessor._previous_playback
+    return playback._previous_context
 
 
 _FORMAT_BY_LAYOUT = {
@@ -1404,28 +1454,38 @@ def open_playback(
         raise TypeError("device_name must be a PlaybackDevice, str, bytes, or None")
 
     library = _load_playback_library(library)
-    previous_context = library.alc.get_current_context()
-    device = library.alc.open_device(device_name)
-    if not device:
-        raise PlaybackOpenError("could not open the requested playback device")
-    context: object | None = None
-    try:
-        attributes: tuple[int, ...] | None = None
-        if config.hrtf is not None and library.alc.is_extension_present(
-            device, "ALC_SOFT_HRTF"
-        ):
-            attributes = (bindings.ALC_HRTF_SOFT, int(config.hrtf))
-        context = library.alc.create_context(device, attributes)
-        if not context:
-            raise PlaybackOpenError("could not create an OpenAL context")
-        if not library.alc.make_context_current(context):
-            raise PlaybackOpenError("could not make the OpenAL context current")
-    except Exception:
-        if context is not None:
-            library.alc.destroy_context(context)
-        library.alc.close_device(device)
-        raise
-    return Playback(library, device, context, previous_context)
+    with _active_playbacks_lock:
+        previous_context = library.alc.get_current_context()
+        previous_playback = _playback_for_context(library, previous_context)
+        device = library.alc.open_device(device_name)
+        if not device:
+            raise PlaybackOpenError("could not open the requested playback device")
+        context: object | None = None
+        try:
+            attributes: tuple[int, ...] | None = None
+            if config.hrtf is not None and library.alc.is_extension_present(
+                device, "ALC_SOFT_HRTF"
+            ):
+                attributes = (bindings.ALC_HRTF_SOFT, int(config.hrtf))
+            context = library.alc.create_context(device, attributes)
+            if not context:
+                raise PlaybackOpenError("could not create an OpenAL context")
+            if not library.alc.make_context_current(context):
+                raise PlaybackOpenError("could not make the OpenAL context current")
+        except Exception:
+            if context is not None:
+                library.alc.destroy_context(context)
+            library.alc.close_device(device)
+            raise
+        playback = Playback(
+            library,
+            device,
+            context,
+            previous_context,
+            previous_playback,
+        )
+        _active_playbacks.add(playback)
+        return playback
 
 
 def get_playback_info(playback: Playback) -> PlaybackInfo:
@@ -1475,8 +1535,15 @@ def close_playback(playback: Playback) -> None:
 
     if not isinstance(playback, Playback):
         raise TypeError("playback must be a Playback")
-    if playback._closed:
-        return
+    with _active_playbacks_lock:
+        if playback._closed:
+            return
+
+        _close_playback(playback)
+
+
+def _close_playback(playback: Playback) -> None:
+    """Close a validated, live playback while lifecycle state is serialized."""
 
     first_error: Exception | None = None
 
@@ -1484,6 +1551,13 @@ def close_playback(playback: Playback) -> None:
         nonlocal first_error
         if first_error is None:
             first_error = error
+
+    current_context = playback._library.alc.get_current_context()
+    restore_context = (
+        _live_previous_context(playback)
+        if _same_context(current_context, playback._context)
+        else current_context
+    )
 
     try:
         if not playback._library.alc.make_context_current(playback._context):
@@ -1535,7 +1609,7 @@ def close_playback(playback: Playback) -> None:
     finally:
         try:
             if not playback._library.alc.make_context_current(
-                playback._previous_context
+                restore_context
             ):
                 remember(AudioBackendError("could not restore the previous context"))
         except Exception as error:
@@ -1557,6 +1631,7 @@ def close_playback(playback: Playback) -> None:
         playback._clips.clear()
         playback._clip_infos.clear()
         playback._closed = True
+        _active_playbacks.discard(playback)
 
     if first_error is not None:
         raise first_error
