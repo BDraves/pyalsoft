@@ -5,7 +5,7 @@ from __future__ import annotations
 import atexit
 import math
 import wave
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import Buffer
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
@@ -23,6 +23,7 @@ type Vector3 = tuple[float, float, float]
 type AudioPath = str | PathLike[str]
 
 _FLOAT32_MAX = float.fromhex("0x1.fffffep+127")
+_DEFAULT_SOUND_CACHE_LIMIT = 64 * 1024 * 1024
 
 
 class _UnsetType:
@@ -285,6 +286,17 @@ class SoundInfo:
         """Total number of PCM data bytes."""
 
         return self.frame_count * self.frame_width_bytes
+
+
+@dataclass(frozen=True, slots=True)
+class SoundCacheInfo:
+    """Observed state of the implicit file-clip cache."""
+
+    max_bytes: int | None
+    current_bytes: int
+    clip_count: int
+    active_clip_count: int
+    pending_eviction_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -2931,17 +2943,23 @@ class _DefaultRuntime:
     __slots__ = (
         "_acoustics",
         "_active",
+        "_cache_bytes",
+        "_cache_limit",
         "_clips",
         "_closed",
         "_listener",
         "_lock",
+        "_pending_evictions",
         "_playback",
     )
 
     def __init__(self) -> None:
         self._playback: Playback | None = None
-        self._clips: dict[Path, _CachedSoundClip] = {}
+        self._clips: OrderedDict[Path, _CachedSoundClip] = OrderedDict()
         self._active: dict[object, _SoundRecord] = {}
+        self._cache_limit: int | None = _DEFAULT_SOUND_CACHE_LIMIT
+        self._cache_bytes = 0
+        self._pending_evictions: set[Path] = set()
         self._listener = _DEFAULT_LISTENER
         self._acoustics = _DEFAULT_ACOUSTICS
         self._closed = False
@@ -2963,6 +2981,45 @@ class _DefaultRuntime:
             raise InvalidVoiceStateError("the sound was not started")
         return self._playback
 
+    def _active_cache_paths(self) -> set[Path]:
+        return {
+            record.path
+            for record in self._active.values()
+            if record.path is not None and record.path in self._clips
+        }
+
+    def _evict_cached_path(self, path: Path, active_paths: set[Path]) -> bool:
+        cached = self._clips.get(path)
+        if cached is None:
+            self._pending_evictions.discard(path)
+            return False
+        if path in active_paths:
+            self._pending_evictions.add(path)
+            return False
+        release(self._opened_playback(), cached.clip)
+        del self._clips[path]
+        self._cache_bytes -= cached.clip.info.byte_count
+        self._pending_evictions.discard(path)
+        return True
+
+    def _trim_cache(self, *, protected: Path | None = None) -> None:
+        active_paths = self._active_cache_paths()
+        if protected is not None:
+            active_paths.add(protected)
+        for path in tuple(self._pending_evictions):
+            self._evict_cached_path(path, active_paths)
+        while (
+            self._cache_limit is not None
+            and self._cache_bytes > self._cache_limit
+        ):
+            candidate = next(
+                (path for path in self._clips if path not in active_paths),
+                None,
+            )
+            if candidate is None:
+                return
+            self._evict_cached_path(candidate, active_paths)
+
     def _finalize(
         self,
         record: _SoundRecord,
@@ -2982,6 +3039,7 @@ class _DefaultRuntime:
             record.final_status = status
             record.end_reason = end_reason
             del self._active[record.token]
+            self._trim_cache()
 
     def _create_replacement_voice(
         self,
@@ -3083,10 +3141,13 @@ class _DefaultRuntime:
                         clip=upload(self._ensure_playback(), pcm),
                     )
                     self._clips[normalized] = cached
+                    self._cache_bytes += cached.clip.info.byte_count
                 else:
                     offset_seconds, offset_frames = _validate_offsets(
                         cached.clip.info, offset_seconds, offset_frames
                     )
+                self._clips.move_to_end(normalized)
+                self._trim_cache(protected=normalized)
                 clip = cached.clip
             try:
                 voice = _play_voice(
@@ -3100,6 +3161,9 @@ class _DefaultRuntime:
                 if isinstance(sound, PCM):
                     with suppress(Exception):
                         release(self._opened_playback(), clip)
+                else:
+                    with suppress(Exception):
+                        self._trim_cache()
                 raise
             token = object()
             record = _SoundRecord(
@@ -3113,6 +3177,38 @@ class _DefaultRuntime:
             )
             self._active[token] = record
             return PlayingSound(self, record)
+
+    def set_cache_limit(self, max_bytes: int | None) -> None:
+        with self._lock:
+            self._require_open()
+            self._cache_limit = max_bytes
+            self._reap_finished()
+            self._trim_cache()
+
+    def clear_cache(self, path: Path | None) -> int:
+        with self._lock:
+            self._require_open()
+            self._reap_finished()
+            active_paths = self._active_cache_paths()
+            if path is not None:
+                return int(self._evict_cached_path(path, active_paths))
+            evicted = 0
+            for cached_path in tuple(self._clips):
+                evicted += self._evict_cached_path(cached_path, active_paths)
+            return evicted
+
+    def cache_info(self) -> SoundCacheInfo:
+        with self._lock:
+            self._require_open()
+            self._reap_finished()
+            active_paths = self._active_cache_paths()
+            return SoundCacheInfo(
+                max_bytes=self._cache_limit,
+                current_bytes=self._cache_bytes,
+                clip_count=len(self._clips),
+                active_clip_count=len(active_paths),
+                pending_eviction_count=len(self._pending_evictions),
+            )
 
     def status(self, record: _SoundRecord) -> VoiceStatus:
         with self._lock:
@@ -3345,6 +3441,8 @@ class _DefaultRuntime:
                     record.end_reason = SoundEndReason.SHUTDOWN
                 self._active.clear()
                 self._clips.clear()
+                self._cache_bytes = 0
+                self._pending_evictions.clear()
                 self._playback = None
                 self._closed = True
 
@@ -3359,6 +3457,34 @@ def _get_default_runtime() -> _DefaultRuntime:
         if _default_runtime is None:
             _default_runtime = _DefaultRuntime()
         return _default_runtime
+
+
+def set_sound_cache_limit(max_bytes: int | None) -> None:
+    """Set the implicit file cache byte budget, or ``None`` for no limit."""
+
+    if max_bytes is not None:
+        if isinstance(max_bytes, bool) or not isinstance(max_bytes, int):
+            raise TypeError("max_bytes must be an integer or None")
+        if max_bytes < 0:
+            raise ValueError("max_bytes cannot be negative")
+    _get_default_runtime().set_cache_limit(max_bytes)
+
+
+def clear_sound_cache(path: AudioPath | None = None) -> int:
+    """Evict cached file clips, deferring active entries until they finish."""
+
+    normalized: Path | None = None
+    if path is not None:
+        if not isinstance(path, (str, PathLike)):
+            raise TypeError("path must be a path to a WAV file or None")
+        normalized = Path(path).expanduser().resolve()
+    return _get_default_runtime().clear_cache(normalized)
+
+
+def get_sound_cache_info() -> SoundCacheInfo:
+    """Return byte usage and activity for the implicit file cache."""
+
+    return _get_default_runtime().cache_info()
 
 
 @overload
@@ -3657,6 +3783,7 @@ __all__ = [
     "ResourceInUseError",
     "Reverb",
     "SampleType",
+    "SoundCacheInfo",
     "SoundEndReason",
     "SoundInfo",
     "Stream",
@@ -3667,11 +3794,13 @@ __all__ = [
     "VoiceConfig",
     "VoiceState",
     "VoiceStatus",
+    "clear_sound_cache",
     "close_playback",
     "finish_stream",
     "get_acoustics",
     "get_listener",
     "get_playback_info",
+    "get_sound_cache_info",
     "get_sound_info",
     "get_voice_status",
     "list_playback_devices",
@@ -3688,6 +3817,7 @@ __all__ = [
     "seek_frames",
     "set_acoustics",
     "set_listener",
+    "set_sound_cache_limit",
     "set_voice_config",
     "shutdown",
     "start_stream",

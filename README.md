@@ -47,8 +47,25 @@ The returned `PlayingSound` has transport, timeline, gain, pitch, looping, and
 spatial controls. The convenience API supports uncompressed mono or stereo WAV
 files containing 8-bit unsigned or 16-bit signed PCM. It opens its default audio
 session lazily, reuses clips loaded from the same resolved path, and releases it
-automatically at process exit. Applications can call `shutdown()` to close it
-earlier.
+automatically at process exit. File clips use a 64 MiB least-recently-used byte
+budget; clips attached to active sounds remain pinned until those sounds stop.
+Applications can call `shutdown()` to close the runtime earlier.
+
+Cache policy and explicit eviction remain function-oriented:
+
+```python
+from pyalsoft import (
+    clear_sound_cache,
+    get_sound_cache_info,
+    set_sound_cache_limit,
+)
+
+set_sound_cache_limit(128 * 1024 * 1024)  # None selects an unlimited cache.
+print(get_sound_cache_info())
+clear_sound_cache("notification.wav")
+```
+
+Clearing an active clip marks it for eviction after its final sound stops.
 
 ### Controlling one sound
 
