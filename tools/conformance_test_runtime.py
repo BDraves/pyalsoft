@@ -187,6 +187,47 @@ def run(library: bindings.OpenALLibrary | None = None) -> str:
                         if not 0.24 < effect.reverb_gain < 0.26:
                             raise RuntimeError("typed EFX property did not round-trip")
                         _require_no_al_error(selected, "EFX property round-trip")
+
+                        integer_properties = (
+                            (
+                                bindings.enums.ALEffectType.EFFECT_FLANGER,
+                                "flanger_phase",
+                                45,
+                            ),
+                            (
+                                bindings.enums.ALEffectType.EFFECT_VOCAL_MORPHER,
+                                "vocal_morpher_phonemea_coarse_tuning",
+                                -4,
+                            ),
+                            (
+                                bindings.enums.ALEffectType.EFFECT_VOCAL_MORPHER,
+                                "vocal_morpher_phonemeb_coarse_tuning",
+                                7,
+                            ),
+                            (
+                                bindings.enums.ALEffectType.EFFECT_PITCH_SHIFTER,
+                                "pitch_shifter_coarse_tune",
+                                -3,
+                            ),
+                            (
+                                bindings.enums.ALEffectType.EFFECT_PITCH_SHIFTER,
+                                "pitch_shifter_fine_tune",
+                                -20,
+                            ),
+                        )
+                        for effect_type, property_name, value in integer_properties:
+                            effect.type = effect_type
+                            setattr(effect, property_name, value)
+                            observed = getattr(effect, property_name)
+                            if observed != value:
+                                raise RuntimeError(
+                                    f"typed EFX integer property {property_name} "
+                                    f"returned {observed!r}, expected {value}"
+                                )
+                            _require_no_al_error(
+                                selected,
+                                f"EFX integer property {property_name}",
+                            )
                     finally:
                         al.delete_effects((effect_id,))
 
