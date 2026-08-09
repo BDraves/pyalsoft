@@ -4,6 +4,7 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
+from tools.bindings.semantics import build_effective_properties
 from tools.generate_bindings import (
     DEFAULT_DOCS_OUTPUT,
     DEFAULT_OUTPUT_DIR,
@@ -173,3 +174,35 @@ def test_semantic_override_marks_static_data_as_retained() -> None:
 
     assert overrides.commands["alBufferDataStatic"].retained == ("data",)
     assert overrides.commands["alBufferDataStaticDirect"].retained == ("data",)
+
+
+def test_semantic_overrides_correct_efx_integer_properties() -> None:
+    registry = parse_registry()
+    properties = {
+        item.enum_name: item
+        for item in build_effective_properties(registry, load_semantic_overrides())
+        if item.object_name == "effect"
+    }
+
+    for name in (
+        "AL_FLANGER_PHASE",
+        "AL_PITCH_SHIFTER_COARSE_TUNE",
+        "AL_PITCH_SHIFTER_FINE_TUNE",
+    ):
+        property_ = properties[name]
+        assert property_.value_types == ("ALint",)
+        assert property_.getter == "alGetEffecti"
+        assert property_.setter == "alEffecti"
+
+    for name in (
+        "AL_VOCAL_MORPHER_PHONEMEA_COARSE_TUNING",
+        "AL_VOCAL_MORPHER_PHONEMEB_COARSE_TUNING",
+    ):
+        property_ = properties[name]
+        assert property_.value_types == ("ALint",)
+        assert property_.groups == ()
+        assert property_.range == "-24..=24"
+        assert property_.default == "0"
+        assert property_.enum_type is None
+
+    assert properties["AL_PITCH_SHIFTER_FINE_TUNE"].range == "-50..=50"

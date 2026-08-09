@@ -165,6 +165,9 @@ def _validate_overrides(registry: Registry, overrides: SemanticOverrides) -> Non
             property_override.objects is not None
             or property_override.value_types is not None
             or property_override.enum_groups is not None
+            or property_override.value_groups is not None
+            or property_override.range is not None
+            or property_override.default is not None
             or not property_override.generate
         ):
             raise RegistryError(f"property override {name!r} must explain its change")
@@ -278,6 +281,21 @@ def build_effective_properties(
                 if override is not None and override.value_types is not None
                 else property_.value_types
             )
+            value_groups = (
+                override.value_groups
+                if override is not None and override.value_groups is not None
+                else property_.groups
+            )
+            value_range = (
+                override.range
+                if override is not None and override.range is not None
+                else property_.range
+            )
+            default = (
+                override.default
+                if override is not None and override.default is not None
+                else property_.default
+            )
             type_info = _property_type(value_types)
             base_type, arity = type_info if type_info is not None else ("", None)
             prose = " ".join(
@@ -291,7 +309,7 @@ def build_effective_properties(
                 next(
                     (
                         group_names[(enum.namespace, group)]
-                        for group in property_.groups
+                        for group in value_groups
                         if (enum.namespace, group) in group_names
                     ),
                     None,
@@ -311,9 +329,9 @@ def build_effective_properties(
                         enum_name=enum.name,
                         python_name=_property_python_name(enum.name, object_name),
                         value_types=value_types,
-                        range=property_.range,
-                        default=property_.default,
-                        groups=property_.groups,
+                        range=value_range,
+                        default=default,
+                        groups=value_groups,
                         object_class=property_.object_class,
                         kind=property_.kind,
                         readable=True,

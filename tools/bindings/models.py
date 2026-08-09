@@ -146,6 +146,9 @@ class PropertyOverride:
     objects: tuple[str, ...] | None
     value_types: tuple[str, ...] | None
     enum_groups: tuple[str, ...] | None
+    value_groups: tuple[str, ...] | None
+    range: str | None
+    default: str | None
     writable: bool | None
     generate: bool
     reason: str | None
