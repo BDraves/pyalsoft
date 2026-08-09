@@ -669,9 +669,7 @@ def test_python_command_namespace_borrows_retained_static_data(
             "alcGetCurrentContext": FakePrototype(lambda: 0x1000),
             "alIsExtensionPresent": FakePrototype(lambda _extension: b"\x01"),
             "alGetProcAddress": FakePrototype(lambda _name: 0x2000),
-            "alBufferDataStatic": FakePrototype(
-                addresses={0x2000: buffer_data_static}
-            ),
+            "alBufferDataStatic": FakePrototype(addresses={0x2000: buffer_data_static}),
         },
     )
     samples = bytearray(b"static audio")

@@ -1614,9 +1614,7 @@ def _close_playback(playback: Playback) -> None:
                 remember(error)
     finally:
         try:
-            if not playback._library.alc.make_context_current(
-                restore_context
-            ):
+            if not playback._library.alc.make_context_current(restore_context):
                 remember(AudioBackendError("could not restore the previous context"))
         except Exception as error:
             remember(error)

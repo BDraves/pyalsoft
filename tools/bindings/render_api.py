@@ -209,9 +209,9 @@ def _wrapper_input_annotation(
     scalar = _python_scalar_annotation(
         base, namespace, parameter.group, group_names, function_pointers
     )
-    if (
-        parameter.direction == "inout" or parameter.retained
-    ) and (base in {"void", "ALvoid", "ALCvoid"} or base.startswith("struct ")):
+    if (parameter.direction == "inout" or parameter.retained) and (
+        base in {"void", "ALvoid", "ALCvoid"} or base.startswith("struct ")
+    ):
         return "_api.WritableBuffer | object"
     if parameter.direction == "inout":
         return "object"
