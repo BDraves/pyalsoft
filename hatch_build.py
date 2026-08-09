@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from hatchling.builders.hooks.plugin.interface import BuildHookInterface
+from hatchling.builders.hooks.plugin.interface import BuildHookInterface  # type: ignore
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -20,7 +20,7 @@ from tools.openal_soft import (  # noqa: E402
 )
 
 
-class CustomBuildHook(BuildHookInterface):
+class CustomBuildHook(BuildHookInterface):  # type: ignore
     """Add the matching native runtime to supported platform wheels."""
 
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
