@@ -171,17 +171,14 @@ jobs:
   sdist:
     name: Source distribution
     if: >-
-      github.event_name != 'pull_request' &&
+      github.event_name != 'workflow_run' ||
       (
-        github.event_name != 'workflow_run' ||
-        (
-          github.event.workflow_run.event == 'push' &&
-          github.event.workflow_run.conclusion == 'success' &&
-          github.event.workflow_run.head_repository.full_name == github.repository
-        )
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.full_name == github.repository
       )
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     steps:
       - name: Check out repository
@@ -203,6 +200,24 @@ jobs:
 
       - name: Build source distribution
         run: uv build --sdist --no-sources
+
+      - name: Install OpenAL build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends libasound2-dev libpulse-dev
+
+      - name: Install and smoke-test source distribution
+        env:
+          ALSOFT_DRIVERS: "null"
+        run: |
+          sdists=(dist/*.tar.gz)
+          if [[ ${#sdists[@]} -ne 1 ]]; then
+            echo "Expected exactly one source distribution, found ${#sdists[@]}." >&2
+            exit 1
+          fi
+          uv run --isolated --no-project --python 3.12 \
+            --with "${sdists[0]}" \
+            python tools/smoke_test_runtime.py
 
       - name: Upload source distribution
         uses: actions/upload-artifact@v7

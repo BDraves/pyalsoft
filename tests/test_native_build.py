@@ -108,7 +108,7 @@ def test_macos_disables_fatal_function_effects_warning(machine: str) -> None:
     assert "-DHAVE_WFUNCTION_EFFECTS=OFF" in target.cmake_options
 
 
-def test_pyinstaller_hook_is_packaged() -> None:
+def test_pyinstaller_hook_declares_versioned_linux_runtimes() -> None:
     hook_directory = Path(get_hook_dirs()[0])
     hook = hook_directory / "hook-pyalsoft.py"
     assert hook.is_file()

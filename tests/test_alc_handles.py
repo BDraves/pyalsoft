@@ -387,6 +387,96 @@ def _library() -> tuple[bindings.OpenALLibrary, FakeLibrary]:
     return cast(bindings.OpenALLibrary, fake), fake
 
 
+def test_owned_open_helpers_reject_null_native_handles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library, fake = _library()
+    monkeypatch.setattr(fake.alc, "open_device", lambda _name: None)
+    with pytest.raises(bindings.DeviceOpenError, match="playback device"):
+        bindings.open_device(library=library)
+
+    library, fake = _library()
+    monkeypatch.setattr(fake.alc, "loopback_open_device_soft", lambda _name: None)
+    with pytest.raises(bindings.DeviceOpenError, match="loopback device"):
+        bindings.open_loopback_device(library=library)
+
+    library, fake = _library()
+    monkeypatch.setattr(
+        fake.alc,
+        "capture_open_device",
+        lambda _name, _frequency, _format, _buffer_size: None,
+    )
+    with pytest.raises(bindings.DeviceOpenError, match="capture device"):
+        bindings.open_capture_device(
+            8_000,
+            bindings.AL_FORMAT_MONO16,
+            8_000,
+            library=library,
+        )
+
+
+def test_owned_context_creation_rejects_a_null_native_handle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library, fake = _library()
+    device = bindings.open_device(library=library)
+    monkeypatch.setattr(
+        fake.alc,
+        "create_context",
+        lambda _device, _attributes: None,
+    )
+
+    with pytest.raises(bindings.ContextCreateError, match="create"):
+        device.create_context()
+
+    assert device._contexts == []
+    device.close()
+
+
+def test_owned_context_reports_activation_and_restoration_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library, fake = _library()
+    device = bindings.open_device(library=library)
+    context = device.create_context()
+
+    monkeypatch.setattr(fake.alc, "make_context_current", lambda _context: False)
+    with pytest.raises(bindings.ContextActivationError, match="make.*current"):
+        context.make_current()
+
+    previous = _context_pointer()
+    fake.alc.current = previous
+
+    def fail_restoration(selected: object | None) -> bool:
+        if selected is previous:
+            return False
+        fake.alc.current = selected
+        return True
+
+    monkeypatch.setattr(fake.alc, "make_context_current", fail_restoration)
+    with (
+        pytest.raises(bindings.ContextActivationError, match="restore"),
+        context.activate(),
+    ):
+        assert fake.alc.current is fake.alc.context
+
+    device.close()
+
+
+def test_owned_device_reports_a_refused_native_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library, fake = _library()
+    device = bindings.open_device(library=library)
+    monkeypatch.setattr(fake.alc, "close_device", lambda _device: False)
+
+    with pytest.raises(bindings.DeviceCloseError, match="refused"):
+        device.close()
+
+    assert not device.closed
+    assert fake.invalidated_devices == []
+
+
 def test_owned_device_closes_its_context_before_the_device() -> None:
     library, fake = _library()
     device = bindings.open_device(library=library)

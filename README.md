@@ -346,6 +346,8 @@ uv run ruff format --check .
 uv run mypy
 uv run python tools/generate_bindings.py --check
 uv run python tools/sync_openal_soft.py --check
+uv run coverage run -m pytest -m "not integration"
+uv run coverage report
 ```
 
 Bindings and [`docs/reference.md`](docs/reference.md) are generated from the

@@ -600,6 +600,61 @@ def test_playback_config_requests_hrtf_when_supported(
         assert library.alc.context_attributes == (bindings.ALC_HRTF_SOFT, native)
 
 
+def test_open_playback_reports_a_refused_native_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = FakeLibrary()
+    monkeypatch.setattr(library.alc, "open_device", lambda _name: None)
+
+    with pytest.raises(PlaybackOpenError, match="open.*playback device"):
+        open_playback(library=as_library(library))
+
+    assert library.alc.destroyed_contexts == []
+    assert library.alc.closed_devices == []
+
+
+def test_open_playback_closes_device_when_context_creation_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = FakeLibrary()
+
+    def refuse_context(
+        _device: object,
+        _attributes: tuple[int, ...] | None,
+    ) -> None:
+        return None
+
+    monkeypatch.setattr(library.alc, "create_context", refuse_context)
+
+    with pytest.raises(PlaybackOpenError, match="create.*context"):
+        open_playback(library=as_library(library))
+
+    assert library.alc.destroyed_contexts == []
+    assert library.alc.closed_devices == [library.alc.device]
+    assert library.alc.current_context is library.alc.previous_context
+
+
+def test_open_playback_destroys_context_when_activation_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = FakeLibrary()
+
+    def refuse_context(context: object | None) -> bool:
+        if context is library.alc.context:
+            return False
+        library.alc.current_context = context
+        return True
+
+    monkeypatch.setattr(library.alc, "make_context_current", refuse_context)
+
+    with pytest.raises(PlaybackOpenError, match="make.*context current"):
+        open_playback(library=as_library(library))
+
+    assert library.alc.destroyed_contexts == [library.alc.context]
+    assert library.alc.closed_devices == [library.alc.device]
+    assert library.alc.current_context is library.alc.previous_context
+
+
 def test_playback_info_reports_backend_result_and_unavailable_hrtf() -> None:
     library = FakeLibrary()
     with open_playback(library=as_library(library)) as playback:
@@ -743,6 +798,60 @@ def test_managed_playback_applies_data_and_controls_lifecycle() -> None:
     assert library.alc.destroyed_contexts == [library.alc.context]
     assert library.alc.closed_devices == [library.alc.device]
     assert library.alc.current_context is library.alc.previous_context
+
+
+def test_failed_clip_upload_releases_the_native_buffer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = FakeLibrary()
+    failure = RuntimeError("upload failed")
+
+    def fail_upload(
+        _identifier: int,
+        _format_name: int,
+        _data: bytes,
+        _sample_rate: int,
+    ) -> None:
+        raise failure
+
+    with open_playback(library=as_library(library)) as playback:
+        monkeypatch.setattr(library.al, "buffer_data", fail_upload)
+
+        with pytest.raises(RuntimeError, match="upload failed") as caught:
+            upload(playback, PCM(b"\0\0", channels=1, sample_rate=1))
+
+        assert caught.value is failure
+        assert library.al.allocated_buffers == set()
+        assert playback._clips == {}
+
+
+def test_failed_stream_creation_releases_partial_native_resources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = FakeLibrary()
+    failure = RuntimeError("stream configuration failed")
+
+    def fail_configuration(
+        _playback: object,
+        _identifier: int,
+        _config: VoiceConfig,
+    ) -> None:
+        raise failure
+
+    with open_playback(library=as_library(library)) as playback:
+        monkeypatch.setattr(
+            playback_module,
+            "_apply_voice_config",
+            fail_configuration,
+        )
+
+        with pytest.raises(RuntimeError, match="stream configuration failed") as caught:
+            open_stream(playback, channels=1, sample_rate=8_000)
+
+        assert caught.value is failure
+        assert library.al.sources == {}
+        assert library.al.allocated_buffers == set()
+        assert playback._streams == {}
 
 
 def test_voice_efx_are_created_replaced_and_released_with_the_voice() -> None:
@@ -980,6 +1089,32 @@ def test_close_releases_live_resources_and_is_idempotent() -> None:
     assert library.alc.destroyed_contexts == [library.alc.context]
     with pytest.raises(PlaybackClosedError):
         upload(playback, PCM(b"\0\0", channels=1, sample_rate=1))
+
+
+def test_close_finishes_native_teardown_after_resource_cleanup_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = FakeLibrary()
+    playback = open_playback(library=as_library(library))
+    clip = upload(playback, PCM(b"\0\0", channels=1, sample_rate=1))
+    play(playback, clip)
+    failure = RuntimeError("source cleanup failed")
+
+    def fail_source_cleanup(_sources: tuple[int, ...]) -> None:
+        raise failure
+
+    monkeypatch.setattr(library.al, "source_stopv", fail_source_cleanup)
+
+    with pytest.raises(RuntimeError, match="source cleanup failed") as caught:
+        close_playback(playback)
+
+    assert caught.value is failure
+    assert playback._closed
+    assert playback._voices == {}
+    assert playback._clips == {}
+    assert library.alc.destroyed_contexts == [library.alc.context]
+    assert library.alc.closed_devices == [library.alc.device]
+    assert library.alc.current_context is library.alc.previous_context
 
 
 def test_playback_sessions_can_close_out_of_opening_order() -> None:

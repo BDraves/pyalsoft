@@ -6,20 +6,13 @@ import pytest
 
 from tools.bindings.semantics import build_effective_properties
 from tools.generate_bindings import (
-    DEFAULT_DOCS_OUTPUT,
-    DEFAULT_OUTPUT_DIR,
-    DEFAULT_README_OUTPUT,
-    DEFAULT_REGISTRY,
     DEFAULT_SOURCE,
     RegistryError,
     _validate_supported_xml,
     load_semantic_overrides,
     load_source_info,
     parse_registry,
-    render_documentation,
-    render_outputs,
     render_readme_badge,
-    verify_registry,
 )
 
 
@@ -125,26 +118,6 @@ def test_repeated_api_set_blocks_are_merged() -> None:
     ima4 = [api_set for api_set in registry.api_sets if api_set.name == "AL_EXT_IMA4"]
     assert len(ima4) == 1
     assert len(ima4[0].requirements) == 1
-
-
-def test_committed_generated_files_are_current() -> None:
-    source = load_source_info(DEFAULT_SOURCE)
-    digest = verify_registry(DEFAULT_REGISTRY, source)
-    registry = parse_registry(DEFAULT_REGISTRY)
-
-    for name, expected in render_outputs(registry, source, digest).items():
-        generated = DEFAULT_OUTPUT_DIR / name
-        assert generated.read_text(encoding="utf-8") == expected
-
-    assert DEFAULT_DOCS_OUTPUT.read_text(encoding="utf-8") == render_documentation(
-        registry,
-        source,
-        digest,
-        load_semantic_overrides(),
-    )
-
-    readme = DEFAULT_README_OUTPUT.read_text(encoding="utf-8")
-    assert readme == render_readme_badge(readme, source)
 
 
 def test_readme_badge_is_rendered_from_openal_soft_version() -> None:
