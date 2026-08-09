@@ -800,9 +800,7 @@ def _serialized_playback[**P, R](
     """Run one complete playback operation under stable context ownership."""
 
     @wraps(function)
-    def serialized(
-        playback: Playback, /, *args: P.args, **kwargs: P.kwargs
-    ) -> R:
+    def serialized(playback: Playback, /, *args: P.args, **kwargs: P.kwargs) -> R:
         with _playback_operation(playback):
             return function(playback, *args, **kwargs)
 
@@ -3067,10 +3065,7 @@ class _DefaultRuntime:
             active_paths.add(protected)
         for path in tuple(self._pending_evictions):
             self._evict_cached_path(path, active_paths)
-        while (
-            self._cache_limit is not None
-            and self._cache_bytes > self._cache_limit
-        ):
+        while self._cache_limit is not None and self._cache_bytes > self._cache_limit:
             candidate = next(
                 (path for path in self._clips if path not in active_paths),
                 None,
@@ -3590,9 +3585,7 @@ def update_listener(
 ) -> Listener:
     """Apply a validated batch of partial listener changes and return it."""
 
-    operation = (
-        nullcontext() if playback is None else _playback_operation(playback)
-    )
+    operation = nullcontext() if playback is None else _playback_operation(playback)
     with operation:
         current = get_listener(playback)
         updated = Listener(
@@ -3651,9 +3644,7 @@ def update_acoustics(
 ) -> Acoustics:
     """Apply a validated batch of partial acoustic changes and return it."""
 
-    operation = (
-        nullcontext() if playback is None else _playback_operation(playback)
-    )
+    operation = nullcontext() if playback is None else _playback_operation(playback)
     with operation:
         current = get_acoustics(playback)
         updated = Acoustics(
