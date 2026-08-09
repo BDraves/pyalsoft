@@ -213,4 +213,8 @@ Writable buffers are borrowed and pinned against resizing; read-only buffers
 receive a retained native copy. The storage is released after the context is
 destroyed. Raw callback, foldback, direct-context, and static-buffer commands
 remain available through the generated namespaces, but callers using those
-commands own every associated callback and backing-storage lifetime.
+commands own every associated callback and backing-storage lifetime. Generated
+static-buffer commands borrow the exact address of a writable buffer or ctypes
+allocation; keep that storage alive and do not resize it while OpenAL may use
+the buffer. Use `Context.set_static_buffer_data` when the binding should manage
+that lifetime or when the input is immutable.

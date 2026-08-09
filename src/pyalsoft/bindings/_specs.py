@@ -168,6 +168,7 @@ class WrapperParameterSpec:
     length: str | None
     group: str | None
     object_class: str | None
+    retained: bool
     visible: bool
 
 

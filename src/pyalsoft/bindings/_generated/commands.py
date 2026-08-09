@@ -392,7 +392,7 @@ class ALCommands(_api.CommandNamespace):
 
         return cast(tuple[float, float, float], self._invoke('alGetBuffer3f', {'buffer': buffer, 'param': param}))
 
-    def buffer_data_static(self, buffer: int, format: _enums.ALFormat | int, data: _api.ReadableBuffer | object, freq: int) -> None:
+    def buffer_data_static(self, buffer: int, format: _enums.ALFormat | int, data: _api.WritableBuffer | object, freq: int) -> None:
         """Python wrapper for ``alBufferDataStatic``. Requires ``AL_EXT_STATIC_BUFFER``."""
 
         return cast(None, self._invoke('alBufferDataStatic', {'buffer': buffer, 'format': format, 'data': data, 'freq': freq}))
@@ -587,7 +587,7 @@ class ALCommands(_api.CommandNamespace):
 
         return cast(None, self._invoke('alBufferSubSamplesSOFT', {'buffer': buffer, 'offset': offset, 'samples': samples, 'channels': channels, 'type': type, 'data': data}))
 
-    def get_buffer_samples_soft(self, buffer: int, offset: int, samples: int, channels: _enums.ALBufferChannelsSOFT | int, type: _enums.ALSampleTypeSOFT | int, data: object) -> None:
+    def get_buffer_samples_soft(self, buffer: int, offset: int, samples: int, channels: _enums.ALBufferChannelsSOFT | int, type: _enums.ALSampleTypeSOFT | int, data: _api.WritableBuffer | object) -> None:
         """Python wrapper for ``alGetBufferSamplesSOFT``. Requires ``AL_SOFT_buffer_samples``."""
 
         return cast(None, self._invoke('alGetBufferSamplesSOFT', {'buffer': buffer, 'offset': offset, 'samples': samples, 'channels': channels, 'type': type, 'data': data}))
@@ -677,7 +677,7 @@ class ALCommands(_api.CommandNamespace):
 
         return cast(None, self._invoke('alEventControlSOFT', {'types': types, 'enable': enable}))
 
-    def event_callback_soft(self, callback: _types.ALEVENTPROCSOFT, user_param: _api.ReadableBuffer | object) -> None:
+    def event_callback_soft(self, callback: _types.ALEVENTPROCSOFT, user_param: _api.WritableBuffer | object) -> None:
         """Python wrapper for ``alEventCallbackSOFT``. Requires ``AL_SOFT_events``."""
 
         return cast(None, self._invoke('alEventCallbackSOFT', {'callback': callback, 'userParam': user_param}))
@@ -692,7 +692,7 @@ class ALCommands(_api.CommandNamespace):
 
         return cast(tuple[object | None, ...], self._invoke('alGetPointervSOFT', {'pname': pname}, result_size=result_size))
 
-    def buffer_callback_soft(self, buffer: int, format: _enums.ALFormat | int, freq: int, callback: _types.ALBUFFERCALLBACKTYPESOFT, userptr: _api.ReadableBuffer | object) -> None:
+    def buffer_callback_soft(self, buffer: int, format: _enums.ALFormat | int, freq: int, callback: _types.ALBUFFERCALLBACKTYPESOFT, userptr: _api.WritableBuffer | object) -> None:
         """Python wrapper for ``alBufferCallbackSOFT``. Requires ``AL_SOFT_callback_buffer``."""
 
         return cast(None, self._invoke('alBufferCallbackSOFT', {'buffer': buffer, 'format': format, 'freq': freq, 'callback': callback, 'userptr': userptr}))
@@ -722,7 +722,7 @@ class ALCommands(_api.CommandNamespace):
 
         return cast(None, self._invoke('alSourcePlayAtTimevSOFT', {'sources': sources, 'start_time': start_time}))
 
-    def debug_message_callback_ext(self, callback: _types.ALDEBUGPROCEXT, user_param: _api.ReadableBuffer | object) -> None:
+    def debug_message_callback_ext(self, callback: _types.ALDEBUGPROCEXT, user_param: _api.WritableBuffer | object) -> None:
         """Python wrapper for ``alDebugMessageCallbackEXT``. Requires ``AL_EXT_debug``."""
 
         return cast(None, self._invoke('alDebugMessageCallbackEXT', {'callback': callback, 'userParam': user_param}))
@@ -1297,12 +1297,12 @@ class ALCommands(_api.CommandNamespace):
 
         return cast(tuple[float, ...], self._invoke('alGetAuxiliaryEffectSlotfvDirect', {'context': context, 'effectslot': effectslot, 'param': param}, result_size=result_size, resolution_device=resolution_device))
 
-    def buffer_data_static_direct(self, context: object | None, buffer: int, format: _enums.ALFormat | int, data: _api.ReadableBuffer | object, freq: int, resolution_device: object | None = None) -> None:
+    def buffer_data_static_direct(self, context: object | None, buffer: int, format: _enums.ALFormat | int, data: _api.WritableBuffer | object, freq: int, resolution_device: object | None = None) -> None:
         """Python wrapper for ``alBufferDataStaticDirect``. Requires ``AL_EXT_direct_context``."""
 
         return cast(None, self._invoke('alBufferDataStaticDirect', {'context': context, 'buffer': buffer, 'format': format, 'data': data, 'freq': freq}, resolution_device=resolution_device))
 
-    def debug_message_callback_direct_ext(self, context: object | None, callback: _types.ALDEBUGPROCEXT, user_param: _api.ReadableBuffer | object, resolution_device: object | None = None) -> None:
+    def debug_message_callback_direct_ext(self, context: object | None, callback: _types.ALDEBUGPROCEXT, user_param: _api.WritableBuffer | object, resolution_device: object | None = None) -> None:
         """Python wrapper for ``alDebugMessageCallbackDirectEXT``. Requires ``AL_EXT_direct_context``."""
 
         return cast(None, self._invoke('alDebugMessageCallbackDirectEXT', {'context': context, 'callback': callback, 'userParam': user_param}, resolution_device=resolution_device))
@@ -1447,7 +1447,7 @@ class ALCommands(_api.CommandNamespace):
 
         return cast(None, self._invoke('alEventControlDirectSOFT', {'context': context, 'types': types, 'enable': enable}, resolution_device=resolution_device))
 
-    def event_callback_direct_soft(self, context: object | None, callback: _types.ALEVENTPROCSOFT, user_param: _api.ReadableBuffer | object, resolution_device: object | None = None) -> None:
+    def event_callback_direct_soft(self, context: object | None, callback: _types.ALEVENTPROCSOFT, user_param: _api.WritableBuffer | object, resolution_device: object | None = None) -> None:
         """Python wrapper for ``alEventCallbackDirectSOFT``. Requires ``AL_EXT_direct_context``."""
 
         return cast(None, self._invoke('alEventCallbackDirectSOFT', {'context': context, 'callback': callback, 'userParam': user_param}, resolution_device=resolution_device))
@@ -1462,7 +1462,7 @@ class ALCommands(_api.CommandNamespace):
 
         return cast(tuple[object | None, ...], self._invoke('alGetPointervDirectSOFT', {'context': context, 'pname': pname}, result_size=result_size, resolution_device=resolution_device))
 
-    def buffer_callback_direct_soft(self, context: object | None, buffer: int, format: _enums.ALFormat | int, freq: int, callback: _types.ALBUFFERCALLBACKTYPESOFT, userptr: _api.ReadableBuffer | object, resolution_device: object | None = None) -> None:
+    def buffer_callback_direct_soft(self, context: object | None, buffer: int, format: _enums.ALFormat | int, freq: int, callback: _types.ALBUFFERCALLBACKTYPESOFT, userptr: _api.WritableBuffer | object, resolution_device: object | None = None) -> None:
         """Python wrapper for ``alBufferCallbackDirectSOFT``. Requires ``AL_EXT_direct_context``."""
 
         return cast(None, self._invoke('alBufferCallbackDirectSOFT', {'context': context, 'buffer': buffer, 'format': format, 'freq': freq, 'callback': callback, 'userptr': userptr}, resolution_device=resolution_device))
@@ -1497,7 +1497,7 @@ class ALCommands(_api.CommandNamespace):
 
         return cast(int, self._invoke('EAXSetDirect', {'context': context, 'property_set_id': property_set_id, 'property_id': property_id, 'source_id': source_id, 'value': value, 'value_size': value_size}, resolution_device=resolution_device))
 
-    def eax_get_direct(self, context: object | None, property_set_id: _api.ReadableBuffer | object, property_id: int, source_id: int, value: object, value_size: int, resolution_device: object | None = None) -> int:
+    def eax_get_direct(self, context: object | None, property_set_id: _api.ReadableBuffer | object, property_id: int, source_id: int, value: _api.WritableBuffer | object, value_size: int, resolution_device: object | None = None) -> int:
         """Python wrapper for ``EAXGetDirect``. Requires ``AL_EXT_direct_context``."""
 
         return cast(int, self._invoke('EAXGetDirect', {'context': context, 'property_set_id': property_set_id, 'property_id': property_id, 'source_id': source_id, 'value': value, 'value_size': value_size}, resolution_device=resolution_device))
@@ -1662,7 +1662,7 @@ class ALCCommands(_api.CommandNamespace):
 
         return cast(None, self._invoke('alcCaptureStop', {'device': device}))
 
-    def capture_samples(self, device: object | None, buffer: object, samples: int) -> None:
+    def capture_samples(self, device: object | None, buffer: _api.WritableBuffer | object, samples: int) -> None:
         """Reads samples from the device buffer."""
 
         return cast(None, self._invoke('alcCaptureSamples', {'device': device, 'buffer': buffer, 'samples': samples}))
@@ -1677,7 +1677,7 @@ class ALCCommands(_api.CommandNamespace):
 
         return cast(bool, self._invoke('alcIsRenderFormatSupportedSOFT', {'device': device, 'freq': freq, 'channels': channels, 'type': type}))
 
-    def render_samples_soft(self, device: object | None, buffer: object, samples: int) -> None:
+    def render_samples_soft(self, device: object | None, buffer: _api.WritableBuffer | object, samples: int) -> None:
         """Python wrapper for ``alcRenderSamplesSOFT``. Requires ``ALC_SOFT_loopback``."""
 
         return cast(None, self._invoke('alcRenderSamplesSOFT', {'device': device, 'buffer': buffer, 'samples': samples}))
@@ -1722,7 +1722,7 @@ class ALCCommands(_api.CommandNamespace):
 
         return cast(bool, self._invoke('alcEventControlSOFT', {'events': events, 'enable': enable}))
 
-    def event_callback_soft(self, callback: _types.ALCEVENTPROCTYPESOFT, user_param: _api.ReadableBuffer | object) -> None:
+    def event_callback_soft(self, callback: _types.ALCEVENTPROCTYPESOFT, user_param: _api.WritableBuffer | object) -> None:
         """Python wrapper for ``alcEventCallbackSOFT``. Requires ``ALC_SOFT_system_events``."""
 
         return cast(None, self._invoke('alcEventCallbackSOFT', {'callback': callback, 'userParam': user_param}))

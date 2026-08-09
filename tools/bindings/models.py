@@ -155,6 +155,7 @@ class PropertyOverride:
 class CommandOverride:
     lengths: Mapping[str, str]
     directions: Mapping[str, str]
+    retained: tuple[str, ...]
     string_list_name: str | None
 
 
@@ -196,6 +197,7 @@ class WrapperParameter:
     length: str | None
     group: str | None
     object_class: str | None
+    retained: bool
     visible: bool
 
 

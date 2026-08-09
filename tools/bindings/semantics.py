@@ -195,6 +195,12 @@ def _validate_overrides(registry: Registry, overrides: SemanticOverrides) -> Non
                 raise RegistryError(
                     f"command override {name!r} has invalid direction {direction!r}"
                 )
+        for parameter_name in command_override.retained:
+            if parameter_name not in parameters:
+                raise RegistryError(
+                    f"command override {name!r} retains unknown parameter "
+                    f"{parameter_name!r}"
+                )
         if command_override.string_list_name is not None:
             python_name = command_override.string_list_name
             if not python_name.isidentifier() or keyword.iskeyword(python_name):
@@ -389,6 +395,15 @@ def build_command_wrappers(
             if override is not None:
                 direction = override.directions.get(parameter.name, direction)
                 length = override.lengths.get(parameter.name, length)
+            retained = override is not None and parameter.name in override.retained
+            _base, pointer_depth, _is_const = _split_c_type(
+                parameter.c_type, known_types
+            )
+            if retained and (pointer_depth == 0 or direction == "out"):
+                raise RegistryError(
+                    f"command override {command.name!r} can only retain a "
+                    f"caller-provided pointer, not {parameter.name!r}"
+                )
             provisional.append(
                 WrapperParameter(
                     name=parameter.name,
@@ -398,6 +413,7 @@ def build_command_wrappers(
                     length=length,
                     group=parameter.group,
                     object_class=parameter.object_class,
+                    retained=retained,
                     visible=direction != "out",
                 )
             )
@@ -423,6 +439,7 @@ def build_command_wrappers(
                 length=item.length,
                 group=item.group,
                 object_class=item.object_class,
+                retained=item.retained,
                 visible=item.visible and item.name not in hidden_controllers,
             )
             for item in provisional

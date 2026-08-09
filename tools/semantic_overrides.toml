@@ -121,18 +121,43 @@ lengths = { buffers = "nb" }
 # to allocate and return.
 [command.alBufferDataStatic]
 directions = { data = "in" }
+retained = ["data"]
 
 [command.alBufferDataStaticDirect]
 directions = { data = "in" }
+retained = ["data"]
+
+[command.alEventCallbackSOFT]
+retained = ["userParam"]
+
+[command.alBufferCallbackSOFT]
+retained = ["userptr"]
+
+[command.alDebugMessageCallbackEXT]
+retained = ["userParam"]
+
+[command.alDebugMessageCallbackDirectEXT]
+retained = ["userParam"]
+
+[command.alEventCallbackDirectSOFT]
+retained = ["userParam"]
+
+[command.alBufferCallbackDirectSOFT]
+retained = ["userptr"]
+
+[command.alcEventCallbackSOFT]
+retained = ["userParam"]
 
 [command.alGetBufferSamplesSOFT]
 directions = { data = "inout" }
 
 [command.alRequestFoldbackStart]
 directions = { mem = "inout" }
+retained = ["mem"]
 
 [command.alRequestFoldbackStartDirect]
 directions = { mem = "inout" }
+retained = ["mem"]
 
 [command.alcCaptureSamples]
 directions = { buffer = "inout" }

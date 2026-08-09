@@ -79,7 +79,8 @@ def _render_wrapper_parameter(parameter: WrapperParameter) -> str:
         "WrapperParameterSpec("
         f"{parameter.name!r}, {parameter.python_name!r}, {parameter.c_type!r}, "
         f"{parameter.direction!r}, {parameter.length!r}, {parameter.group!r}, "
-        f"{parameter.object_class!r}, {parameter.visible!r})"
+        f"{parameter.object_class!r}, {parameter.retained!r}, "
+        f"{parameter.visible!r})"
     )
 
 
@@ -208,6 +209,10 @@ def _wrapper_input_annotation(
     scalar = _python_scalar_annotation(
         base, namespace, parameter.group, group_names, function_pointers
     )
+    if (
+        parameter.direction == "inout" or parameter.retained
+    ) and (base in {"void", "ALvoid", "ALCvoid"} or base.startswith("struct ")):
+        return "_api.WritableBuffer | object"
     if parameter.direction == "inout":
         return "object"
     if pointer_depth == 0 or (

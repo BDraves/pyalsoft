@@ -166,3 +166,10 @@ def test_semantic_override_generates_alc_string_list_wrapper() -> None:
     overrides = load_semantic_overrides()
 
     assert overrides.commands["alcGetString"].string_list_name == "get_strings"
+
+
+def test_semantic_override_marks_static_data_as_retained() -> None:
+    overrides = load_semantic_overrides()
+
+    assert overrides.commands["alBufferDataStatic"].retained == ("data",)
+    assert overrides.commands["alBufferDataStaticDirect"].retained == ("data",)

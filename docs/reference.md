@@ -315,7 +315,7 @@ Semantic corrections that cannot be represented by the upstream XML are reviewed
 | `get_bufferiv(buffer: int, param: _enums.ALBufferInteger | int, result_size: int = 1) -> tuple[int, ...]` | `alGetBufferiv` | `core` | n/a |
 | `get_buffer3i(buffer: int, param: int) -> tuple[int, int, int]` | `alGetBuffer3i` | `core` | n/a |
 | `get_buffer3f(buffer: int, param: int) -> tuple[float, float, float]` | `alGetBuffer3f` | `core` | n/a |
-| `buffer_data_static(buffer: int, format: _enums.ALFormat | int, data: _api.ReadableBuffer | object, freq: int) -> None` | `alBufferDataStatic` | `AL_EXT_STATIC_BUFFER` | n/a |
+| `buffer_data_static(buffer: int, format: _enums.ALFormat | int, data: _api.WritableBuffer | object, freq: int) -> None` | `alBufferDataStatic` | `AL_EXT_STATIC_BUFFER` | n/a |
 | `gen_effects(count: int = 1) -> tuple[int, ...]` | `alGenEffects` | `ALC_EXT_EFX` | n/a |
 | `delete_effects(effects: Sequence[int] | None) -> None` | `alDeleteEffects` | `ALC_EXT_EFX` | n/a |
 | `is_effect(effect: int) -> bool` | `alIsEffect` | `ALC_EXT_EFX` | n/a |
@@ -354,7 +354,7 @@ Semantic corrections that cannot be represented by the upstream XML are reviewed
 | `request_foldback_stop() -> None` | `alRequestFoldbackStop` | `AL_EXT_FOLDBACK` | n/a |
 | `buffer_samples_soft(buffer: int, samplerate: int, internalformat: int, samples: int, channels: _enums.ALBufferChannelsSOFT | int, type: _enums.ALSampleTypeSOFT | int, data: _api.ReadableBuffer | object) -> None` | `alBufferSamplesSOFT` | `AL_SOFT_buffer_samples` | n/a |
 | `buffer_sub_samples_soft(buffer: int, offset: int, samples: int, channels: _enums.ALBufferChannelsSOFT | int, type: _enums.ALSampleTypeSOFT | int, data: _api.ReadableBuffer | object) -> None` | `alBufferSubSamplesSOFT` | `AL_SOFT_buffer_samples` | n/a |
-| `get_buffer_samples_soft(buffer: int, offset: int, samples: int, channels: _enums.ALBufferChannelsSOFT | int, type: _enums.ALSampleTypeSOFT | int, data: object) -> None` | `alGetBufferSamplesSOFT` | `AL_SOFT_buffer_samples` | n/a |
+| `get_buffer_samples_soft(buffer: int, offset: int, samples: int, channels: _enums.ALBufferChannelsSOFT | int, type: _enums.ALSampleTypeSOFT | int, data: _api.WritableBuffer | object) -> None` | `alGetBufferSamplesSOFT` | `AL_SOFT_buffer_samples` | n/a |
 | `is_buffer_format_supported_soft(format: int) -> bool` | `alIsBufferFormatSupportedSOFT` | `AL_SOFT_buffer_samples` | n/a |
 | `sourced_soft(source: int, param: _enums.ALSourceDouble | int, value: float) -> None` | `alSourcedSOFT` | `AL_SOFT_source_latency` | n/a |
 | `source3d_soft(source: int, param: int, value1: float, value2: float, value3: float) -> None` | `alSource3dSOFT` | `AL_SOFT_source_latency` | n/a |
@@ -372,16 +372,16 @@ Semantic corrections that cannot be represented by the upstream XML are reviewed
 | `process_updates_soft() -> None` | `alProcessUpdatesSOFT` | `AL_SOFT_deferred_updates` | n/a |
 | `get_stringi_soft(pname: _enums.ALStringPName | int, index: int) -> str | None` | `alGetStringiSOFT` | `AL_SOFT_source_resampler` | n/a |
 | `event_control_soft(types: Sequence[int] | None, enable: bool) -> None` | `alEventControlSOFT` | `AL_SOFT_events` | n/a |
-| `event_callback_soft(callback: _types.ALEVENTPROCSOFT, user_param: _api.ReadableBuffer | object) -> None` | `alEventCallbackSOFT` | `AL_SOFT_events` | n/a |
+| `event_callback_soft(callback: _types.ALEVENTPROCSOFT, user_param: _api.WritableBuffer | object) -> None` | `alEventCallbackSOFT` | `AL_SOFT_events` | n/a |
 | `get_pointer_soft(pname: _enums.ALPointerPName | int) -> object | None` | `alGetPointerSOFT` | `AL_SOFT_events` | n/a |
 | `get_pointerv_soft(pname: _enums.ALPointerPName | int, result_size: int = 1) -> tuple[object | None, ...]` | `alGetPointervSOFT` | `AL_SOFT_events` | n/a |
-| `buffer_callback_soft(buffer: int, format: _enums.ALFormat | int, freq: int, callback: _types.ALBUFFERCALLBACKTYPESOFT, userptr: _api.ReadableBuffer | object) -> None` | `alBufferCallbackSOFT` | `AL_SOFT_callback_buffer` | n/a |
+| `buffer_callback_soft(buffer: int, format: _enums.ALFormat | int, freq: int, callback: _types.ALBUFFERCALLBACKTYPESOFT, userptr: _api.WritableBuffer | object) -> None` | `alBufferCallbackSOFT` | `AL_SOFT_callback_buffer` | n/a |
 | `get_buffer_ptr_soft(buffer: int, param: _enums.ALBufferPointerSOFT | int) -> object | None` | `alGetBufferPtrSOFT` | `AL_SOFT_callback_buffer` | n/a |
 | `get_buffer3_ptr_soft(buffer: int, param: _enums.ALBufferPointerSOFT | int) -> tuple[object | None, object | None, object | None]` | `alGetBuffer3PtrSOFT` | `AL_SOFT_callback_buffer` | n/a |
 | `get_buffer_ptrv_soft(buffer: int, param: _enums.ALBufferPointerSOFT | int) -> object | None` | `alGetBufferPtrvSOFT` | `AL_SOFT_callback_buffer` | n/a |
 | `source_play_at_time_soft(source: int, start_time: int) -> None` | `alSourcePlayAtTimeSOFT` | `AL_SOFT_source_start_delay` | n/a |
 | `source_play_at_timev_soft(sources: Sequence[int] | None, start_time: int) -> None` | `alSourcePlayAtTimevSOFT` | `AL_SOFT_source_start_delay` | n/a |
-| `debug_message_callback_ext(callback: _types.ALDEBUGPROCEXT, user_param: _api.ReadableBuffer | object) -> None` | `alDebugMessageCallbackEXT` | `AL_EXT_debug` | n/a |
+| `debug_message_callback_ext(callback: _types.ALDEBUGPROCEXT, user_param: _api.WritableBuffer | object) -> None` | `alDebugMessageCallbackEXT` | `AL_EXT_debug` | n/a |
 | `debug_message_insert_ext(source: _enums.ALDebugSourceEXT | int, type: _enums.ALDebugTypeEXT | int, id: int, severity: _enums.ALDebugSeverityEXT | int, message: str | bytes | None) -> None` | `alDebugMessageInsertEXT` | `AL_EXT_debug` | n/a |
 | `debug_message_control_ext(source: _enums.ALDebugSourceEXT | int, type: _enums.ALDebugTypeEXT | int, severity: _enums.ALDebugSeverityEXT | int, ids: Sequence[int] | None, enable: bool) -> None` | `alDebugMessageControlEXT` | `AL_EXT_debug` | n/a |
 | `push_debug_group_ext(source: _enums.ALDebugSourceEXT | int, id: int, message: str | bytes | None) -> None` | `alPushDebugGroupEXT` | `AL_EXT_debug` | n/a |
@@ -496,8 +496,8 @@ Semantic corrections that cannot be represented by the upstream XML are reviewed
 | `get_auxiliary_effect_slotiv_direct(context: object | None, effectslot: int, param: _enums.ALAuxiliaryEffectSlotInteger | int, result_size: int = 1, resolution_device: object | None = None) -> tuple[int, ...]` | `alGetAuxiliaryEffectSlotivDirect` | `AL_EXT_direct_context` | n/a |
 | `get_auxiliary_effect_slotf_direct(context: object | None, effectslot: int, param: _enums.ALAuxiliaryEffectSlotFloat | int, resolution_device: object | None = None) -> float` | `alGetAuxiliaryEffectSlotfDirect` | `AL_EXT_direct_context` | n/a |
 | `get_auxiliary_effect_slotfv_direct(context: object | None, effectslot: int, param: _enums.ALAuxiliaryEffectSlotFloat | int, result_size: int = 1, resolution_device: object | None = None) -> tuple[float, ...]` | `alGetAuxiliaryEffectSlotfvDirect` | `AL_EXT_direct_context` | n/a |
-| `buffer_data_static_direct(context: object | None, buffer: int, format: _enums.ALFormat | int, data: _api.ReadableBuffer | object, freq: int, resolution_device: object | None = None) -> None` | `alBufferDataStaticDirect` | `AL_EXT_direct_context` | n/a |
-| `debug_message_callback_direct_ext(context: object | None, callback: _types.ALDEBUGPROCEXT, user_param: _api.ReadableBuffer | object, resolution_device: object | None = None) -> None` | `alDebugMessageCallbackDirectEXT` | `AL_EXT_direct_context` | n/a |
+| `buffer_data_static_direct(context: object | None, buffer: int, format: _enums.ALFormat | int, data: _api.WritableBuffer | object, freq: int, resolution_device: object | None = None) -> None` | `alBufferDataStaticDirect` | `AL_EXT_direct_context` | n/a |
+| `debug_message_callback_direct_ext(context: object | None, callback: _types.ALDEBUGPROCEXT, user_param: _api.WritableBuffer | object, resolution_device: object | None = None) -> None` | `alDebugMessageCallbackDirectEXT` | `AL_EXT_direct_context` | n/a |
 | `debug_message_insert_direct_ext(context: object | None, source: _enums.ALDebugSourceEXT | int, type: _enums.ALDebugTypeEXT | int, id: int, severity: _enums.ALDebugSeverityEXT | int, message: str | bytes | None, resolution_device: object | None = None) -> None` | `alDebugMessageInsertDirectEXT` | `AL_EXT_direct_context` | n/a |
 | `debug_message_control_direct_ext(context: object | None, source: _enums.ALDebugSourceEXT | int, type: _enums.ALDebugTypeEXT | int, severity: _enums.ALDebugSeverityEXT | int, ids: Sequence[int] | None, enable: bool, resolution_device: object | None = None) -> None` | `alDebugMessageControlDirectEXT` | `AL_EXT_direct_context` | n/a |
 | `push_debug_group_direct_ext(context: object | None, source: _enums.ALDebugSourceEXT | int, id: int, message: str | bytes | None, resolution_device: object | None = None) -> None` | `alPushDebugGroupDirectEXT` | `AL_EXT_direct_context` | n/a |
@@ -526,17 +526,17 @@ Semantic corrections that cannot be represented by the upstream XML are reviewed
 | `process_updates_direct_soft(context: object | None, resolution_device: object | None = None) -> None` | `alProcessUpdatesDirectSOFT` | `AL_EXT_direct_context` | n/a |
 | `get_stringi_direct_soft(context: object | None, pname: _enums.ALStringPName | int, index: int, resolution_device: object | None = None) -> str | None` | `alGetStringiDirectSOFT` | `AL_EXT_direct_context` | n/a |
 | `event_control_direct_soft(context: object | None, types: Sequence[int] | None, enable: bool, resolution_device: object | None = None) -> None` | `alEventControlDirectSOFT` | `AL_EXT_direct_context` | n/a |
-| `event_callback_direct_soft(context: object | None, callback: _types.ALEVENTPROCSOFT, user_param: _api.ReadableBuffer | object, resolution_device: object | None = None) -> None` | `alEventCallbackDirectSOFT` | `AL_EXT_direct_context` | n/a |
+| `event_callback_direct_soft(context: object | None, callback: _types.ALEVENTPROCSOFT, user_param: _api.WritableBuffer | object, resolution_device: object | None = None) -> None` | `alEventCallbackDirectSOFT` | `AL_EXT_direct_context` | n/a |
 | `get_pointer_direct_soft(context: object | None, pname: _enums.ALPointerPName | int, resolution_device: object | None = None) -> object | None` | `alGetPointerDirectSOFT` | `AL_EXT_direct_context` | n/a |
 | `get_pointerv_direct_soft(context: object | None, pname: _enums.ALPointerPName | int, result_size: int = 1, resolution_device: object | None = None) -> tuple[object | None, ...]` | `alGetPointervDirectSOFT` | `AL_EXT_direct_context` | n/a |
-| `buffer_callback_direct_soft(context: object | None, buffer: int, format: _enums.ALFormat | int, freq: int, callback: _types.ALBUFFERCALLBACKTYPESOFT, userptr: _api.ReadableBuffer | object, resolution_device: object | None = None) -> None` | `alBufferCallbackDirectSOFT` | `AL_EXT_direct_context` | n/a |
+| `buffer_callback_direct_soft(context: object | None, buffer: int, format: _enums.ALFormat | int, freq: int, callback: _types.ALBUFFERCALLBACKTYPESOFT, userptr: _api.WritableBuffer | object, resolution_device: object | None = None) -> None` | `alBufferCallbackDirectSOFT` | `AL_EXT_direct_context` | n/a |
 | `get_buffer_ptr_direct_soft(context: object | None, buffer: int, param: _enums.ALBufferPointerSOFT | int, resolution_device: object | None = None) -> object | None` | `alGetBufferPtrDirectSOFT` | `AL_EXT_direct_context` | n/a |
 | `get_buffer3_ptr_direct_soft(context: object | None, buffer: int, param: _enums.ALBufferPointerSOFT | int, resolution_device: object | None = None) -> tuple[object | None, object | None, object | None]` | `alGetBuffer3PtrDirectSOFT` | `AL_EXT_direct_context` | n/a |
 | `get_buffer_ptrv_direct_soft(context: object | None, buffer: int, param: _enums.ALBufferPointerSOFT | int, resolution_device: object | None = None) -> object | None` | `alGetBufferPtrvDirectSOFT` | `AL_EXT_direct_context` | n/a |
 | `source_play_at_time_direct_soft(context: object | None, source: int, start_time: int, resolution_device: object | None = None) -> None` | `alSourcePlayAtTimeDirectSOFT` | `AL_EXT_direct_context` | n/a |
 | `source_play_at_timev_direct_soft(context: object | None, sources: Sequence[int] | None, start_time: int, resolution_device: object | None = None) -> None` | `alSourcePlayAtTimevDirectSOFT` | `AL_EXT_direct_context` | n/a |
 | `eax_set_direct(context: object | None, property_set_id: _api.ReadableBuffer | object, property_id: int, source_id: int, value: _api.ReadableBuffer | object, value_size: int, resolution_device: object | None = None) -> int` | `EAXSetDirect` | `AL_EXT_direct_context` | n/a |
-| `eax_get_direct(context: object | None, property_set_id: _api.ReadableBuffer | object, property_id: int, source_id: int, value: object, value_size: int, resolution_device: object | None = None) -> int` | `EAXGetDirect` | `AL_EXT_direct_context` | n/a |
+| `eax_get_direct(context: object | None, property_set_id: _api.ReadableBuffer | object, property_id: int, source_id: int, value: _api.WritableBuffer | object, value_size: int, resolution_device: object | None = None) -> int` | `EAXGetDirect` | `AL_EXT_direct_context` | n/a |
 | `eax_set_buffer_mode_direct(context: object | None, buffers: Sequence[int] | None, value: int, resolution_device: object | None = None) -> bool` | `EAXSetBufferModeDirect` | `AL_EXT_direct_context` | n/a |
 | `eax_get_buffer_mode_direct(context: object | None, buffer: int, resolution_device: object | None = None) -> tuple[int, int]` | `EAXGetBufferModeDirect` | `AL_EXT_direct_context` | n/a |
 
@@ -564,10 +564,10 @@ Semantic corrections that cannot be represented by the upstream XML are reviewed
 | `capture_close_device(device: object | None) -> bool` | `alcCaptureCloseDevice` | `core` | Closes the given capture device. |
 | `capture_start(device: object | None) -> None` | `alcCaptureStart` | `core` | Starts capturing samples into the device buffer. |
 | `capture_stop(device: object | None) -> None` | `alcCaptureStop` | `core` | Stops capturing samples. Samples in the device buffer remain available. |
-| `capture_samples(device: object | None, buffer: object, samples: int) -> None` | `alcCaptureSamples` | `core` | Reads samples from the device buffer. |
+| `capture_samples(device: object | None, buffer: _api.WritableBuffer | object, samples: int) -> None` | `alcCaptureSamples` | `core` | Reads samples from the device buffer. |
 | `loopback_open_device_soft(device_name: str | bytes | None) -> object | None` | `alcLoopbackOpenDeviceSOFT` | `ALC_SOFT_loopback` | n/a |
 | `is_render_format_supported_soft(device: object | None, freq: int, channels: _enums.ALCRenderFormatChannelSOFT | int, type: _enums.ALCRenderFormatTypeSOFT | int) -> bool` | `alcIsRenderFormatSupportedSOFT` | `ALC_SOFT_loopback` | n/a |
-| `render_samples_soft(device: object | None, buffer: object, samples: int) -> None` | `alcRenderSamplesSOFT` | `ALC_SOFT_loopback` | n/a |
+| `render_samples_soft(device: object | None, buffer: _api.WritableBuffer | object, samples: int) -> None` | `alcRenderSamplesSOFT` | `ALC_SOFT_loopback` | n/a |
 | `device_pause_soft(device: object | None) -> None` | `alcDevicePauseSOFT` | `ALC_SOFT_pause_device` | n/a |
 | `device_resume_soft(device: object | None) -> None` | `alcDeviceResumeSOFT` | `ALC_SOFT_pause_device` | n/a |
 | `get_stringi_soft(device: object | None, param_name: _enums.ALCContextString | int, index: int) -> str | None` | `alcGetStringiSOFT` | `ALC_SOFT_HRTF` | n/a |
@@ -576,7 +576,7 @@ Semantic corrections that cannot be represented by the upstream XML are reviewed
 | `reopen_device_soft(device: object | None, device_name: str | bytes | None, attribs: Sequence[int] | None) -> bool` | `alcReopenDeviceSOFT` | `ALC_SOFT_reopen_device` | n/a |
 | `event_is_supported_soft(event_type: _enums.ALCSystemEventTypeSOFT | int, device_type: _enums.ALCDeviceTypeSOFT | int) -> _enums.ALCEventSupportSOFT | int` | `alcEventIsSupportedSOFT` | `ALC_SOFT_system_events` | n/a |
 | `event_control_soft(events: Sequence[int] | None, enable: bool) -> bool` | `alcEventControlSOFT` | `ALC_SOFT_system_events` | n/a |
-| `event_callback_soft(callback: _types.ALCEVENTPROCTYPESOFT, user_param: _api.ReadableBuffer | object) -> None` | `alcEventCallbackSOFT` | `ALC_SOFT_system_events` | n/a |
+| `event_callback_soft(callback: _types.ALCEVENTPROCTYPESOFT, user_param: _api.WritableBuffer | object) -> None` | `alcEventCallbackSOFT` | `ALC_SOFT_system_events` | n/a |
 | `get_proc_address2(device: object | None, func_name: str | bytes | None) -> object | None` | `alcGetProcAddress2` | `AL_EXT_direct_context` | n/a |
 | `set_thread_context(context: object | None) -> bool` | `alcSetThreadContext` | `ALC_EXT_thread_local_context` | n/a |
 | `get_thread_context() -> object | None` | `alcGetThreadContext` | `ALC_EXT_thread_local_context` | n/a |

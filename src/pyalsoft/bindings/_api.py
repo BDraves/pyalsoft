@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from pyalsoft.bindings._library import OpenALLibrary
 
 type ReadableBuffer = bytes | bytearray | memoryview
+type WritableBuffer = bytearray | memoryview
 
 _ALC_STRING_LIST_PARAMETERS = frozenset(
     {
@@ -71,22 +72,33 @@ def _encode_string(value: object, name: str) -> bytes | None:
     raise TypeError(f"{name} must be str, bytes, or None")
 
 
-def _buffer_input(value: object, *, writable: bool) -> tuple[object, int | None]:
+def _buffer_input(
+    value: object,
+    *,
+    writable: bool,
+    retained: bool,
+    label: str,
+) -> tuple[object, int | None]:
+    borrow = writable or retained
     if isinstance(value, bytes):
+        if borrow:
+            raise TypeError(f"{label} must be a writable buffer or ctypes storage")
         data = (ctypes.c_ubyte * len(value)).from_buffer_copy(value)
         return data, len(value)
     if isinstance(value, bytearray):
         array_type = ctypes.c_ubyte * len(value)
         data = (
             array_type.from_buffer(value)
-            if writable
+            if borrow
             else array_type.from_buffer_copy(value)
         )
         return data, len(value)
     if isinstance(value, memoryview):
         contiguous = value.cast("B")
         array_type = ctypes.c_ubyte * contiguous.nbytes
-        if writable and not contiguous.readonly:
+        if borrow and contiguous.readonly:
+            raise TypeError(f"{label} must be a writable buffer or ctypes storage")
+        if borrow:
             data = array_type.from_buffer(contiguous)
         else:
             data = array_type.from_buffer_copy(contiguous)
@@ -110,7 +122,12 @@ def _prepare_input(
         encoded = _encode_string(value, parameter.python_name)
         return encoded, len(encoded) if encoded is not None else 0
     if _is_void(base) or base.startswith("struct "):
-        return _buffer_input(value, writable=parameter.direction == "inout")
+        return _buffer_input(
+            value,
+            writable=parameter.direction == "inout",
+            retained=parameter.retained,
+            label=parameter.python_name,
+        )
     if value is None:
         return None, 0
     if isinstance(value, (ctypes.Array, ctypes._Pointer)):
