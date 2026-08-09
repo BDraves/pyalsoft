@@ -278,6 +278,7 @@ def stop_recording(recording: Recording) -> PCM:
             sample_rate=recording._sample_rate,
             sample_type=recording._sample_type,
         )
+        recording._chunks.clear()
         return recording._pcm
 
 

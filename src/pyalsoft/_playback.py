@@ -241,6 +241,8 @@ class SoundInfo:
     frame_count: int
 
     def __post_init__(self) -> None:
+        if isinstance(self.channels, bool) or not isinstance(self.channels, int):
+            raise TypeError("channels must be an integer")
         if self.channels not in (1, 2):
             raise ValueError("channels must be 1 or 2")
         if isinstance(self.sample_rate, bool) or not isinstance(self.sample_rate, int):
@@ -300,6 +302,8 @@ class PCM:
         samples = bytes(self.samples)
         if not samples:
             raise ValueError("samples cannot be empty")
+        if isinstance(self.channels, bool) or not isinstance(self.channels, int):
+            raise TypeError("channels must be an integer")
         if self.channels not in (1, 2):
             raise ValueError("channels must be 1 or 2")
         if isinstance(self.sample_rate, bool) or not isinstance(self.sample_rate, int):
@@ -1016,6 +1020,8 @@ def _validate_stream_layout(
     sample_type: SampleType,
     buffer_count: int,
 ) -> None:
+    if isinstance(channels, bool) or not isinstance(channels, int):
+        raise TypeError("channels must be an integer")
     if channels not in (1, 2):
         raise ValueError("channels must be 1 or 2")
     if isinstance(sample_rate, bool) or not isinstance(sample_rate, int):
@@ -1842,12 +1848,6 @@ def try_write_stream(
     """Queue one complete PCM chunk, or report bounded-buffer backpressure."""
 
     record = _stream_record(playback, stream)
-    data = _copy_stream_samples(samples)
-    if not data:
-        raise ValueError("samples cannot be empty")
-    frame_width = record.channels * record.sample_type.byte_width
-    if len(data) % frame_width:
-        raise ValueError("samples must contain a whole number of frames")
     if record.state in (StreamState.FINISHED, StreamState.STOPPED):
         raise InvalidVoiceStateError(
             f"cannot write to a stream in the {record.state.value} state"
@@ -1856,6 +1856,13 @@ def try_write_stream(
         raise InvalidVoiceStateError("cannot write to a stream after end-of-input")
     if not record.free_buffers:
         return False
+
+    data = _copy_stream_samples(samples)
+    if not data:
+        raise ValueError("samples cannot be empty")
+    frame_width = record.channels * record.sample_type.byte_width
+    if len(data) % frame_width:
+        raise ValueError("samples must contain a whole number of frames")
 
     _prepare_al(playback)
     buffer = record.free_buffers[0]
@@ -2885,8 +2892,14 @@ def _read_wave(path: Path) -> PCM:
         with wave.open(str(path), "rb") as source:
             info = _wave_info(source, path)
             samples = source.readframes(info.frame_count)
-    except (EOFError, wave.Error) as error:
+    except (EOFError, OSError, wave.Error) as error:
         raise AudioFileError(f"could not read WAV file {path}: {error}") from error
+
+    if len(samples) != info.byte_count:
+        raise AudioFileError(
+            f"truncated WAV file {path}: expected {info.byte_count} sample bytes, "
+            f"read {len(samples)}"
+        )
 
     try:
         return PCM(
@@ -2908,7 +2921,7 @@ def get_sound_info(path: AudioPath) -> SoundInfo:
     try:
         with wave.open(str(normalized), "rb") as source:
             return _wave_info(source, normalized)
-    except (EOFError, wave.Error) as error:
+    except (EOFError, OSError, wave.Error) as error:
         raise AudioFileError(
             f"could not read WAV file {normalized}: {error}"
         ) from error

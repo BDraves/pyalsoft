@@ -8,6 +8,7 @@ from typing import cast
 
 import pytest
 
+import pyalsoft._playback as playback_module
 from pyalsoft import (
     PCM,
     Acoustics,
@@ -656,6 +657,19 @@ def test_pcm_rejects_invalid_layouts(
         PCM(**arguments)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("channels", [True, 1.0])
+def test_pcm_and_sound_info_require_integer_channels(channels: object) -> None:
+    with pytest.raises(TypeError, match="channels must be an integer"):
+        PCM(b"\0\0", channels=channels, sample_rate=1)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="channels must be an integer"):
+        SoundInfo(
+            channels=channels,  # type: ignore[arg-type]
+            sample_rate=1,
+            sample_type=SampleType.INT16,
+            frame_count=1,
+        )
+
+
 def test_managed_playback_applies_data_and_controls_lifecycle() -> None:
     library = FakeLibrary()
     pcm = PCM(b"\0\0" * 10, channels=1, sample_rate=10)
@@ -1013,7 +1027,9 @@ def test_playback_does_not_enforce_thread_ownership() -> None:
     assert library.al.buffers == {}
 
 
-def test_stream_uses_bounded_reusable_buffers_and_drains_finished_input() -> None:
+def test_stream_uses_bounded_reusable_buffers_and_drains_finished_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     library = FakeLibrary()
     with open_playback(library=as_library(library)) as playback:
         stream = open_stream(
@@ -1035,6 +1051,12 @@ def test_stream_uses_bounded_reusable_buffers_and_drains_finished_input() -> Non
         first[:] = b"\xff" * len(first)
         assert library.al.buffers[1][1] == b"\0\0" * 10
         assert try_write_stream(playback, stream, b"\0\0" * 5)
+
+        def fail_copy(samples: object) -> bytes:
+            del samples
+            raise AssertionError("backpressure copied a rejected chunk")
+
+        monkeypatch.setattr(playback_module, "_copy_stream_samples", fail_copy)
         assert not try_write_stream(playback, stream, b"\0\0")
 
         start_stream(playback, stream)
@@ -1169,6 +1191,8 @@ def test_stream_pause_resume_stop_and_looping_rules() -> None:
     ("arguments", "exception", "message"),
     [
         ({"channels": 3, "sample_rate": 1}, ValueError, "channels"),
+        ({"channels": True, "sample_rate": 1}, TypeError, "integer"),
+        ({"channels": 1.0, "sample_rate": 1}, TypeError, "integer"),
         ({"channels": 1, "sample_rate": 0}, ValueError, "positive"),
         ({"channels": 1, "sample_rate": True}, TypeError, "integer"),
         ({"channels": 1, "sample_rate": 1, "buffer_count": 0}, ValueError, "positive"),
@@ -1209,8 +1233,7 @@ def test_stream_rejects_invalid_chunks_and_invalid_start_transitions() -> None:
             try_write_stream(playback, stream, b"\0\0")
 
         assert try_write_stream(playback, stream, b"\0" * 4)
-        with pytest.raises(ValueError, match="whole number"):
-            try_write_stream(playback, stream, b"\0")
+        assert not try_write_stream(playback, stream, b"\0")
         start_stream(playback, stream)
         with pytest.raises(InvalidVoiceStateError, match="playing"):
             start_stream(playback, stream)

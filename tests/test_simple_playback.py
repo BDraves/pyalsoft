@@ -471,6 +471,34 @@ def test_get_sound_info_reads_only_the_wave_header(
     assert info.sample_type is SampleType.INT16
 
 
+def test_missing_wave_uses_managed_audio_file_errors(
+    tmp_path: Path,
+    default_library: FakeLibrary,
+) -> None:
+    path = tmp_path / "missing.wav"
+
+    with pytest.raises(AudioFileError, match="could not read WAV"):
+        get_sound_info(path)
+    with pytest.raises(AudioFileError, match="could not read WAV"):
+        play(path)
+
+    assert default_library.alc.current_context is default_library.alc.previous_context
+
+
+def test_truncated_wave_data_is_rejected_before_opening_the_device(
+    tmp_path: Path,
+    default_library: FakeLibrary,
+) -> None:
+    path = tmp_path / "truncated.wav"
+    _write_wave(path)
+    path.write_bytes(path.read_bytes()[:-2])
+
+    with pytest.raises(AudioFileError, match="truncated WAV"):
+        play(path)
+
+    assert default_library.alc.current_context is default_library.alc.previous_context
+
+
 def test_ignored_handle_keeps_playing_and_finished_voices_are_reaped(
     tmp_path: Path,
     default_library: FakeLibrary,

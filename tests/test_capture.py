@@ -154,6 +154,7 @@ def test_recording_collects_pcm_and_owns_native_lifecycle() -> None:
     assert library.alc.started == 1
     assert library.alc.stopped == 1
     assert library.alc.closed == 1
+    assert recording._chunks == []
     assert stop_recording(recording) is captured
 
 
