@@ -25,12 +25,20 @@ with bindings.open_device() as device:
             print(device.name, device.version)
 
             buffer_ids = context.library.al.gen_buffers()
-            # Continue with generated commands or typed AL objects here.
+            buffer = context.buffer(buffer_ids[0])
+            print(buffer.frequency)
 ```
 
 `Context.activate()` restores the previous process-wide context. Pass
 `thread_local=True` to use `ALC_EXT_thread_local_context`; the extension is
 checked before changing thread state.
+
+Typed `Source`, `Buffer`, `Effect`, `Filter`, `AuxiliaryEffectSlot`, and
+`Listener` values are created through `Context` and retain that context's
+identity. Their property descriptors safely activate the owning context and
+reject objects from another context. The generated `library.al` namespace
+continues to expose raw integer commands for applications that deliberately
+manage current-context state themselves.
 
 The native pointers are available as `device.handle` and `context.handle` for
 generated commands that do not yet have a convenience method. Accessing either

@@ -699,8 +699,10 @@ def test_buffer_callback_requires_a_buffer_from_the_same_library() -> None:
     with (
         bindings.open_device(library=library) as device,
         device.create_context() as context,
+        bindings.open_device(library=other_library) as other_device,
+        other_device.create_context() as other_context,
     ):
-        buffer = bindings.Buffer(library, 3)
+        buffer = context.buffer(3)
         registration = context.register_buffer_callback(
             buffer,
             bindings.AL_FORMAT_MONO8,
@@ -711,14 +713,14 @@ def test_buffer_callback_requires_a_buffer_from_the_same_library() -> None:
 
         with pytest.raises(TypeError, match="integer or Buffer"):
             context.register_buffer_callback(
-                cast(Any, bindings.Source(library, 4)),
+                cast(Any, context.source(4)),
                 bindings.AL_FORMAT_MONO8,
                 8_000,
                 lambda view: len(view),
             )
-        with pytest.raises(ValueError, match="different OpenAL library"):
+        with pytest.raises(ValueError, match="different OpenAL context"):
             context.set_static_buffer_data(
-                bindings.Buffer(other_library, 5),
+                other_context.buffer(5),
                 bindings.AL_FORMAT_MONO8,
                 b"samples",
                 8_000,

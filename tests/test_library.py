@@ -738,40 +738,65 @@ def test_generated_object_properties_dispatch_and_convert(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[object, ...]] = []
+    active_contexts: list[object | None] = []
+    current_context: object | None = 0x2000
+
+    def get_current_context() -> object | None:
+        return current_context
+
+    def make_context_current(context: object | None) -> bytes:
+        nonlocal current_context
+        current_context = context
+        return b"\x01"
 
     def set_float(source: int, parameter: int, value: float) -> None:
+        active_contexts.append(current_context)
         calls.append(("set-float", source, parameter, value))
 
     def get_float(source: int, parameter: int, output: object) -> None:
+        active_contexts.append(current_context)
         calls.append(("get-float", source, parameter))
         cast(Any, output)[0] = 1.5
 
     def set_integer(source: int, parameter: int, value: int) -> None:
+        active_contexts.append(current_context)
         calls.append(("set-int", source, parameter, value))
 
     def get_integer(source: int, parameter: int, output: object) -> None:
+        active_contexts.append(current_context)
         calls.append(("get-int", source, parameter))
         cast(Any, output)[0] = 42
 
     library = make_library(
         monkeypatch,
         {
+            "alcGetCurrentContext": FakePrototype(get_current_context),
+            "alcMakeContextCurrent": FakePrototype(make_context_current),
             "alSourcef": FakePrototype(set_float),
             "alGetSourcef": FakePrototype(get_float),
             "alSourcei": FakePrototype(set_integer),
             "alGetSourcei": FakePrototype(get_integer),
         },
     )
-    source = library.al.source(7)
+    device = bindings.PlaybackDevice(library, 0x3000)
+    context = bindings.Context(device, 0x1000)
+    other_context = bindings.Context(device, 0x2000)
+    source = context.source(7)
 
     source.pitch = 1.25
     assert source.pitch == 1.5
     related_buffer = source.buffer
     assert related_buffer is not None
+    assert related_buffer.context is context
     assert related_buffer.identifier == 42
-    source.buffer = library.al.buffer(9)
+    source.buffer = context.buffer(9)
+    with pytest.raises(bindings.ContextMismatchError, match="different contexts"):
+        source.buffer = other_context.buffer(10)
     with pytest.raises(AttributeError, match="read-only"):
         source.state = 0  # type: ignore[assignment]
+
+    assert current_context == 0x2000
+    assert active_contexts == [0x1000, 0x1000, 0x1000, 0x1000]
 
     assert calls == [
         ("set-float", 7, 0x1003, 1.25),
@@ -779,3 +804,6 @@ def test_generated_object_properties_dispatch_and_convert(
         ("get-int", 7, 0x1009),
         ("set-int", 7, 0x1009, 9),
     ]
+
+    with pytest.raises(TypeError, match="owned OpenAL Context"):
+        bindings.Source(library, 7)  # type: ignore[arg-type]

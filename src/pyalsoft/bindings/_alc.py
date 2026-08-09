@@ -6,7 +6,7 @@ import ctypes
 import threading
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import AbstractContextManager, ExitStack, contextmanager, suppress
-from typing import Self, cast
+from typing import TYPE_CHECKING, Self, cast
 
 from pyalsoft.bindings._generated import constants as _constants
 from pyalsoft.bindings._generated import enums as _enums
@@ -20,6 +20,15 @@ from pyalsoft.bindings._library import (
     _pointer_address,
     load,
 )
+
+if TYPE_CHECKING:
+    from pyalsoft.bindings._generated.objects import (
+        AuxiliaryEffectSlot,
+        Effect,
+        Filter,
+        Listener,
+        Source,
+    )
 
 type EventCallback = Callable[[int, int, int, str], None]
 type DebugCallback = Callable[[int, int, int, int, str], None]
@@ -85,10 +94,10 @@ def _message_text(message: bytes | None, length: int) -> str:
     return encoded.decode("utf-8", errors="replace")
 
 
-def _buffer_identifier(value: Buffer | int, library: OpenALLibrary) -> int:
+def _buffer_identifier(value: Buffer | int, context: Context) -> int:
     if isinstance(value, Buffer):
-        if value.library is not library:
-            raise ValueError("buffer belongs to a different OpenAL library")
+        if value.context is not context:
+            raise ValueError("buffer belongs to a different OpenAL context")
         identifier = value.identifier
     else:
         identifier = value
@@ -882,6 +891,47 @@ class Context:
                         "OpenAL could not restore the previous context"
                     )
 
+    def source(self, identifier: int) -> Source:
+        """Return a typed source bound to this context."""
+
+        from pyalsoft.bindings._generated.objects import Source
+
+        return Source(self, identifier)
+
+    def buffer(self, identifier: int) -> Buffer:
+        """Return a typed buffer bound to this context."""
+
+        return Buffer(self, identifier)
+
+    def effect(self, identifier: int) -> Effect:
+        """Return a typed effect bound to this context."""
+
+        from pyalsoft.bindings._generated.objects import Effect
+
+        return Effect(self, identifier)
+
+    def filter(self, identifier: int) -> Filter:
+        """Return a typed filter bound to this context."""
+
+        from pyalsoft.bindings._generated.objects import Filter
+
+        return Filter(self, identifier)
+
+    def auxiliary_effect_slot(self, identifier: int) -> AuxiliaryEffectSlot:
+        """Return a typed auxiliary effect slot bound to this context."""
+
+        from pyalsoft.bindings._generated.objects import AuxiliaryEffectSlot
+
+        return AuxiliaryEffectSlot(self, identifier)
+
+    @property
+    def listener(self) -> Listener:
+        """Return the typed listener singleton bound to this context."""
+
+        from pyalsoft.bindings._generated.objects import Listener
+
+        return Listener(self)
+
     def _get_string(self, parameter: int) -> str | None:
         with self.activate():
             return self.library.al.get_string(parameter)
@@ -1137,7 +1187,7 @@ class Context:
 
         if not callable(callback):
             raise TypeError("callback must be callable")
-        buffer_id = _buffer_identifier(buffer, self.library)
+        buffer_id = _buffer_identifier(buffer, self)
         frequency = _positive_integer(frequency, label="frequency")
         format_value = _integer_value(format, label="format")
         owner_locks = (self.library._context_lock, self._lock)
@@ -1355,7 +1405,7 @@ class Context:
     ) -> None:
         """Set ``AL_EXT_STATIC_BUFFER`` data and retain its native backing."""
 
-        buffer_id = _buffer_identifier(buffer, self.library)
+        buffer_id = _buffer_identifier(buffer, self)
         frequency = _positive_integer(frequency, label="frequency")
         format_value = _integer_value(format, label="format")
         backing, size, resources = _retained_byte_buffer(data)

@@ -86,8 +86,8 @@ def run(library: bindings.OpenALLibrary | None = None) -> str:
                         pcm,
                         sample_rate,
                     )
-                    buffer = al.buffer(buffer_id)
-                    source = al.source(source_id)
+                    buffer = context.buffer(buffer_id)
+                    source = context.source(source_id)
                     source.buffer = buffer
                     source.position = (0.0, 0.0, -1.0)
                     source.gain = 0.5
@@ -181,7 +181,7 @@ def run(library: bindings.OpenALLibrary | None = None) -> str:
                         raise RuntimeError("OpenAL Soft did not expose ALC_EXT_EFX")
                     effect_id = al.gen_effects()[0]
                     try:
-                        effect = al.effect(effect_id)
+                        effect = context.effect(effect_id)
                         effect.type = bindings.enums.ALEffectType.EFFECT_REVERB
                         effect.reverb_gain = 0.25
                         if not 0.24 < effect.reverb_gain < 0.26:
