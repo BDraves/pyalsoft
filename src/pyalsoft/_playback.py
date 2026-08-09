@@ -6,15 +6,16 @@ import atexit
 import math
 import wave
 from collections import OrderedDict, deque
-from collections.abc import Buffer
-from contextlib import suppress
+from collections.abc import Buffer, Callable, Iterator
+from contextlib import contextmanager, nullcontext, suppress
 from dataclasses import dataclass, field, replace
 from enum import Enum
+from functools import wraps
 from os import PathLike
 from pathlib import Path
 from threading import RLock
 from types import TracebackType
-from typing import Self, cast, overload
+from typing import Concatenate, Self, cast, overload
 
 from pyalsoft import bindings
 from pyalsoft.bindings._library import _pointer_address
@@ -723,6 +724,8 @@ class Playback:
 
     Instances are returned by :func:`open_playback`. Use them as context
     managers or pass them to :func:`close_playback` for deterministic cleanup.
+    Operations are serialized per session and across sessions sharing a native
+    library, so a session may safely be used from multiple Python threads.
     """
 
     __slots__ = (
@@ -732,6 +735,7 @@ class Playback:
         "_context",
         "_device",
         "_library",
+        "_lock",
         "_previous_context",
         "_previous_playback",
         "_streams",
@@ -751,6 +755,7 @@ class Playback:
         previous_playback: Playback | None,
     ) -> None:
         self._library = library
+        self._lock = RLock()
         self._device = device
         self._context = context
         self._previous_context = previous_context
@@ -766,7 +771,8 @@ class Playback:
         self._closed = False
 
     def __enter__(self) -> Self:
-        _activate(self)
+        with self._library._context_lock, self._lock:
+            _activate(self)
         return self
 
     def __exit__(
@@ -786,6 +792,30 @@ class Playback:
 
 _active_playbacks: set[Playback] = set()
 _active_playbacks_lock = RLock()
+
+
+def _serialized_playback[**P, R](
+    function: Callable[Concatenate[Playback, P], R],
+) -> Callable[Concatenate[Playback, P], R]:
+    """Run one complete playback operation under stable context ownership."""
+
+    @wraps(function)
+    def serialized(
+        playback: Playback, /, *args: P.args, **kwargs: P.kwargs
+    ) -> R:
+        with _playback_operation(playback):
+            return function(playback, *args, **kwargs)
+
+    return serialized
+
+
+@contextmanager
+def _playback_operation(playback: Playback) -> Iterator[None]:
+    if not isinstance(playback, Playback):
+        raise TypeError("playback must be a Playback")
+    with playback._library._context_lock, playback._lock:
+        _require_playback(playback)
+        yield
 
 
 def _same_context(left: object | None, right: object | None) -> bool:
@@ -1472,7 +1502,7 @@ def open_playback(
         raise TypeError("device_name must be a PlaybackDevice, str, bytes, or None")
 
     library = _load_playback_library(library)
-    with _active_playbacks_lock:
+    with _active_playbacks_lock, library._context_lock:
         previous_context = library.alc.get_current_context()
         previous_playback = _playback_for_context(library, previous_context)
         device = library.alc.open_device(device_name)
@@ -1506,6 +1536,7 @@ def open_playback(
         return playback
 
 
+@_serialized_playback
 def get_playback_info(playback: Playback) -> PlaybackInfo:
     """Return observed device, renderer, version, and HRTF information."""
 
@@ -1553,11 +1584,13 @@ def close_playback(playback: Playback) -> None:
 
     if not isinstance(playback, Playback):
         raise TypeError("playback must be a Playback")
-    with _active_playbacks_lock:
-        if playback._closed:
-            return
-
-        _close_playback(playback)
+    with (
+        _active_playbacks_lock,
+        playback._library._context_lock,
+        playback._lock,
+    ):
+        if not playback._closed:
+            _close_playback(playback)
 
 
 def _close_playback(playback: Playback) -> None:
@@ -1653,6 +1686,7 @@ def _close_playback(playback: Playback) -> None:
         raise first_error
 
 
+@_serialized_playback
 def upload(playback: Playback, pcm: PCM) -> Clip:
     """Upload immutable PCM data and return its opaque clip identity."""
 
@@ -1683,6 +1717,7 @@ def upload(playback: Playback, pcm: PCM) -> Clip:
     return Clip(playback._token, token, identifier, pcm.info)
 
 
+@_serialized_playback
 def _create_voice(
     playback: Playback,
     clip: Clip,
@@ -1768,6 +1803,7 @@ def _play_voice(
     )
 
 
+@_serialized_playback
 def open_stream(
     playback: Playback,
     *,
@@ -1850,6 +1886,7 @@ def _copy_stream_samples(samples: Buffer) -> bytes:
         view.release()
 
 
+@_serialized_playback
 def try_write_stream(
     playback: Playback,
     stream: Stream,
@@ -1915,6 +1952,7 @@ def try_write_stream(
     return True
 
 
+@_serialized_playback
 def start_stream(playback: Playback, stream: Stream) -> None:
     """Start a primed stream for the first and only time."""
 
@@ -1945,6 +1983,7 @@ def _stream_status(record: _StreamRecord, offset_seconds: float = 0.0) -> Stream
     )
 
 
+@_serialized_playback
 def update_stream(playback: Playback, stream: Stream) -> StreamStatus:
     """Reclaim processed chunks, recover underruns, and return stream status."""
 
@@ -2002,6 +2041,7 @@ def update_stream(playback: Playback, stream: Stream) -> StreamStatus:
     return _stream_status(record, offset)
 
 
+@_serialized_playback
 def finish_stream(playback: Playback, stream: Stream) -> None:
     """Declare end-of-input and allow already queued chunks to drain."""
 
@@ -2016,6 +2056,7 @@ def finish_stream(playback: Playback, stream: Stream) -> None:
         record.state = StreamState.FINISHED
 
 
+@_serialized_playback
 def _set_voice_config(
     playback: Playback,
     voice: Voice | Stream,
@@ -2109,6 +2150,7 @@ def set_voice_config(
     _set_voice_config(playback, voice, config, changed_only=False)
 
 
+@_serialized_playback
 def seek(playback: Playback, voice: Voice, offset_seconds: float) -> None:
     """Move a static voice's playhead to an offset in source-audio seconds."""
 
@@ -2120,6 +2162,7 @@ def seek(playback: Playback, voice: Voice, offset_seconds: float) -> None:
     _check_al_error(playback, "seek voice")
 
 
+@_serialized_playback
 def seek_frames(playback: Playback, voice: Voice, offset_frames: int) -> None:
     """Move a static voice's playhead to an exact sample-frame offset."""
 
@@ -2131,12 +2174,14 @@ def seek_frames(playback: Playback, voice: Voice, offset_frames: int) -> None:
     _check_al_error(playback, "seek voice by frames")
 
 
+@_serialized_playback
 def rewind(playback: Playback, voice: Voice) -> None:
     """Move a static voice to its beginning and set it to the initial state."""
 
     _control_voice(playback, voice, "rewind")
 
 
+@_serialized_playback
 def restart(playback: Playback, voice: Voice) -> None:
     """Rewind a static voice and immediately start it playing."""
 
@@ -2147,6 +2192,7 @@ def restart(playback: Playback, voice: Voice) -> None:
     _check_al_error(playback, "restart voice")
 
 
+@_serialized_playback
 def _set_listener(playback: Playback, listener: Listener) -> None:
     """Apply an immutable listener description to the playback context."""
 
@@ -2161,6 +2207,7 @@ def _set_listener(playback: Playback, listener: Listener) -> None:
     _check_al_error(playback, "configure listener")
 
 
+@_serialized_playback
 def _get_listener(playback: Playback) -> Listener:
     """Query the current listener description from a playback context."""
 
@@ -2182,6 +2229,7 @@ def _get_listener(playback: Playback) -> Listener:
     )
 
 
+@_serialized_playback
 def _set_acoustics(playback: Playback, acoustics: Acoustics) -> None:
     """Apply global distance and Doppler controls to a playback context."""
 
@@ -2195,6 +2243,7 @@ def _set_acoustics(playback: Playback, acoustics: Acoustics) -> None:
     _check_al_error(playback, "configure acoustics")
 
 
+@_serialized_playback
 def _get_acoustics(playback: Playback) -> Acoustics:
     """Query global distance and Doppler controls from a playback context."""
 
@@ -2217,6 +2266,7 @@ def _get_acoustics(playback: Playback) -> Acoustics:
     )
 
 
+@_serialized_playback
 def get_voice_status(playback: Playback, voice: Voice) -> VoiceStatus:
     """Return the current state and playback offset of a live voice."""
 
@@ -2256,6 +2306,7 @@ def _control_voice(playback: Playback, voice: Voice, operation: str) -> None:
     _check_al_error(playback, f"{operation} voice")
 
 
+@_serialized_playback
 def pause(playback: Playback, voice: Voice | Stream) -> None:
     """Pause a live voice or a logically playing stream."""
 
@@ -2272,6 +2323,7 @@ def pause(playback: Playback, voice: Voice | Stream) -> None:
     _control_voice(playback, voice, "pause")
 
 
+@_serialized_playback
 def resume(playback: Playback, voice: Voice | Stream) -> None:
     """Resume a paused voice or stream."""
 
@@ -2297,6 +2349,7 @@ def resume(playback: Playback, voice: Voice | Stream) -> None:
     _check_al_error(playback, "resume voice")
 
 
+@_serialized_playback
 def stop(playback: Playback, voice: Voice | Stream) -> None:
     """Stop a live voice or discard a stream's queued audio."""
 
@@ -2325,6 +2378,7 @@ def stop(playback: Playback, voice: Voice | Stream) -> None:
     _control_voice(playback, voice, "stop")
 
 
+@_serialized_playback
 def release_finished(playback: Playback) -> int:
     """Release all terminal voices and streams and return the count.
 
@@ -2407,6 +2461,11 @@ def release(playback: Playback, resource: Stream) -> None: ...
 def release(playback: Playback, resource: Clip | Voice | Stream) -> None:
     """Release a clip, voice, or stream before its playback session closes."""
 
+    _release(playback, resource)
+
+
+@_serialized_playback
+def _release(playback: Playback, resource: Clip | Voice | Stream) -> None:
     if isinstance(resource, Stream):
         record = _stream_record(playback, resource)
         _prepare_al(playback)
@@ -3531,19 +3590,23 @@ def update_listener(
 ) -> Listener:
     """Apply a validated batch of partial listener changes and return it."""
 
-    current = get_listener(playback)
-    updated = Listener(
-        position=current.position if position is None else position,
-        velocity=current.velocity if velocity is None else velocity,
-        forward=current.forward if forward is None else forward,
-        up=current.up if up is None else up,
-        gain=current.gain if gain is None else gain,
+    operation = (
+        nullcontext() if playback is None else _playback_operation(playback)
     )
-    if playback is None:
-        _get_default_runtime().set_listener(updated)
-    else:
-        _set_listener(playback, updated)
-    return updated
+    with operation:
+        current = get_listener(playback)
+        updated = Listener(
+            position=current.position if position is None else position,
+            velocity=current.velocity if velocity is None else velocity,
+            forward=current.forward if forward is None else forward,
+            up=current.up if up is None else up,
+            gain=current.gain if gain is None else gain,
+        )
+        if playback is None:
+            _get_default_runtime().set_listener(updated)
+        else:
+            _set_listener(playback, updated)
+        return updated
 
 
 @overload
@@ -3588,23 +3651,27 @@ def update_acoustics(
 ) -> Acoustics:
     """Apply a validated batch of partial acoustic changes and return it."""
 
-    current = get_acoustics(playback)
-    updated = Acoustics(
-        distance_model=(
-            current.distance_model if distance_model is None else distance_model
-        ),
-        doppler_factor=(
-            current.doppler_factor if doppler_factor is None else doppler_factor
-        ),
-        speed_of_sound=(
-            current.speed_of_sound if speed_of_sound is None else speed_of_sound
-        ),
+    operation = (
+        nullcontext() if playback is None else _playback_operation(playback)
     )
-    if playback is None:
-        _get_default_runtime().set_acoustics(updated)
-    else:
-        _set_acoustics(playback, updated)
-    return updated
+    with operation:
+        current = get_acoustics(playback)
+        updated = Acoustics(
+            distance_model=(
+                current.distance_model if distance_model is None else distance_model
+            ),
+            doppler_factor=(
+                current.doppler_factor if doppler_factor is None else doppler_factor
+            ),
+            speed_of_sound=(
+                current.speed_of_sound if speed_of_sound is None else speed_of_sound
+            ),
+        )
+        if playback is None:
+            _get_default_runtime().set_acoustics(updated)
+        else:
+            _set_acoustics(playback, updated)
+        return updated
 
 
 @overload

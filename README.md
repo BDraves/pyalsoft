@@ -281,6 +281,14 @@ with open_playback() as playback:
     release(playback, clip)
 ```
 
+Calls using an explicit `Playback` are thread-safe. PyALSoft serializes each
+complete operation for that session, including context activation and managed
+state changes. Sessions backed by the same loaded OpenAL library are also
+serialized because they share process-wide current-context state; sessions on
+independent library instances may proceed concurrently. `close_playback` waits
+for an operation already in progress and makes later operations fail with
+`PlaybackClosedError`.
+
 ### Device selection and HRTF
 
 Playback devices can be enumerated and passed to `open_playback`. Context

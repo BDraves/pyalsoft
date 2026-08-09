@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError, replace
+from threading import Event, RLock
 from typing import cast
 
 import pytest
@@ -13,6 +14,7 @@ from pyalsoft import (
     PCM,
     Acoustics,
     AudioBackendError,
+    Clip,
     DistanceModel,
     EffectSend,
     HighPassFilter,
@@ -442,6 +444,7 @@ class FakeLibrary:
     def __init__(self) -> None:
         self.al = FakeAL()
         self.alc = FakeALC()
+        self._context_lock = RLock()
 
 
 def as_library(library: FakeLibrary) -> bindings.OpenALLibrary:
@@ -1025,6 +1028,131 @@ def test_playback_does_not_enforce_thread_ownership() -> None:
 
     assert library.al.sources == {}
     assert library.al.buffers == {}
+
+
+def test_playback_serializes_complete_operations_across_threads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = FakeLibrary()
+    playback = open_playback(library=as_library(library))
+    pcm = PCM(b"\0\0", channels=1, sample_rate=1)
+    first_upload_entered = Event()
+    allow_first_upload = Event()
+    second_call_started = Event()
+    second_allocation_entered = Event()
+    allocation_count = 0
+    original_gen_buffers = library.al.gen_buffers
+    original_buffer_data = library.al.buffer_data
+
+    def observed_gen_buffers(count: int = 1) -> tuple[int, ...]:
+        nonlocal allocation_count
+        allocation_count += 1
+        if allocation_count == 2:
+            second_allocation_entered.set()
+        return original_gen_buffers(count)
+
+    def blocking_buffer_data(
+        identifier: int,
+        format_name: int,
+        data: bytes,
+        sample_rate: int,
+    ) -> None:
+        if identifier == 1:
+            first_upload_entered.set()
+            if not allow_first_upload.wait(2.0):
+                raise AssertionError("timed out waiting to finish the first upload")
+        original_buffer_data(identifier, format_name, data, sample_rate)
+
+    monkeypatch.setattr(library.al, "gen_buffers", observed_gen_buffers)
+    monkeypatch.setattr(library.al, "buffer_data", blocking_buffer_data)
+
+    def upload_second_clip() -> Clip:
+        second_call_started.set()
+        return upload(playback, pcm)
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first = executor.submit(upload, playback, pcm)
+            assert first_upload_entered.wait(1.0)
+            second = executor.submit(upload_second_clip)
+
+            assert second_call_started.wait(1.0)
+            assert not second_allocation_entered.wait(0.1)
+            allow_first_upload.set()
+            first.result()
+            second.result()
+
+        assert second_allocation_entered.is_set()
+        assert library.al.allocated_buffers == {1, 2}
+    finally:
+        allow_first_upload.set()
+        close_playback(playback)
+
+
+def test_playback_sessions_sharing_a_library_serialize_context_use(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = FakeLibrary()
+    first_context = library.alc.context
+    first_playback = open_playback(library=as_library(library))
+    second_context = object()
+    library.alc.context = second_context
+    second_playback = open_playback(library=as_library(library))
+    pcm = PCM(b"\0\0", channels=1, sample_rate=1)
+    first_upload_entered = Event()
+    allow_first_upload = Event()
+    second_call_started = Event()
+    second_context_activated = Event()
+    original_buffer_data = library.al.buffer_data
+    original_make_context_current = library.alc.make_context_current
+
+    def blocking_buffer_data(
+        identifier: int,
+        format_name: int,
+        data: bytes,
+        sample_rate: int,
+    ) -> None:
+        if identifier == 1:
+            first_upload_entered.set()
+            if not allow_first_upload.wait(2.0):
+                raise AssertionError("timed out waiting to finish the first upload")
+        original_buffer_data(identifier, format_name, data, sample_rate)
+
+    def observe_context_activation(context: object | None) -> bool:
+        if context is second_context:
+            second_context_activated.set()
+        return original_make_context_current(context)
+
+    def upload_to_second_playback() -> Clip:
+        second_call_started.set()
+        return upload(second_playback, pcm)
+
+    monkeypatch.setattr(library.al, "buffer_data", blocking_buffer_data)
+    monkeypatch.setattr(
+        library.alc,
+        "make_context_current",
+        observe_context_activation,
+    )
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first = executor.submit(upload, first_playback, pcm)
+            assert first_upload_entered.wait(1.0)
+            second = executor.submit(upload_to_second_playback)
+
+            assert second_call_started.wait(1.0)
+            assert library.alc.current_context is first_context
+            assert not second_context_activated.wait(0.1)
+            allow_first_upload.set()
+            first.result()
+            second.result()
+
+        assert second_context_activated.is_set()
+        assert library.alc.current_context is second_context
+    finally:
+        allow_first_upload.set()
+        close_playback(second_playback)
+        close_playback(first_playback)
 
 
 def test_stream_uses_bounded_reusable_buffers_and_drains_finished_input(
