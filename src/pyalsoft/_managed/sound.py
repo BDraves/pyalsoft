@@ -91,7 +91,7 @@ class _CachedSoundClip:
 
 @dataclass(slots=True, eq=False)
 class PlayingSound:
-    """One playback instance returned by :func:`play`.
+    """One playback instance returned by [`play`][pyalsoft.play].
 
     The default playback runtime owns the native resources, so discarding this
     object does not stop the sound. Its methods are convenient delegates to the
@@ -172,7 +172,7 @@ class PlayingSound:
         """Resolved source path for file-backed audio.
 
         In-memory PCM audio has no source path, so querying this property for
-        such a sound raises :class:`AudioError`.
+        such a sound raises [`AudioError`][pyalsoft.AudioError].
         """
 
         if self._record.path is None:
@@ -1315,8 +1315,8 @@ def play(
     ``play(playback, clip, config)`` preserves the explicit managed API.
     ``play(sound, config=config)`` starts asynchronous, fire-and-forget playback
     through the default runtime and returns an optional control handle. *sound*
-    may be a WAV path or an in-memory :class:`PCM` value. Individual keyword
-    controls override the corresponding values in ``config``.
+    may be a WAV path or an in-memory [`PCM`][pyalsoft.PCM] value. Individual
+    keyword controls override the corresponding values in ``config``.
     """
 
     resolved_config = _voice_config_with_overrides(

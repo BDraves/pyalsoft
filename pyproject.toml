@@ -50,7 +50,7 @@ license-files = [
 
 [project.urls]
 Homepage = "https://github.com/BDraves/pyalsoft"
-Documentation = "https://github.com/BDraves/pyalsoft/blob/master/docs/reference.md"
+Documentation = "https://bdraves.github.io/pyalsoft/"
 Source = "https://github.com/BDraves/pyalsoft"
 Issues = "https://github.com/BDraves/pyalsoft/issues"
 "Release notes" = "https://github.com/BDraves/pyalsoft/releases"
@@ -64,6 +64,11 @@ dev = [
   "mypy>=1.17.0",
   "pytest>=8.4.0",
   "ruff>=0.12.0",
+]
+docs = [
+  "mkdocs>=1.6.1,<2",
+  "mkdocs-material>=9.6.0,<10",
+  "mkdocstrings[python]>=0.29.0,<2",
 ]
 
 [tool.mypy]
@@ -120,6 +125,7 @@ include = [
   "/LICENSES",
   "/README.md",
   "/hatch_build.py",
+  "/mkdocs.yml",
   "/pyproject.toml",
   "/src",
   "/tests",

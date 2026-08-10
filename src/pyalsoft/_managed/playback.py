@@ -106,8 +106,9 @@ class _StreamRecord:
 class Playback:
     """Opaque owner for a playback device, context, clips, voices, and streams.
 
-    Instances are returned by :func:`open_playback`. Use them as context
-    managers or pass them to :func:`close_playback` for deterministic cleanup.
+    Instances are returned by [`open_playback`][pyalsoft.open_playback]. Use them
+    as context managers or pass them to
+    [`close_playback`][pyalsoft.close_playback] for deterministic cleanup.
     Operations are serialized per session and across sessions sharing a native
     library, so a session may safely be used from multiple Python threads.
     """
