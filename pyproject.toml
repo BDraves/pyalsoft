@@ -119,6 +119,7 @@ known-first-party = ["pyalsoft"]
 
 [tool.hatch.build.targets.sdist]
 include = [
+  "/CHANGELOG.md",
   "/examples",
   "/docs",
   "/LICENSE",

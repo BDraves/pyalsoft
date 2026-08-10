@@ -73,6 +73,27 @@ Bindings and `docs/reference.md` are generated from the vendored OpenAL
 registry. See the [repository tool guide](tools/README.md) for development and
 release commands.
 
+Add an entry under `Unreleased` in [the changelog](CHANGELOG.md) for every
+notable user-facing change. Group entries under `Added`, `Changed`,
+`Deprecated`, `Removed`, `Fixed`, or `Security`, and describe the effect from
+the user's perspective. Internal refactors, tests, and formatting do not need
+entries.
+
+For example:
+
+```markdown
+## Unreleased
+
+### Added
+
+- Added reverse playback support to `PlayingSound`. (@BDraves)
+
+### Fixed
+
+- Prevented audio frames from shifting left when replacing a sound's filter.
+  (@BDraves)
+```
+
 ## License
 
 PyALSoft's original Python code is available under the MIT License. Bundled
