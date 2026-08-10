@@ -6,6 +6,12 @@ Notable user-facing changes to PyALSoft are documented here.
 
 ## 1.0.0 - 2026-08-10
 
+### Added
+
+- Added a configurable bounded cache for file-backed sounds, with inspection
+  and eviction controls. (@BDraves)
+- Published user guides and an API reference through GitHub Pages. (@BDraves)
+
 ### Changed
 
 - Declared PyALSoft production-stable. (@BDraves)

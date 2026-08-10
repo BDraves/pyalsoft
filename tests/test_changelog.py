@@ -1,8 +1,22 @@
 """Tests for release-note extraction from CHANGELOG.md."""
 
+import tomllib
+from pathlib import Path
+from typing import cast
+
 import pytest
 
 from tools.changelog import extract_release_notes
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_project_version_has_release_notes() -> None:
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    version = cast(str, pyproject["project"]["version"])
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+
+    assert extract_release_notes(changelog, version)
 
 
 def test_extract_release_notes() -> None:
