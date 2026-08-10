@@ -9,8 +9,9 @@ from typing import cast
 
 import pytest
 
-import pyalsoft._capture as capture
+import pyalsoft._managed.capture as capture
 from pyalsoft import (
+    AudioBackendError,
     CaptureDevice,
     CaptureOpenError,
     Recording,
@@ -131,6 +132,26 @@ def test_capture_devices_are_enumerated_and_deduplicated() -> None:
     )
 
 
+def test_capture_device_enumeration_reports_backend_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = FakeCaptureLibrary()
+    original = library.alc.get_strings
+
+    def fail_after_query(
+        device: object | None,
+        parameter: int,
+    ) -> tuple[str, ...]:
+        result = original(device, parameter)
+        library.alc.error = bindings.ALC_INVALID_ENUM
+        return result
+
+    monkeypatch.setattr(library.alc, "get_strings", fail_after_query)
+
+    with pytest.raises(AudioBackendError, match="enumerate capture devices"):
+        list_capture_devices(library=as_library(library))
+
+
 def test_recording_collects_pcm_and_owns_native_lifecycle() -> None:
     library = FakeCaptureLibrary(b"\x01\x00\x02\x00\x03\x00")
 
@@ -154,7 +175,130 @@ def test_recording_collects_pcm_and_owns_native_lifecycle() -> None:
     assert library.alc.started == 1
     assert library.alc.stopped == 1
     assert library.alc.closed == 1
+    assert recording._chunks == []
     assert stop_recording(recording) is captured
+
+
+def test_recording_start_failure_closes_device_and_is_not_retained(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = FakeCaptureLibrary()
+
+    def fail_start(device: object) -> None:
+        assert device is library.alc.device
+        library.alc.started += 1
+        library.alc.error = bindings.ALC_INVALID_DEVICE
+
+    monkeypatch.setattr(library.alc, "capture_start", fail_start)
+
+    with pytest.raises(AudioBackendError, match="start audio capture"):
+        start_recording(library=as_library(library))
+
+    assert library.alc.stopped == 1
+    assert library.alc.closed == 1
+    assert not capture._active_recordings
+
+
+def test_recording_propagates_worker_failure_and_closes_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = FakeCaptureLibrary()
+    failure = RuntimeError("capture query failed")
+
+    recording = start_recording(library=as_library(library))
+
+    def fail_query(
+        _device: object,
+        _parameter: int,
+        _size: int,
+    ) -> tuple[int, ...]:
+        raise failure
+
+    monkeypatch.setattr(library.alc, "get_integerv", fail_query)
+    assert recording._stop_event.wait(1)
+
+    with pytest.raises(AudioBackendError, match="while recording") as caught:
+        stop_recording(recording)
+
+    assert caught.value.__cause__ is failure
+    assert library.alc.stopped == 1
+    assert library.alc.closed == 1
+    assert not capture._active_recordings
+
+
+def test_recording_read_failure_still_closes_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = FakeCaptureLibrary()
+    original = library.alc.capture_samples
+    recording = start_recording(library=as_library(library))
+    recording._stop_event.set()
+
+    def fail_after_read(device: object, destination: object, frames: int) -> None:
+        original(device, destination, frames)
+        library.alc.error = bindings.ALC_INVALID_VALUE
+
+    monkeypatch.setattr(library.alc, "capture_samples", fail_after_read)
+
+    with pytest.raises(AudioBackendError, match="while recording"):
+        stop_recording(recording)
+
+    assert library.alc.closed == 1
+    assert not capture._active_recordings
+
+
+def test_recording_stop_failure_still_closes_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = FakeCaptureLibrary()
+    recording = start_recording(library=as_library(library))
+    recording._stop_event.set()
+
+    def fail_stop(device: object) -> None:
+        assert device is library.alc.device
+        library.alc.stopped += 1
+        library.alc.error = bindings.ALC_INVALID_DEVICE
+
+    monkeypatch.setattr(library.alc, "capture_stop", fail_stop)
+
+    with pytest.raises(AudioBackendError, match="while recording"):
+        stop_recording(recording)
+
+    assert library.alc.closed == 1
+    assert not capture._active_recordings
+
+
+def test_recording_close_failure_is_reported_as_a_managed_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = FakeCaptureLibrary()
+    recording = start_recording(library=as_library(library))
+    recording._stop_event.set()
+
+    def refuse_close(device: object) -> bool:
+        assert device is library.alc.device
+        library.alc.closed += 1
+        return False
+
+    monkeypatch.setattr(library.alc, "capture_close_device", refuse_close)
+
+    with pytest.raises(AudioBackendError, match="while recording") as caught:
+        stop_recording(recording)
+
+    assert isinstance(caught.value.__cause__, bindings.DeviceCloseError)
+    assert library.alc.closed == 1
+    assert not capture._active_recordings
+
+
+def test_recording_without_samples_is_a_managed_error() -> None:
+    library = FakeCaptureLibrary(b"")
+    recording = start_recording(library=as_library(library))
+
+    with pytest.raises(AudioBackendError, match="returned no audio"):
+        stop_recording(recording)
+
+    assert library.alc.closed == 1
+    assert not capture._active_recordings
 
 
 def test_capture_layout_selects_stereo_uint8() -> None:
@@ -221,3 +365,19 @@ def test_capture_open_failure_uses_managed_exception() -> None:
 
     with pytest.raises(CaptureOpenError, match="requested capture device"):
         start_recording(library=as_library(library))
+
+
+def test_capture_library_loading_failure_uses_managed_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    failure = bindings.LibraryNotFoundError("missing OpenAL")
+
+    def fail_to_load() -> bindings.OpenALLibrary:
+        raise failure
+
+    monkeypatch.setattr(bindings, "load", fail_to_load)
+
+    with pytest.raises(CaptureOpenError, match="load an OpenAL library") as caught:
+        start_recording()
+
+    assert caught.value.__cause__ is failure

@@ -1,0 +1,59 @@
+site_name: PyALSoft
+site_description: Function-oriented Python audio API and typed OpenAL Soft bindings
+site_url: https://bdraves.github.io/pyalsoft/
+repo_url: https://github.com/BDraves/pyalsoft
+repo_name: BDraves/pyalsoft
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - navigation.footer
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+
+nav:
+  - Getting started: index.md
+  - Guides:
+      - Playback and spatial audio: playback.md
+      - Effects and filters: effects.md
+      - Recording: recording.md
+      - Explicit playback sessions: sessions.md
+  - API reference: api.md
+  - Advanced:
+      - Owned backend handles: backend.md
+      - Owned backend API: backend-api.md
+      - Low-level bindings: reference.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            filters:
+              - "!^_"
+            inherited_members: false
+            members_order: source
+            overloads_only: true
+            separate_signature: true
+            show_overloads: true
+            show_signature_annotations: true
+            show_source: false
+            signature_crossrefs: true
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - toc:
+      permalink: true
+
+watch:
+  - src/pyalsoft

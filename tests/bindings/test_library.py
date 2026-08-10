@@ -648,6 +648,61 @@ def test_python_command_namespace_infers_buffer_size(
     assert captured == [(0x1101, b"\x01\x02\x03\x04", 44_100)]
 
 
+def test_python_command_namespace_borrows_retained_static_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[tuple[int, bytes]] = []
+
+    def buffer_data_static(
+        _buffer: int,
+        _format: int,
+        data: object,
+        size: int,
+        _sample_rate: int,
+    ) -> None:
+        values = cast(Any, data)
+        captured.append((ctypes.addressof(values), bytes(values[:size])))
+
+    library = make_library(
+        monkeypatch,
+        {
+            "alcGetCurrentContext": FakePrototype(lambda: 0x1000),
+            "alIsExtensionPresent": FakePrototype(lambda _extension: b"\x01"),
+            "alGetProcAddress": FakePrototype(lambda _name: 0x2000),
+            "alBufferDataStatic": FakePrototype(addresses={0x2000: buffer_data_static}),
+        },
+    )
+    samples = bytearray(b"static audio")
+    expected_address = ctypes.addressof(
+        (ctypes.c_ubyte * len(samples)).from_buffer(samples)
+    )
+
+    library.al.buffer_data_static(4, 0x1101, samples, 44_100)
+
+    assert captured == [(expected_address, b"static audio")]
+    with pytest.raises(TypeError, match="writable buffer or ctypes storage"):
+        library.al.buffer_data_static(4, 0x1101, b"static audio", 44_100)
+
+
+def test_python_command_namespace_requires_writable_inout_storage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def capture_samples(_device: object, buffer: object, _samples: int) -> None:
+        cast(Any, buffer)[0] = 0x7F
+
+    library = make_library(
+        monkeypatch,
+        {"alcCaptureSamples": FakePrototype(capture_samples)},
+    )
+
+    with pytest.raises(TypeError, match="writable buffer or ctypes storage"):
+        library.alc.capture_samples(None, b"\0", 1)
+
+    target = bytearray(1)
+    library.alc.capture_samples(None, target, 1)
+    assert target == b"\x7f"
+
+
 def test_python_command_namespace_encodes_strings_and_attribute_lists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -683,40 +738,65 @@ def test_generated_object_properties_dispatch_and_convert(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[object, ...]] = []
+    active_contexts: list[object | None] = []
+    current_context: object | None = 0x2000
+
+    def get_current_context() -> object | None:
+        return current_context
+
+    def make_context_current(context: object | None) -> bytes:
+        nonlocal current_context
+        current_context = context
+        return b"\x01"
 
     def set_float(source: int, parameter: int, value: float) -> None:
+        active_contexts.append(current_context)
         calls.append(("set-float", source, parameter, value))
 
     def get_float(source: int, parameter: int, output: object) -> None:
+        active_contexts.append(current_context)
         calls.append(("get-float", source, parameter))
         cast(Any, output)[0] = 1.5
 
     def set_integer(source: int, parameter: int, value: int) -> None:
+        active_contexts.append(current_context)
         calls.append(("set-int", source, parameter, value))
 
     def get_integer(source: int, parameter: int, output: object) -> None:
+        active_contexts.append(current_context)
         calls.append(("get-int", source, parameter))
         cast(Any, output)[0] = 42
 
     library = make_library(
         monkeypatch,
         {
+            "alcGetCurrentContext": FakePrototype(get_current_context),
+            "alcMakeContextCurrent": FakePrototype(make_context_current),
             "alSourcef": FakePrototype(set_float),
             "alGetSourcef": FakePrototype(get_float),
             "alSourcei": FakePrototype(set_integer),
             "alGetSourcei": FakePrototype(get_integer),
         },
     )
-    source = library.al.source(7)
+    device = bindings.PlaybackDevice(library, 0x3000)
+    context = bindings.Context(device, 0x1000)
+    other_context = bindings.Context(device, 0x2000)
+    source = context.source(7)
 
     source.pitch = 1.25
     assert source.pitch == 1.5
     related_buffer = source.buffer
     assert related_buffer is not None
+    assert related_buffer.context is context
     assert related_buffer.identifier == 42
-    source.buffer = library.al.buffer(9)
+    source.buffer = context.buffer(9)
+    with pytest.raises(bindings.ContextMismatchError, match="different contexts"):
+        source.buffer = other_context.buffer(10)
     with pytest.raises(AttributeError, match="read-only"):
         source.state = 0  # type: ignore[assignment]
+
+    assert current_context == 0x2000
+    assert active_contexts == [0x1000, 0x1000, 0x1000, 0x1000]
 
     assert calls == [
         ("set-float", 7, 0x1003, 1.25),
@@ -724,3 +804,6 @@ def test_generated_object_properties_dispatch_and_convert(
         ("get-int", 7, 0x1009),
         ("set-int", 7, 0x1009, 9),
     ]
+
+    with pytest.raises(TypeError, match="owned OpenAL Context"):
+        bindings.Source(library, 7)  # type: ignore[arg-type]

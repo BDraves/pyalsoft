@@ -26,7 +26,11 @@ if TYPE_CHECKING:
     from pyalsoft.bindings._generated.extensions import ExtensionCapabilities
 
 type ForeignFunction = Callable[..., Any]
+"""A generated ``ctypes`` callable for one raw OpenAL command."""
+
 type LibraryPath = str | os.PathLike[str]
+"""A string or path-like location of an OpenAL shared library."""
+
 type _FunctionScope = tuple[str, int] | None
 type _ExtensionFunctionKey = tuple[str, _FunctionScope, str, bool]
 
@@ -173,9 +177,28 @@ class OpenALLibrary:
     """A loaded OpenAL library with typed core and extension functions.
 
     Core functions and their generated signatures are bound lazily. AL extension
-    functions are resolved for the current context. ALC extension functions are
-    resolved for the device supplied to :meth:`get_function` or
-    :meth:`get_alc_extension`.
+    functions are resolved for the current context; ALC extension functions are
+    resolved for the device supplied to ``get_function`` or ``get_alc_extension``.
+    Resolved entry points are cached by native context or device scope.
+
+    Prefer [`load`][pyalsoft.bindings.load] unless direct construction is useful.
+    A loaded library does not itself own devices or contexts and has no close
+    operation.
+
+    Args:
+        path: Explicit shared-library path. ``None`` searches the bundled runtime,
+            platform discovery results, and conventional OpenAL library names.
+
+    Attributes:
+        library_name: Path or loader name used to open the native library.
+        native_library: Underlying ``ctypes.CDLL`` instance.
+        al: Generated Python-value wrappers for AL commands and objects.
+        alc: Generated Python-value wrappers for ALC commands.
+        extensions: Generated mapping and attributes for registry extensions.
+
+    Raises:
+        TypeError: ``path`` is not string or path-like.
+        LibraryNotFoundError: No usable library could be loaded.
     """
 
     def __init__(self, path: LibraryPath | None = None) -> None:
@@ -190,13 +213,18 @@ class OpenALLibrary:
 
     @property
     def native_library(self) -> Any:
-        """The underlying :class:`ctypes.CDLL` instance."""
+        """The underlying ``ctypes.CDLL`` instance."""
 
         return self._handle
 
     @property
     def al(self) -> ALCommands:
-        """Python-value wrappers for AL commands and typed AL objects."""
+        """Python-value wrappers for AL commands and typed AL objects.
+
+        Core commands are available immediately. Calling extension commands may
+        require a current context and raises an extension-resolution error when
+        the entry point is unavailable.
+        """
 
         if self._al_commands is None:
             from pyalsoft.bindings._generated.commands import ALCommands
@@ -216,7 +244,11 @@ class OpenALLibrary:
 
     @property
     def extensions(self) -> ExtensionCapabilities:
-        """Generated capability objects for all registry extensions."""
+        """Generated capability objects for all registry extensions.
+
+        Capabilities support mapping lookup by registry name and generated
+        snake-case attributes such as ``alc_ext_efx``.
+        """
 
         if self._extension_capabilities is None:
             from pyalsoft.bindings._generated.extensions import ExtensionCapabilities
@@ -225,7 +257,18 @@ class OpenALLibrary:
         return self._extension_capabilities
 
     def get_export(self, name: str) -> ForeignFunction:
-        """Return a directly exported command without checking extensions."""
+        """Return a directly exported command without checking extensions.
+
+        Args:
+            name: Exact C command name present in the generated registry.
+
+        Returns:
+            A cached ``ctypes`` callable with the generated prototype.
+
+        Raises:
+            FunctionUnavailableError: ``name`` is unknown, is extension-only, or
+                is not exported by the loaded library.
+        """
 
         if name not in PROTOTYPES:
             raise FunctionUnavailableError(f"unknown OpenAL command {name!r}")
@@ -266,7 +309,28 @@ class OpenALLibrary:
         *,
         event_types: Sequence[int] = (),
     ) -> CallbackRegistration:
-        """Register and retain the global ``ALC_SOFT_system_events`` callback."""
+        """Register and retain the global ``ALC_SOFT_system_events`` callback.
+
+        Only one registration may be active for the same loaded native library;
+        registering another closes the previous one. The callback can run on a
+        background system thread and receives ``(event_type, device_type,
+        device_handle, message)``. It must return promptly and must not call AL or
+        ALC functions. Python exceptions are retained by the returned registration.
+
+        Args:
+            callback: Function invoked for each enabled system event. A null native
+                device pointer is delivered as ``None``.
+            event_types: Registry event-type values to enable. An empty sequence
+                installs the callback without explicitly enabling event types.
+
+        Returns:
+            Owned registration that keeps the native trampoline alive.
+
+        Raises:
+            TypeError: ``callback`` is not callable or an event type is not integer-like.
+            ExtensionUnavailableError: ``ALC_SOFT_system_events`` is unavailable.
+            CallbackControlError: OpenAL cannot enable the requested event types.
+        """
 
         from pyalsoft.bindings._alc import _register_system_event_callback
 
@@ -277,7 +341,16 @@ class OpenALLibrary:
         )
 
     def clear_system_event_callback(self) -> None:
-        """Disable events and remove this native library's global callback."""
+        """Disable events and remove this native library's global callback.
+
+        Calling this without an active registration is harmless. Callback errors
+        retained during unregistration remain available on a registration held by
+        the caller.
+
+        Raises:
+            CallbackControlError: Called from the active callback or while its
+                registration close is already in progress on this thread.
+        """
 
         from pyalsoft.bindings._alc import _clear_system_event_callback
 
@@ -326,7 +399,19 @@ class OpenALLibrary:
         return device
 
     def is_al_extension_present(self, extension: str) -> bool:
-        """Check an AL extension against the current context."""
+        """Check an AL extension against the current context.
+
+        Args:
+            extension: ASCII registry extension name.
+
+        Returns:
+            Whether the current context reports the extension.
+
+        Raises:
+            ValueError: ``extension`` contains non-ASCII characters.
+            ContextRequiredError: No AL context is current.
+            FunctionUnavailableError: A required core query is unavailable.
+        """
 
         self._require_current_context()
         function = self.get_export("alIsExtensionPresent")
@@ -336,7 +421,20 @@ class OpenALLibrary:
     def is_alc_extension_present(
         self, extension: str, device: object | None = None
     ) -> bool:
-        """Check an ALC extension for *device* (or the null device)."""
+        """Check an ALC extension for a device or the null-device scope.
+
+        Args:
+            extension: ASCII registry extension name.
+            device: Native ALC device handle. ``None`` queries null-device
+                extensions.
+
+        Returns:
+            Whether the selected ALC scope reports the extension.
+
+        Raises:
+            ValueError: ``extension`` contains non-ASCII characters.
+            FunctionUnavailableError: The required core query is unavailable.
+        """
 
         function = self.get_export("alcIsExtensionPresent")
         result = cast(
@@ -383,7 +481,29 @@ class OpenALLibrary:
         device: object | None = None,
         check_extension: bool = True,
     ) -> ForeignFunction:
-        """Resolve and cache an AL extension for the effective context."""
+        """Resolve and cache an AL extension command for the effective scope.
+
+        AL-only commands use the current context. Commands from extensions that
+        also expose ALC entry points can instead use an explicit device, which is
+        required by direct-context APIs.
+
+        Args:
+            name: Exact C name of an AL extension command.
+            device: Optional native ALC device used by dual-API extensions.
+            check_extension: Verify that the effective context or device reports
+                the declaring extension before resolving the entry point.
+
+        Returns:
+            A cached ``ctypes`` callable with the generated prototype.
+
+        Raises:
+            ValueError: ``name`` contains non-ASCII characters.
+            ContextRequiredError: Resolution requires a context or device that was
+                not supplied.
+            ExtensionUnavailableError: The declaring extension is not present.
+            FunctionUnavailableError: The name, namespace, or native entry point
+                is invalid or unavailable.
+        """
 
         with self._context_lock:
             return self._get_al_extension(
@@ -469,7 +589,25 @@ class OpenALLibrary:
         *,
         check_extension: bool = True,
     ) -> ForeignFunction:
-        """Resolve and cache an ALC extension for *device*."""
+        """Resolve and cache an ALC extension command for a device scope.
+
+        Args:
+            name: Exact C name of an ALC extension command.
+            device: Native ALC device handle, or ``None`` for the null-device scope.
+            check_extension: Verify that the effective scope reports the declaring
+                extension before resolving the entry point.
+
+        Returns:
+            A cached ``ctypes`` callable with the generated prototype.
+
+        Raises:
+            ValueError: ``name`` contains non-ASCII characters.
+            ContextRequiredError: An AL-side extension check requires a current
+                context.
+            ExtensionUnavailableError: The declaring extension is not present.
+            FunctionUnavailableError: The name, namespace, or native entry point
+                is invalid or unavailable.
+        """
 
         with self._context_lock:
             return self._get_alc_extension(
@@ -525,7 +663,27 @@ class OpenALLibrary:
         device: object | None = None,
         check_extension: bool = True,
     ) -> ForeignFunction:
-        """Return a typed core or extension function by its C command name."""
+        """Return a typed core or extension function by its C command name.
+
+        Direct exports use ``get_export``. Extension commands are routed to the
+        AL or ALC resolver according to generated registry metadata.
+
+        Args:
+            name: Exact C command name.
+            device: Native ALC device handle used for device-scoped resolution.
+            check_extension: Verify extension availability before resolving an
+                extension entry point.
+
+        Returns:
+            A cached ``ctypes`` callable with the generated prototype.
+
+        Raises:
+            ContextRequiredError: Resolution requires a current AL context.
+            ExtensionUnavailableError: The command's extension is not present.
+            FunctionUnavailableError: ``name`` is unknown or its entry point is
+                unavailable.
+            ValueError: A command or extension name cannot be ASCII encoded.
+        """
 
         if name not in PROTOTYPES:
             raise FunctionUnavailableError(f"unknown OpenAL command {name!r}")
@@ -581,7 +739,22 @@ class OpenALLibrary:
 
 
 def load(path: LibraryPath | None = None) -> OpenALLibrary:
-    """Load OpenAL and return its typed low-level binding object."""
+    """Load OpenAL and return its typed low-level binding object.
+
+    Each call creates an independent Python binding object and native-library
+    handle. It does not cache a process-wide singleton.
+
+    Args:
+        path: Explicit shared-library path. ``None`` searches the bundled runtime,
+            platform discovery results, and conventional OpenAL library names.
+
+    Returns:
+        Loaded low-level library with lazy command namespaces.
+
+    Raises:
+        TypeError: ``path`` is not string or path-like.
+        LibraryNotFoundError: No usable library could be loaded.
+    """
 
     return OpenALLibrary(path)
 

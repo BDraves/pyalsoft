@@ -146,6 +146,9 @@ class PropertyOverride:
     objects: tuple[str, ...] | None
     value_types: tuple[str, ...] | None
     enum_groups: tuple[str, ...] | None
+    value_groups: tuple[str, ...] | None
+    range: str | None
+    default: str | None
     writable: bool | None
     generate: bool
     reason: str | None
@@ -155,6 +158,7 @@ class PropertyOverride:
 class CommandOverride:
     lengths: Mapping[str, str]
     directions: Mapping[str, str]
+    retained: tuple[str, ...]
     string_list_name: str | None
 
 
@@ -196,6 +200,7 @@ class WrapperParameter:
     length: str | None
     group: str | None
     object_class: str | None
+    retained: bool
     visible: bool
 
 

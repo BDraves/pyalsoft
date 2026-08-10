@@ -51,6 +51,7 @@ from pyalsoft.bindings._library import (
     OpenALLibrary,
     load,
 )
+from pyalsoft.bindings._objects import ContextMismatchError
 
 __all__ = [
     *constants.__all__,
@@ -70,6 +71,7 @@ __all__ = [
     "Context",
     "ContextActivationError",
     "ContextCreateError",
+    "ContextMismatchError",
     "ContextRequiredError",
     "Effect",
     "DebugCallback",

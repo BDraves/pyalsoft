@@ -8,7 +8,8 @@
   hiding the underlying native pointers.
 
 The generated API remains available for applications that already manage ALC
-lifetimes themselves.
+lifetimes themselves. The hand-written classes and functions described here are
+listed in the [owned backend API reference](backend-api.md).
 
 ## Playback contexts
 
@@ -25,12 +26,20 @@ with bindings.open_device() as device:
             print(device.name, device.version)
 
             buffer_ids = context.library.al.gen_buffers()
-            # Continue with generated commands or typed AL objects here.
+            buffer = context.buffer(buffer_ids[0])
+            print(buffer.frequency)
 ```
 
 `Context.activate()` restores the previous process-wide context. Pass
 `thread_local=True` to use `ALC_EXT_thread_local_context`; the extension is
 checked before changing thread state.
+
+Typed `Source`, `Buffer`, `Effect`, `Filter`, `AuxiliaryEffectSlot`, and
+`Listener` values are created through `Context` and retain that context's
+identity. Their property descriptors safely activate the owning context and
+reject objects from another context. The generated `library.al` namespace
+continues to expose raw integer commands for applications that deliberately
+manage current-context state themselves.
 
 The native pointers are available as `device.handle` and `context.handle` for
 generated commands that do not yet have a convenience method. Accessing either
@@ -213,4 +222,8 @@ Writable buffers are borrowed and pinned against resizing; read-only buffers
 receive a retained native copy. The storage is released after the context is
 destroyed. Raw callback, foldback, direct-context, and static-buffer commands
 remain available through the generated namespaces, but callers using those
-commands own every associated callback and backing-storage lifetime.
+commands own every associated callback and backing-storage lifetime. Generated
+static-buffer commands borrow the exact address of a writable buffer or ctypes
+allocation; keep that storage alive and do not resize it while OpenAL may use
+the buffer. Use `Context.set_static_buffer_data` when the binding should manage
+that lifetime or when the input is immutable.

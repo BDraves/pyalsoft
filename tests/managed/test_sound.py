@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-import pyalsoft._playback as playback
+import pyalsoft._managed.sound as sound_module
 from pyalsoft import (
     PCM,
     Acoustics,
@@ -23,22 +23,26 @@ from pyalsoft import (
     PlayingSound,
     Reverb,
     SampleType,
+    SoundCacheInfo,
     SoundEndReason,
     VoiceConfig,
     VoiceState,
     bindings,
+    clear_sound_cache,
     get_acoustics,
     get_listener,
+    get_sound_cache_info,
     get_sound_info,
     open_playback,
     play,
     set_acoustics,
     set_listener,
+    set_sound_cache_limit,
     shutdown,
     update_acoustics,
     update_listener,
 )
-from tests.test_playback import FakeLibrary, as_library
+from tests._support.managed_backend import FakeLibrary, as_library
 
 
 def _write_wave(
@@ -64,7 +68,7 @@ def default_library(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeLibrary]:
     shutdown()
     library = FakeLibrary()
     monkeypatch.setattr(
-        playback,
+        sound_module,
         "open_playback",
         lambda: open_playback(library=as_library(library)),
     )
@@ -471,6 +475,34 @@ def test_get_sound_info_reads_only_the_wave_header(
     assert info.sample_type is SampleType.INT16
 
 
+def test_missing_wave_uses_managed_audio_file_errors(
+    tmp_path: Path,
+    default_library: FakeLibrary,
+) -> None:
+    path = tmp_path / "missing.wav"
+
+    with pytest.raises(AudioFileError, match="could not read WAV"):
+        get_sound_info(path)
+    with pytest.raises(AudioFileError, match="could not read WAV"):
+        play(path)
+
+    assert default_library.alc.current_context is default_library.alc.previous_context
+
+
+def test_truncated_wave_data_is_rejected_before_opening_the_device(
+    tmp_path: Path,
+    default_library: FakeLibrary,
+) -> None:
+    path = tmp_path / "truncated.wav"
+    _write_wave(path)
+    path.write_bytes(path.read_bytes()[:-2])
+
+    with pytest.raises(AudioFileError, match="truncated WAV"):
+        play(path)
+
+    assert default_library.alc.current_context is default_library.alc.previous_context
+
+
 def test_ignored_handle_keeps_playing_and_finished_voices_are_reaped(
     tmp_path: Path,
     default_library: FakeLibrary,
@@ -488,6 +520,112 @@ def test_ignored_handle_keeps_playing_and_finished_voices_are_reaped(
     assert default_library.al.states == {101: bindings.AL_PLAYING}
     assert second.playing
     assert default_library.al.allocated_buffers == {1}
+
+
+def test_sound_cache_configuration_is_validated_and_observable(
+    default_library: FakeLibrary,
+) -> None:
+    del default_library
+
+    assert get_sound_cache_info() == SoundCacheInfo(
+        max_bytes=64 * 1024 * 1024,
+        current_bytes=0,
+        clip_count=0,
+        active_clip_count=0,
+        pending_eviction_count=0,
+    )
+    with pytest.raises(TypeError, match="integer or None"):
+        set_sound_cache_limit(True)
+    with pytest.raises(TypeError, match="integer or None"):
+        set_sound_cache_limit(1.0)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="cannot be negative"):
+        set_sound_cache_limit(-1)
+    with pytest.raises(TypeError, match="path to a WAV file or None"):
+        clear_sound_cache(1)  # type: ignore[arg-type]
+
+    set_sound_cache_limit(None)
+
+    assert get_sound_cache_info().max_bytes is None
+
+
+def test_sound_cache_temporarily_exceeds_budget_for_active_clips(
+    tmp_path: Path,
+    default_library: FakeLibrary,
+) -> None:
+    first_path = tmp_path / "first.wav"
+    second_path = tmp_path / "second.wav"
+    _write_wave(first_path)
+    _write_wave(second_path)
+    set_sound_cache_limit(16)
+
+    first = play(first_path)
+    second = play(second_path)
+
+    assert get_sound_cache_info() == SoundCacheInfo(
+        max_bytes=16,
+        current_bytes=32,
+        clip_count=2,
+        active_clip_count=2,
+        pending_eviction_count=0,
+    )
+
+    first.stop()
+
+    assert get_sound_cache_info() == SoundCacheInfo(
+        max_bytes=16,
+        current_bytes=16,
+        clip_count=1,
+        active_clip_count=1,
+        pending_eviction_count=0,
+    )
+    assert default_library.al.allocated_buffers == {2}
+    second.stop()
+
+
+def test_sound_cache_uses_least_recently_used_eviction(
+    tmp_path: Path,
+    default_library: FakeLibrary,
+) -> None:
+    first_path = tmp_path / "first.wav"
+    second_path = tmp_path / "second.wav"
+    _write_wave(first_path)
+    _write_wave(second_path)
+    set_sound_cache_limit(32)
+
+    play(first_path).stop()
+    play(second_path).stop()
+    play(first_path).stop()
+    set_sound_cache_limit(16)
+
+    assert get_sound_cache_info().clip_count == 1
+    assert default_library.al.allocated_buffers == {1}
+    assert clear_sound_cache() == 1
+    assert get_sound_cache_info().current_bytes == 0
+    assert default_library.al.allocated_buffers == set()
+
+
+def test_clearing_an_active_sound_cache_entry_defers_eviction(
+    tmp_path: Path,
+    default_library: FakeLibrary,
+) -> None:
+    path = tmp_path / "active.wav"
+    _write_wave(path)
+    sound = play(path)
+
+    assert clear_sound_cache(path) == 0
+    assert get_sound_cache_info().pending_eviction_count == 1
+    assert default_library.al.allocated_buffers == {1}
+
+    sound.stop()
+
+    assert get_sound_cache_info() == SoundCacheInfo(
+        max_bytes=64 * 1024 * 1024,
+        current_bytes=0,
+        clip_count=0,
+        active_clip_count=0,
+        pending_eviction_count=0,
+    )
+    assert default_library.al.allocated_buffers == set()
 
 
 def test_disconnected_device_is_not_reported_as_natural_completion(

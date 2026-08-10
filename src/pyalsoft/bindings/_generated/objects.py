@@ -287,7 +287,7 @@ class Effect(_objects.ALObject):
         _objects.ALProperty('effect', 'AL_FLANGER_WAVEFORM')
     )
 
-    flanger_phase: _objects.ALProperty[float] = (
+    flanger_phase: _objects.ALProperty[int] = (
         _objects.ALProperty('effect', 'AL_FLANGER_PHASE')
     )
 
@@ -323,7 +323,7 @@ class Effect(_objects.ALObject):
         _objects.ALProperty('effect', 'AL_VOCAL_MORPHER_PHONEMEA')
     )
 
-    vocal_morpher_phonemea_coarse_tuning: _objects.ALProperty[_enums.ALVocalMorpherPhoneme] = (
+    vocal_morpher_phonemea_coarse_tuning: _objects.ALProperty[int] = (
         _objects.ALProperty('effect', 'AL_VOCAL_MORPHER_PHONEMEA_COARSE_TUNING')
     )
 
@@ -331,7 +331,7 @@ class Effect(_objects.ALObject):
         _objects.ALProperty('effect', 'AL_VOCAL_MORPHER_PHONEMEB')
     )
 
-    vocal_morpher_phonemeb_coarse_tuning: _objects.ALProperty[_enums.ALVocalMorpherPhoneme] = (
+    vocal_morpher_phonemeb_coarse_tuning: _objects.ALProperty[int] = (
         _objects.ALProperty('effect', 'AL_VOCAL_MORPHER_PHONEMEB_COARSE_TUNING')
     )
 
@@ -343,11 +343,11 @@ class Effect(_objects.ALObject):
         _objects.ALProperty('effect', 'AL_VOCAL_MORPHER_RATE')
     )
 
-    pitch_shifter_coarse_tune: _objects.ALProperty[float] = (
+    pitch_shifter_coarse_tune: _objects.ALProperty[int] = (
         _objects.ALProperty('effect', 'AL_PITCH_SHIFTER_COARSE_TUNE')
     )
 
-    pitch_shifter_fine_tune: _objects.ALProperty[float] = (
+    pitch_shifter_fine_tune: _objects.ALProperty[int] = (
         _objects.ALProperty('effect', 'AL_PITCH_SHIFTER_FINE_TUNE')
     )
 

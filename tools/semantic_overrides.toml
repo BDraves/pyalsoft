@@ -27,6 +27,36 @@ value_types = ["ALfloat"]
 enum_groups = ["SourceFloat", "SourcePName"]
 reason = "EFX exposes this property through the floating-point source accessors."
 
+[property.AL_FLANGER_PHASE]
+value_types = ["ALint"]
+enum_groups = ["EffectFlanger", "EffectInteger", "EffectPName"]
+reason = "OpenAL Soft implements flanger phase through the integer effect accessors."
+
+[property.AL_VOCAL_MORPHER_PHONEMEA_COARSE_TUNING]
+value_types = ["ALint"]
+value_groups = []
+range = "-24..=24"
+default = "0"
+reason = "Coarse tuning is a signed semitone offset, not a phoneme enumeration."
+
+[property.AL_VOCAL_MORPHER_PHONEMEB_COARSE_TUNING]
+value_types = ["ALint"]
+value_groups = []
+range = "-24..=24"
+default = "0"
+reason = "Coarse tuning is a signed semitone offset, not a phoneme enumeration."
+
+[property.AL_PITCH_SHIFTER_COARSE_TUNE]
+value_types = ["ALint"]
+enum_groups = ["EffectPitchShifter", "EffectInteger", "EffectPName"]
+reason = "OpenAL Soft implements pitch-shifter coarse tune through the integer effect accessors."
+
+[property.AL_PITCH_SHIFTER_FINE_TUNE]
+value_types = ["ALint"]
+enum_groups = ["EffectPitchShifter", "EffectInteger", "EffectPName"]
+range = "-50..=50"
+reason = "OpenAL Soft implements fine tune as an integer cent offset in the range -50 through 50."
+
 [property.AL_STEREO_ANGLES]
 value_types = ["ALfloat[2]"]
 reason = "The extension reads and writes a left/right angle pair."
@@ -121,18 +151,43 @@ lengths = { buffers = "nb" }
 # to allocate and return.
 [command.alBufferDataStatic]
 directions = { data = "in" }
+retained = ["data"]
 
 [command.alBufferDataStaticDirect]
 directions = { data = "in" }
+retained = ["data"]
+
+[command.alEventCallbackSOFT]
+retained = ["userParam"]
+
+[command.alBufferCallbackSOFT]
+retained = ["userptr"]
+
+[command.alDebugMessageCallbackEXT]
+retained = ["userParam"]
+
+[command.alDebugMessageCallbackDirectEXT]
+retained = ["userParam"]
+
+[command.alEventCallbackDirectSOFT]
+retained = ["userParam"]
+
+[command.alBufferCallbackDirectSOFT]
+retained = ["userptr"]
+
+[command.alcEventCallbackSOFT]
+retained = ["userParam"]
 
 [command.alGetBufferSamplesSOFT]
 directions = { data = "inout" }
 
 [command.alRequestFoldbackStart]
 directions = { mem = "inout" }
+retained = ["mem"]
 
 [command.alRequestFoldbackStartDirect]
 directions = { mem = "inout" }
+retained = ["mem"]
 
 [command.alcCaptureSamples]
 directions = { buffer = "inout" }

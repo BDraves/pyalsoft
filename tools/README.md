@@ -9,6 +9,7 @@ effects; shared implementation belongs in importable modules below them.
 | Entry point | Purpose | Side effects |
 | --- | --- | --- |
 | `generate_bindings.py` | Parse `al.xml` and generate typed bindings, metadata, and reference documentation. | Writes generated Python, `docs/reference.md`, and the README version badge unless `--check` is used. |
+| `changelog.py` | Extract one version's notes from `CHANGELOG.md` for publication. | Read-only; writes the selected notes to standard output. |
 | `sync_openal_soft.py` | Verify or download the pinned OpenAL Soft registry, source archive, Windows runtime, and licenses. | `--check` is read-only; the default mode uses the network and updates `vendor/openal-soft`. |
 | `build_openal_soft.py` | Build or stage the native runtime for the current platform. | Extracts and compiles under `build/`; `PYALSOFT_NATIVE_ROOT` can redirect the staged runtime. |
 | `smoke_test_runtime.py` | Exercise device/context creation using the runtime contained in an installed wheel. | Opens the OpenAL null device. |

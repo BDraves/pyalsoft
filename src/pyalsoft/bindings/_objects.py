@@ -12,7 +12,7 @@ from pyalsoft.bindings._generated.semantics import OBJECT_PROPERTIES_BY_KEY
 from pyalsoft.bindings._specs import ObjectPropertySpec
 
 if TYPE_CHECKING:
-    from pyalsoft.bindings._library import OpenALLibrary
+    from pyalsoft.bindings._alc import Context
 
 _RANGE = re.compile(
     r"(?P<minimum>-?(?:\d+(?:\.\d*)?|\.\d+))?\.\.(?P<inclusive>=)?"
@@ -49,17 +49,24 @@ def _property_ctype(base: str) -> Any:
     return getattr(_types, base)
 
 
-def _unwrap(value: object) -> object:
-    identifier = getattr(value, "identifier", None)
-    return identifier if isinstance(identifier, int) else value
+class ContextMismatchError(ValueError):
+    """Raised when typed AL objects from different contexts are combined."""
+
+
+def _unwrap(context: Context, value: object) -> object:
+    if isinstance(value, ALObject):
+        if value.context is not context:
+            raise ContextMismatchError("OpenAL objects belong to different contexts")
+        return value.identifier
+    return value
 
 
 def _convert_boolean(value: object) -> bytes:
     return b"\x01" if bool(value) else b"\x00"
 
 
-def _convert_value(base: str, value: object) -> object:
-    value = _unwrap(value)
+def _convert_value(context: Context, base: str, value: object) -> object:
+    value = _unwrap(context, value)
     if base == "ALboolean":
         return int(bool(value))
     return value
@@ -75,7 +82,7 @@ def _enum_value(spec: ObjectPropertySpec, value: int) -> object:
         return value
 
 
-def _wrap_object(library: OpenALLibrary, object_name: str, value: int) -> object:
+def _wrap_object(context: Context, object_name: str, value: int) -> object:
     if value == 0:
         return None
     from pyalsoft.bindings._generated import objects
@@ -87,11 +94,11 @@ def _wrap_object(library: OpenALLibrary, object_name: str, value: int) -> object
         "filter": objects.Filter,
         "auxiliary effect slot": objects.AuxiliaryEffectSlot,
     }
-    return classes[object_name](library, value)
+    return classes[object_name](context, value)
 
 
 def _convert_result(
-    library: OpenALLibrary,
+    context: Context,
     spec: ObjectPropertySpec,
     base: str,
     value: object,
@@ -103,7 +110,7 @@ def _convert_result(
     if spec.object_class is not None:
         if not isinstance(integer, int):
             raise TypeError(f"{spec.enum_name} did not return an integer object ID")
-        return _wrap_object(library, spec.object_class, integer)
+        return _wrap_object(context, spec.object_class, integer)
     if spec.enum_type is not None:
         if not isinstance(integer, int):
             raise TypeError(f"{spec.enum_name} did not return an enum integer")
@@ -134,14 +141,22 @@ def _validate_range(spec: ObjectPropertySpec, value: object) -> None:
 
 
 class ALObject:
-    """Base for a generated integer OpenAL object handle."""
+    """Base for a generated context-affine integer OpenAL object handle."""
 
     object_name: str
 
-    def __init__(self, library: OpenALLibrary, identifier: int) -> None:
+    def __init__(self, context: Context, identifier: int) -> None:
+        from pyalsoft.bindings._alc import Context
+
+        if not isinstance(context, Context):
+            raise TypeError("context must be an owned OpenAL Context")
+        _ = context.handle
+        if isinstance(identifier, bool) or not isinstance(identifier, int):
+            raise TypeError("OpenAL object identifiers must be integers")
         if identifier < 0:
             raise ValueError("OpenAL object identifiers cannot be negative")
-        self.library = library
+        self.context = context
+        self.library = context.library
         self.identifier = identifier
 
     def __int__(self) -> int:
@@ -149,7 +164,7 @@ class ALObject:
 
     def __repr__(self) -> str:
         return (
-            f"{type(self).__name__}(library={self.library!r}, "
+            f"{type(self).__name__}(context={self.context!r}, "
             f"identifier={self.identifier})"
         )
 
@@ -159,8 +174,14 @@ class ALSingletonObject:
 
     object_name: str
 
-    def __init__(self, library: OpenALLibrary) -> None:
-        self.library = library
+    def __init__(self, context: Context) -> None:
+        from pyalsoft.bindings._alc import Context
+
+        if not isinstance(context, Context):
+            raise TypeError("context must be an owned OpenAL Context")
+        _ = context.handle
+        self.context = context
+        self.library = context.library
 
 
 class ALProperty[T]:
@@ -194,10 +215,12 @@ class ALProperty[T]:
         if isinstance(instance, ALObject):
             arguments.append(instance.identifier)
         arguments.extend((getattr(_constants, self.spec.enum_name), output))
-        instance.library.get_function(self.spec.getter)(*arguments)
-        converted = tuple(
-            _convert_result(instance.library, self.spec, base, item) for item in output
-        )
+        with instance.context.activate():
+            instance.library.get_function(self.spec.getter)(*arguments)
+            converted = tuple(
+                _convert_result(instance.context, self.spec, base, item)
+                for item in output
+            )
         return converted if arity is not None else converted[0]  # type: ignore[return-value]
 
     def __set__(self, instance: ALObject | ALSingletonObject, value: T) -> None:
@@ -210,7 +233,7 @@ class ALProperty[T]:
             arguments.append(instance.identifier)
         arguments.append(getattr(_constants, self.spec.enum_name))
         if arity is None:
-            arguments.append(_convert_value(base, value))
+            arguments.append(_convert_value(instance.context, base, value))
         else:
             if not isinstance(value, tuple) or len(value) != arity:
                 raise TypeError(
@@ -218,9 +241,17 @@ class ALProperty[T]:
                 )
             ctype = _property_ctype(base)
             arguments.append(
-                (ctype * arity)(*(_convert_value(base, item) for item in value))
+                (ctype * arity)(
+                    *(_convert_value(instance.context, base, item) for item in value)
+                )
             )
-        instance.library.get_function(self.spec.setter)(*arguments)
+        with instance.context.activate():
+            instance.library.get_function(self.spec.setter)(*arguments)
 
 
-__all__ = ["ALObject", "ALProperty", "ALSingletonObject"]
+__all__ = [
+    "ALObject",
+    "ALProperty",
+    "ALSingletonObject",
+    "ContextMismatchError",
+]

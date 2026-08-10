@@ -36,12 +36,15 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --locked --no-install-project --python 3.12
+        run: uv sync --locked --no-install-project --python 3.12 --group docs
 
       - name: Check generated files
         run: |
           uv run --no-sync python tools/generate_bindings.py --check
           uv run --no-sync python tools/sync_openal_soft.py --check
+
+      - name: Build documentation
+        run: uv run --no-sync mkdocs build --strict
 
       - name: Lint
         run: uv run --no-sync ruff check .
@@ -51,6 +54,13 @@ jobs:
 
       - name: Type check
         run: uv run --no-sync mypy
+
+      - name: Measure handwritten branch coverage
+        env:
+          PYTHONPATH: src
+        run: |
+          uv run --no-sync coverage run -m pytest -m "not integration"
+          uv run --no-sync coverage report
 
       - name: Build source distribution
         run: uv build --sdist --no-sources
@@ -95,7 +105,19 @@ jobs:
       - name: Test
         env:
           PYTHONPATH: src
-        run: uv run --no-sync pytest
+        run: uv run --no-sync pytest -m "not integration"
+
+      - name: Test checked-in Windows OpenAL runtime
+        if: runner.os == 'Windows'
+        env:
+          ALSOFT_DRIVERS: "null"
+          PYTHONPATH: src
+          PYALSOFT_RUN_SYSTEM_TESTS: "1"
+          PYALSOFT_TEST_LIBRARY: ${{ github.workspace }}\vendor\openal-soft\runtime\win_amd64\soft_oal.dll
+        run: >-
+          uv run --no-sync pytest
+          tests/test_bundled_runtime.py
+          tests/test_system_runtime.py
 
       - name: Install OpenAL Soft on Linux
         if: runner.os == 'Linux' && matrix.python-version == '3.14'

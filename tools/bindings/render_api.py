@@ -79,7 +79,8 @@ def _render_wrapper_parameter(parameter: WrapperParameter) -> str:
         "WrapperParameterSpec("
         f"{parameter.name!r}, {parameter.python_name!r}, {parameter.c_type!r}, "
         f"{parameter.direction!r}, {parameter.length!r}, {parameter.group!r}, "
-        f"{parameter.object_class!r}, {parameter.visible!r})"
+        f"{parameter.object_class!r}, {parameter.retained!r}, "
+        f"{parameter.visible!r})"
     )
 
 
@@ -208,6 +209,10 @@ def _wrapper_input_annotation(
     scalar = _python_scalar_annotation(
         base, namespace, parameter.group, group_names, function_pointers
     )
+    if (parameter.direction == "inout" or parameter.retained) and (
+        base in {"void", "ALvoid", "ALCvoid"} or base.startswith("struct ")
+    ):
+        return "_api.WritableBuffer | object"
     if parameter.direction == "inout":
         return "object"
     if pointer_depth == 0 or (
@@ -401,6 +406,7 @@ def render_python_commands(
             "from pyalsoft.bindings._generated import types as _types",
             "",
             "if TYPE_CHECKING:",
+            "    from pyalsoft.bindings._alc import Context",
             "    from pyalsoft.bindings._generated.objects import (",
             "        AuxiliaryEffectSlot,",
             "        Buffer,",
@@ -425,48 +431,49 @@ def render_python_commands(
             )
     lines.extend(
         [
-            "    def source(self, identifier: int) -> Source:",
-            '        """Wrap an existing source identifier."""',
+            "    def source(self, context: Context, identifier: int) -> Source:",
+            '        """Wrap a source identifier for an owned context."""',
             "",
             "        from pyalsoft.bindings._generated.objects import Source",
             "",
-            "        return Source(self.library, identifier)",
+            "        return Source(context, identifier)",
             "",
-            "    def buffer(self, identifier: int) -> Buffer:",
-            '        """Wrap an existing buffer identifier."""',
+            "    def buffer(self, context: Context, identifier: int) -> Buffer:",
+            '        """Wrap a buffer identifier for an owned context."""',
             "",
             "        from pyalsoft.bindings._generated.objects import Buffer",
             "",
-            "        return Buffer(self.library, identifier)",
+            "        return Buffer(context, identifier)",
             "",
-            "    def effect(self, identifier: int) -> Effect:",
-            '        """Wrap an existing effect identifier."""',
+            "    def effect(self, context: Context, identifier: int) -> Effect:",
+            '        """Wrap an effect identifier for an owned context."""',
             "",
             "        from pyalsoft.bindings._generated.objects import Effect",
             "",
-            "        return Effect(self.library, identifier)",
+            "        return Effect(context, identifier)",
             "",
-            "    def filter(self, identifier: int) -> Filter:",
-            '        """Wrap an existing filter identifier."""',
+            "    def filter(self, context: Context, identifier: int) -> Filter:",
+            '        """Wrap a filter identifier for an owned context."""',
             "",
             "        from pyalsoft.bindings._generated.objects import Filter",
             "",
-            "        return Filter(self.library, identifier)",
+            "        return Filter(context, identifier)",
             "",
-            "    def auxiliary_effect_slot(self, identifier: int) -> AuxiliaryEffectSlot:",
-            '        """Wrap an existing auxiliary effect slot identifier."""',
+            "    def auxiliary_effect_slot(",
+            "        self, context: Context, identifier: int",
+            "    ) -> AuxiliaryEffectSlot:",
+            '        """Wrap an auxiliary effect slot identifier for a context."""',
             "",
             "        from pyalsoft.bindings._generated.objects import AuxiliaryEffectSlot",
             "",
-            "        return AuxiliaryEffectSlot(self.library, identifier)",
+            "        return AuxiliaryEffectSlot(context, identifier)",
             "",
-            "    @property",
-            "    def listener(self) -> Listener:",
-            '        """Return the current context\'s singleton listener."""',
+            "    def listener(self, context: Context) -> Listener:",
+            '        """Return an owned context\'s singleton listener."""',
             "",
             "        from pyalsoft.bindings._generated.objects import Listener",
             "",
-            "        return Listener(self.library)",
+            "        return Listener(context)",
             "",
             "",
             "class ALCCommands(_api.CommandNamespace):",
