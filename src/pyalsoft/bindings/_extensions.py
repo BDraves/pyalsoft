@@ -15,7 +15,22 @@ _EXTENSIONS = {item.name: item for item in API_SETS if item.kind == "extension"}
 
 
 class Extension:
-    """Capabilities and runtime access for one registry extension."""
+    """Capabilities and runtime access for one registry extension.
+
+    Do not construct instances directly. Obtain them from
+    ``OpenALLibrary.extensions`` by registry name or generated snake-case
+    attribute. Declaration metadata is available without querying the runtime.
+
+    Attributes:
+        library: Loaded library used for runtime queries and command resolution.
+        name: Registry extension name.
+        apis: API namespaces declared by the extension, such as ``"al"`` or
+            ``"alc"``.
+        commands: Commands declared by all requirements of the extension.
+        enums: Enum names declared by all requirements of the extension.
+        types: C type names declared by all requirements of the extension.
+        dependencies: Non-empty registry dependency expressions.
+    """
 
     def __init__(self, library: OpenALLibrary, spec: ApiSetSpec) -> None:
         self.library = library
@@ -23,14 +38,20 @@ class Extension:
 
     @property
     def name(self) -> str:
+        """Registry extension name."""
+
         return self.spec.name
 
     @property
     def apis(self) -> tuple[str, ...]:
+        """API namespaces declared by this extension."""
+
         return self.spec.apis
 
     @property
     def commands(self) -> tuple[str, ...]:
+        """Command names declared by this extension, without duplicates."""
+
         return tuple(
             dict.fromkeys(
                 member.name
@@ -42,6 +63,8 @@ class Extension:
 
     @property
     def enums(self) -> tuple[str, ...]:
+        """Enum names declared by this extension, without duplicates."""
+
         return tuple(
             dict.fromkeys(
                 member.name
@@ -53,6 +76,8 @@ class Extension:
 
     @property
     def types(self) -> tuple[str, ...]:
+        """C type names declared by this extension, without duplicates."""
+
         return tuple(
             dict.fromkeys(
                 member.name
@@ -64,6 +89,8 @@ class Extension:
 
     @property
     def dependencies(self) -> tuple[str, ...]:
+        """Registry dependency expressions, without duplicates."""
+
         return tuple(
             dict.fromkeys(
                 requirement.depends
@@ -73,14 +100,41 @@ class Extension:
         )
 
     def is_present(self, device: object | None = None) -> bool:
-        """Check whether the extension is available for a context or device."""
+        """Check whether the extension is available for a context or device.
+
+        ALC extensions use ``device`` or the null-device scope. AL extensions use
+        the current context. For dual-API extensions, supplying a device selects
+        the ALC query.
+
+        Args:
+            device: Native ALC device handle, or ``None`` when using the current
+                AL context or null-device scope.
+
+        Returns:
+            Whether the selected runtime scope reports this extension.
+
+        Raises:
+            ContextRequiredError: An AL query has no current context.
+            FunctionUnavailableError: A required core query is unavailable.
+        """
 
         if self.name.startswith("ALC_") or (device is not None and "alc" in self.apis):
             return self.library.is_alc_extension_present(self.name, device)
         return self.library.is_al_extension_present(self.name)
 
     def require(self, device: object | None = None) -> None:
-        """Raise :class:`ExtensionUnavailableError` when unavailable."""
+        """Require this extension for a context or device scope.
+
+        Args:
+            device: Native ALC device handle, or ``None`` when using the current
+                AL context or null-device scope.
+
+        Raises:
+            ContextRequiredError: An AL query has no current context.
+            ExtensionUnavailableError: The selected scope does not report this
+                extension.
+            FunctionUnavailableError: A required core query is unavailable.
+        """
 
         if self.is_present(device):
             return
@@ -93,7 +147,21 @@ class Extension:
     def get_function(
         self, name: str, *, device: object | None = None
     ) -> ForeignFunction:
-        """Resolve a command declared by this extension."""
+        """Resolve a command declared by this extension.
+
+        Args:
+            name: Exact C command name declared by this extension.
+            device: Native ALC device used for device-scoped resolution.
+
+        Returns:
+            Typed, cached native command callable.
+
+        Raises:
+            KeyError: ``name`` is not declared by this extension.
+            ContextRequiredError: Resolution requires a current AL context.
+            ExtensionUnavailableError: This extension is not present.
+            FunctionUnavailableError: The native entry point is unavailable.
+        """
 
         if name not in self.commands:
             raise KeyError(f"{name!r} is not declared by {self.name}")
@@ -104,7 +172,11 @@ class Extension:
 
 
 class ExtensionNamespace(Mapping[str, Extension]):
-    """Mapping base used by the generated extension capability namespace."""
+    """Mapping base used by the generated extension capability namespace.
+
+    Iteration yields every registry extension name. Values are created lazily and
+    cached per loaded library.
+    """
 
     def __init__(self, library: OpenALLibrary) -> None:
         self.library = library

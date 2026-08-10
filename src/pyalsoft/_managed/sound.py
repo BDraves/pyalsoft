@@ -95,7 +95,11 @@ class PlayingSound:
 
     The default playback runtime owns the native resources, so discarding this
     object does not stop the sound. Its methods are convenient delegates to the
-    function-oriented managed API.
+    function-oriented managed API. Handles retain their final status after
+    natural completion, an explicit stop, device loss, or runtime shutdown.
+
+    Do not construct instances directly. Use [`play`][pyalsoft.play] with a WAV
+    path or [`PCM`][pyalsoft.PCM] value.
     """
 
     _runtime: _DefaultRuntime
@@ -173,6 +177,10 @@ class PlayingSound:
 
         In-memory PCM audio has no source path, so querying this property for
         such a sound raises [`AudioError`][pyalsoft.AudioError].
+
+        Raises:
+            AudioError: This sound was created from in-memory PCM rather than a
+                file.
         """
 
         if self._record.path is None:
@@ -404,42 +412,102 @@ class PlayingSound:
         self.set_config(replace(self.config, effect_sends=tuple(value)))
 
     def pause(self) -> None:
-        """Pause the sound if it is currently playing."""
+        """Pause the sound if it is currently playing.
+
+        Calling this when the sound is not currently playing is harmless.
+        """
 
         self._runtime.pause(self._record)
 
     def resume(self) -> None:
-        """Resume the sound if it is paused."""
+        """Resume the sound if it is paused.
+
+        Raises:
+            InvalidVoiceStateError: The sound is not paused.
+        """
 
         self._runtime.resume(self._record)
 
     def stop(self) -> None:
-        """Stop the sound and release its playback voice."""
+        """Stop the sound and release its playback voice.
+
+        Calling this for a terminal sound is harmless. The handle retains its
+        status with an end reason of ``SoundEndReason.STOPPED``.
+        """
 
         self._runtime.stop(self._record)
 
     def seek(self, offset_seconds: float) -> None:
-        """Move the playhead to an offset in source-audio seconds."""
+        """Move the playhead to an offset in source-audio seconds.
+
+        Seeking a terminal sound creates a new voice in the initial state but
+        does not start playback.
+
+        Args:
+            offset_seconds: Finite offset greater than or equal to zero and
+                strictly less than the source duration.
+
+        Raises:
+            TypeError: ``offset_seconds`` is not numeric.
+            ValueError: ``offset_seconds`` is non-finite or outside the source.
+            InvalidVoiceStateError: The convenience runtime has been shut down.
+        """
 
         self._runtime.seek(self._record, offset_seconds)
 
     def seek_frames(self, offset_frames: int) -> None:
-        """Move the playhead to an exact sample-frame offset."""
+        """Move the playhead to an exact sample-frame offset.
+
+        Seeking a terminal sound creates a new voice in the initial state.
+
+        Args:
+            offset_frames: Integer frame index greater than or equal to zero and
+                strictly less than [`frame_count`][pyalsoft.PlayingSound.frame_count].
+
+        Raises:
+            TypeError: ``offset_frames`` is not an integer.
+            ValueError: ``offset_frames`` is outside the source.
+            InvalidVoiceStateError: The convenience runtime has been shut down.
+        """
 
         self._runtime.seek_frames(self._record, offset_frames)
 
     def rewind(self) -> None:
-        """Move the playhead to the beginning and enter the initial state."""
+        """Move the playhead to the beginning and enter the initial state.
+
+        A terminal sound receives a new voice but does not begin playing.
+
+        Raises:
+            InvalidVoiceStateError: The convenience runtime has been shut down.
+        """
 
         self._runtime.rewind(self._record)
 
     def restart(self) -> None:
-        """Start the sound again from its beginning."""
+        """Start the sound again from its beginning.
+
+        A terminal sound receives a new voice and becomes active again.
+
+        Raises:
+            InvalidVoiceStateError: The convenience runtime has been shut down.
+        """
 
         self._runtime.restart(self._record)
 
     def set_config(self, config: VoiceConfig) -> None:
-        """Apply a complete immutable voice configuration."""
+        """Apply a complete immutable voice configuration.
+
+        For a terminal sound, the configuration is stored for a later restart.
+
+        Args:
+            config: Complete replacement configuration.
+
+        Raises:
+            TypeError: ``config`` is not a [`VoiceConfig`][pyalsoft.VoiceConfig].
+            InvalidVoiceStateError: The runtime was shut down while this sound was
+                active.
+            AudioBackendError: OpenAL cannot apply the configuration or EFX.
+        """
 
         self._runtime.set_config(self._record, config)
 
@@ -464,7 +532,41 @@ class PlayingSound:
         filter: Filter | None = _OMITTED_FILTER,
         effect_sends: tuple[EffectSend, ...] | list[EffectSend] | None = None,
     ) -> None:
-        """Validate and apply a batch of partial source-control changes."""
+        """Validate and apply a batch of source-control changes.
+
+        ``None`` leaves most fields unchanged. ``filter`` is the exception:
+        passing ``None`` removes the direct filter, while omitting it leaves the
+        filter unchanged. Pass an empty ``effect_sends`` sequence to remove all
+        auxiliary routes. Changes are stored for later restart when the sound is
+        terminal.
+
+        Args:
+            position: New 3D position.
+            velocity: New velocity used for Doppler shift.
+            direction: New attenuation-cone direction.
+            gain: New non-negative linear gain.
+            pitch: New playback-rate multiplier from 0.5 through 2.0.
+            looping: Whether the source repeats.
+            relative: Whether coordinates are listener-relative.
+            min_gain: New lower gain clamp.
+            max_gain: New upper gain clamp.
+            reference_distance: New distance with unity attenuation.
+            max_distance: New outer distance for clamped models.
+            rolloff_factor: New distance-attenuation multiplier.
+            cone_inner_angle: New full inner cone angle in degrees.
+            cone_outer_angle: New full outer cone angle in degrees.
+            cone_outer_gain: New gain outside the outer cone.
+            filter: Replacement direct EFX filter, or ``None`` to remove it.
+            effect_sends: Replacement auxiliary routes; an empty sequence removes
+                them all.
+
+        Raises:
+            TypeError: A value has the wrong type.
+            ValueError: A value is non-finite or outside its supported range.
+            InvalidVoiceStateError: The runtime was shut down while this sound was
+                active.
+            AudioBackendError: OpenAL cannot apply the configuration or EFX.
+        """
 
         self._runtime.update(
             self._record,
@@ -544,7 +646,22 @@ def _read_wave(path: Path) -> PCM:
 
 
 def get_sound_info(path: AudioPath) -> SoundInfo:
-    """Read WAV format and length information without opening an audio device."""
+    """Read WAV format and length information without opening an audio device.
+
+    The managed file API accepts uncompressed mono or stereo WAV files containing
+    unsigned 8-bit or signed 16-bit PCM and at least one complete frame.
+
+    Args:
+        path: Path to the WAV file. User-directory markers are expanded and the
+            path is resolved before reading.
+
+    Returns:
+        Validated channel layout, sample rate, sample type, and length.
+
+    Raises:
+        TypeError: ``path`` is not string or path-like.
+        AudioFileError: The file cannot be read or uses an unsupported WAV format.
+    """
 
     if not isinstance(path, (str, PathLike)):
         raise TypeError("sound must be a path to a WAV file")
@@ -1078,7 +1195,20 @@ def _get_default_runtime() -> _DefaultRuntime:
 
 
 def set_sound_cache_limit(max_bytes: int | None) -> None:
-    """Set the implicit file cache byte budget, or ``None`` for no limit."""
+    """Set the convenience runtime's file-cache byte budget.
+
+    The default budget is 64 MiB. Reducing it immediately evicts least-recently
+    used clips that are not attached to active sounds. Active clips remain pinned
+    and may temporarily keep the cache over budget.
+
+    Args:
+        max_bytes: Non-negative byte budget, or ``None`` for no limit. Zero
+            disables retention of inactive file clips.
+
+    Raises:
+        TypeError: ``max_bytes`` is not an integer or ``None``.
+        ValueError: ``max_bytes`` is negative.
+    """
 
     if max_bytes is not None:
         if isinstance(max_bytes, bool) or not isinstance(max_bytes, int):
@@ -1089,7 +1219,21 @@ def set_sound_cache_limit(max_bytes: int | None) -> None:
 
 
 def clear_sound_cache(path: AudioPath | None = None) -> int:
-    """Evict cached file clips, deferring active entries until they finish."""
+    """Evict file clips from the convenience runtime's cache.
+
+    Clips attached to active sounds are marked for later eviction and are not
+    included in the returned count. In-memory PCM passed to
+    [`play`][pyalsoft.play] is never part of this cache.
+
+    Args:
+        path: Specific WAV path to evict. ``None`` targets every cached file.
+
+    Returns:
+        Number of clips evicted immediately.
+
+    Raises:
+        TypeError: ``path`` is neither path-like nor ``None``.
+    """
 
     normalized: Path | None = None
     if path is not None:
@@ -1100,7 +1244,14 @@ def clear_sound_cache(path: AudioPath | None = None) -> int:
 
 
 def get_sound_cache_info() -> SoundCacheInfo:
-    """Return byte usage and activity for the implicit file cache."""
+    """Return byte usage and activity for the convenience file cache.
+
+    Querying cache state also reaps sounds that have completed and performs any
+    deferred or budget-driven evictions.
+
+    Returns:
+        Current budget, byte use, clip counts, and pending-eviction count.
+    """
 
     return _get_default_runtime().cache_info()
 
@@ -1116,7 +1267,22 @@ def set_listener(listener: Listener, /) -> None: ...
 def set_listener(
     playback: Playback | Listener, listener: Listener | None = None
 ) -> None:
-    """Set the listener for an explicit session or the convenience runtime."""
+    """Set the listener for an explicit session or the convenience runtime.
+
+    Call ``set_listener(listener)`` for the convenience runtime, or
+    ``set_listener(playback, listener)`` for an explicit session. Setting the
+    convenience listener opens its playback session if necessary.
+
+    Args:
+        playback: Explicit session, or the listener when using the one-argument
+            form.
+        listener: Complete listener state for an explicit session.
+
+    Raises:
+        TypeError: The call form or listener value is invalid.
+        PlaybackClosedError: The explicit session is closed.
+        AudioBackendError: OpenAL cannot apply the listener state.
+    """
 
     if isinstance(playback, Playback):
         if listener is None:
@@ -1131,7 +1297,19 @@ def set_listener(
 
 
 def get_listener(playback: Playback | None = None) -> Listener:
-    """Return the listener for an explicit session or the convenience runtime."""
+    """Return the listener for an explicit session or the convenience runtime.
+
+    Args:
+        playback: Explicit session to query. ``None`` returns the convenience
+            runtime's current state without opening an audio device.
+
+    Returns:
+        Complete current listener state.
+
+    Raises:
+        PlaybackClosedError: The explicit session is closed.
+        AudioBackendError: OpenAL cannot return a valid listener state.
+    """
 
     if playback is None:
         return _get_default_runtime().listener()
@@ -1147,7 +1325,28 @@ def update_listener(
     up: Vector3 | None = None,
     gain: float | None = None,
 ) -> Listener:
-    """Apply a validated batch of partial listener changes and return it."""
+    """Apply a batch of listener changes and return the complete new state.
+
+    Omitted fields retain their current values.
+
+    Args:
+        playback: Explicit session to update. ``None`` selects the convenience
+            runtime.
+        position: New listener position.
+        velocity: New listener velocity used for Doppler shift.
+        forward: New non-zero viewing-direction vector.
+        up: New non-zero upward vector.
+        gain: New non-negative final-mix linear gain.
+
+    Returns:
+        Validated listener state after applying the changes.
+
+    Raises:
+        TypeError: A value has the wrong type.
+        ValueError: A vector is invalid or ``gain`` is negative or non-finite.
+        PlaybackClosedError: The explicit session is closed.
+        AudioBackendError: OpenAL cannot query or apply the listener state.
+    """
 
     operation = nullcontext() if playback is None else _playback_operation(playback)
     with operation:
@@ -1177,7 +1376,22 @@ def set_acoustics(acoustics: Acoustics, /) -> None: ...
 def set_acoustics(
     playback: Playback | Acoustics, acoustics: Acoustics | None = None
 ) -> None:
-    """Set acoustics for an explicit session or the convenience runtime."""
+    """Set acoustics for an explicit session or the convenience runtime.
+
+    Call ``set_acoustics(acoustics)`` for the convenience runtime, or
+    ``set_acoustics(playback, acoustics)`` for an explicit session. Setting the
+    convenience state opens its playback session if necessary.
+
+    Args:
+        playback: Explicit session, or the acoustic settings when using the
+            one-argument form.
+        acoustics: Complete acoustic settings for an explicit session.
+
+    Raises:
+        TypeError: The call form or acoustic settings are invalid.
+        PlaybackClosedError: The explicit session is closed.
+        AudioBackendError: OpenAL cannot apply the acoustic settings.
+    """
 
     if isinstance(playback, Playback):
         if acoustics is None:
@@ -1192,7 +1406,19 @@ def set_acoustics(
 
 
 def get_acoustics(playback: Playback | None = None) -> Acoustics:
-    """Return acoustics for an explicit session or the convenience runtime."""
+    """Return acoustics for an explicit session or the convenience runtime.
+
+    Args:
+        playback: Explicit session to query. ``None`` returns the convenience
+            runtime's current state without opening an audio device.
+
+    Returns:
+        Complete current acoustic settings.
+
+    Raises:
+        PlaybackClosedError: The explicit session is closed.
+        AudioBackendError: OpenAL cannot return valid acoustic settings.
+    """
 
     if playback is None:
         return _get_default_runtime().acoustics()
@@ -1206,7 +1432,26 @@ def update_acoustics(
     doppler_factor: float | None = None,
     speed_of_sound: float | None = None,
 ) -> Acoustics:
-    """Apply a validated batch of partial acoustic changes and return it."""
+    """Apply acoustic changes and return the complete new state.
+
+    Omitted fields retain their current values.
+
+    Args:
+        playback: Explicit session to update. ``None`` selects the convenience
+            runtime.
+        distance_model: New distance-attenuation formula.
+        doppler_factor: New non-negative Doppler scale.
+        speed_of_sound: New propagation speed in world-units per second.
+
+    Returns:
+        Validated acoustic settings after applying the changes.
+
+    Raises:
+        TypeError: A value has the wrong type.
+        ValueError: A numeric value is non-finite or outside its supported range.
+        PlaybackClosedError: The explicit session is closed.
+        AudioBackendError: OpenAL cannot query or apply the acoustic settings.
+    """
 
     operation = nullcontext() if playback is None else _playback_operation(playback)
     with operation:
@@ -1312,11 +1557,56 @@ def play(
 ) -> Voice | PlayingSound:
     """Play an explicit clip, WAV file, or PCM value.
 
-    ``play(playback, clip, config)`` preserves the explicit managed API.
-    ``play(sound, config=config)`` starts asynchronous, fire-and-forget playback
-    through the default runtime and returns an optional control handle. *sound*
-    may be a WAV path or an in-memory [`PCM`][pyalsoft.PCM] value. Individual
-    keyword controls override the corresponding values in ``config``.
+    ``play(playback, clip, config)`` starts a clip owned by an explicit session.
+    ``play(sound, config=config)`` starts asynchronous playback through the
+    convenience runtime, where *sound* is a WAV path or in-memory
+    [`PCM`][pyalsoft.PCM] value. The runtime keeps playing when the returned
+    handle is discarded, and it caches file-backed clips by resolved path.
+
+    Individual control keywords override the corresponding field in ``config``.
+    ``filter=None`` explicitly removes a configured direct filter; omit
+    ``filter`` to preserve the value from ``config``. Use an empty
+    ``effect_sends`` sequence to remove configured auxiliary routes.
+
+    Args:
+        playback: Explicit playback session in the two-argument form; otherwise,
+            a WAV path or PCM value to play through the convenience runtime.
+        clip: Clip owned by ``playback``. Valid only in the explicit-session form.
+        config: Base voice configuration. ``None`` uses all defaults.
+        position: Sound position in world or listener-relative coordinates.
+        velocity: Sound velocity used for Doppler shift.
+        direction: Attenuation-cone direction; the zero vector is omnidirectional.
+        gain: Non-negative pre-attenuation linear gain.
+        pitch: Playback-rate multiplier from 0.5 through 2.0.
+        looping: Whether the complete source repeats.
+        relative: Whether coordinates are relative to the listener.
+        min_gain: Lower post-attenuation gain clamp.
+        max_gain: Upper post-attenuation gain clamp.
+        reference_distance: Non-negative distance with unity attenuation.
+        max_distance: Non-negative outer distance for clamped distance models.
+        rolloff_factor: Non-negative distance-attenuation multiplier.
+        cone_inner_angle: Full inner cone angle in degrees, from 0 through 360.
+        cone_outer_angle: Full outer cone angle in degrees, from 0 through 360.
+        cone_outer_gain: Linear gain outside the outer cone.
+        filter: Direct EFX filter, or ``None`` to remove the base filter.
+        effect_sends: Ordered auxiliary EFX routes. An empty sequence removes all.
+        offset_seconds: Initial position in source-audio seconds. Must be
+            non-negative and less than the source duration.
+        offset_frames: Exact initial sample-frame index. When provided,
+            ``offset_seconds`` must remain 0.0.
+
+    Returns:
+        A [`Voice`][pyalsoft.Voice] owned by the explicit session, or a
+        [`PlayingSound`][pyalsoft.PlayingSound] owned by the convenience runtime.
+
+    Raises:
+        TypeError: The call form or an argument has the wrong type.
+        ValueError: A configuration or initial offset is invalid.
+        AudioFileError: A WAV file cannot be read or has an unsupported format.
+        PlaybackOpenError: The convenience runtime cannot open an audio session.
+        PlaybackClosedError: The explicit session is closed.
+        InvalidHandleError: ``clip`` is released or belongs to another session.
+        AudioBackendError: OpenAL cannot create, configure, or start the voice.
     """
 
     resolved_config = _voice_config_with_overrides(
@@ -1362,7 +1652,12 @@ def play(
 
 
 def shutdown() -> None:
-    """Close and forget the default playback runtime, if it was opened."""
+    """Close and forget the convenience playback runtime, if it was opened.
+
+    Active [`PlayingSound`][pyalsoft.PlayingSound] handles become stopped with an
+    end reason of ``SoundEndReason.SHUTDOWN``. Calling this when no runtime exists
+    is harmless. A later convenience call creates a fresh runtime.
+    """
 
     global _default_runtime
     with _default_lock:

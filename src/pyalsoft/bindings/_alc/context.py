@@ -63,7 +63,26 @@ def _buffer_identifier(value: Buffer | int, context: Context) -> int:
 
 
 class Context:
-    """An owned AL context attached to a :class:`PlaybackDevice`."""
+    """An owned AL context attached to a playback device.
+
+    Do not construct instances directly. Use ``PlaybackDevice.create_context``.
+    The context owns callback registrations and retained static-buffer storage;
+    closing it destroys that native state and invalidates every typed AL object
+    bound to it. Context-manager exit calls ``close``.
+
+    Operations that require this context temporarily activate it while holding
+    the loaded library's context lock, then restore the previous context. Ordinary
+    state properties forward directly to generated commands; callers remain
+    responsible for querying and clearing the native AL error state.
+
+    Attributes:
+        device: Playback or loopback device that owns this context.
+        library: Loaded OpenAL library shared with ``device``.
+        closed: Whether the native context has been destroyed.
+        handle: Native ALC context pointer for generated raw calls.
+        current: Whether this is the process-wide current context.
+        listener: Typed context-scoped listener singleton.
+    """
 
     def __init__(self, device: PlaybackDevice, handle: object) -> None:
         self.device = device
@@ -83,7 +102,11 @@ class Context:
 
     @property
     def handle(self) -> object:
-        """The underlying ALC context pointer for raw generated calls."""
+        """The underlying ALC context pointer for raw generated calls.
+
+        Raises:
+            HandleClosedError: This context has been destroyed.
+        """
 
         if self._handle is None:
             raise HandleClosedError("ALC context is closed")
@@ -91,7 +114,13 @@ class Context:
 
     @property
     def current(self) -> bool:
-        """Whether this is the process-wide current context."""
+        """Whether this is the process-wide current context.
+
+        This does not inspect the ``ALC_EXT_thread_local_context`` override.
+
+        Raises:
+            HandleClosedError: This context has been destroyed.
+        """
 
         with self.library._context_lock:
             return _same_pointer(
@@ -100,7 +129,15 @@ class Context:
             )
 
     def make_current(self) -> None:
-        """Make this the process-wide current context."""
+        """Make this the process-wide current context.
+
+        The prior context is not restored automatically. Use ``activate`` for a
+        temporary change.
+
+        Raises:
+            HandleClosedError: This context has been destroyed.
+            ContextActivationError: OpenAL refuses the context change.
+        """
 
         with self.library._context_lock:
             if not self.library.alc.make_context_current(self.handle):
@@ -109,7 +146,16 @@ class Context:
                 )
 
     def make_thread_current(self) -> None:
-        """Make this current only for this thread when the extension is present."""
+        """Make this current only for the calling thread.
+
+        The prior thread-local context is not restored automatically. Use
+        ``activate(thread_local=True)`` for a temporary change.
+
+        Raises:
+            HandleClosedError: This context or its device is closed.
+            ExtensionUnavailableError: ``ALC_EXT_thread_local_context`` is absent.
+            ContextActivationError: OpenAL refuses the context change.
+        """
 
         with self.library._context_lock:
             self.device.require_extension("ALC_EXT_thread_local_context")
@@ -119,14 +165,40 @@ class Context:
                 )
 
     def require_extension(self, name: str) -> None:
-        """Require an AL extension while this context is current."""
+        """Require an AL extension while this context is temporarily current.
+
+        Args:
+            name: Registry extension name.
+
+        Raises:
+            HandleClosedError: This context is closed.
+            ExtensionUnavailableError: The context does not report ``name``.
+            ContextActivationError: The context cannot be activated or restored.
+        """
 
         with self.activate():
             self.library.extensions[name].require()
 
     @contextmanager
     def activate(self, *, thread_local: bool = False) -> Iterator[Context]:
-        """Temporarily make this context current, restoring the prior context."""
+        """Temporarily make this context current and restore the prior context.
+
+        Activation is serialized across contexts that share this loaded library.
+        Nested activation of the same context is supported.
+
+        Args:
+            thread_local: Use ``ALC_EXT_thread_local_context`` instead of the
+                process-wide current-context API.
+
+        Yields:
+            This context while it is current in the requested scope.
+
+        Raises:
+            HandleClosedError: This context or its device is closed.
+            ExtensionUnavailableError: Thread-local activation was requested but
+                the device does not expose the extension.
+            ContextActivationError: OpenAL cannot activate or restore a context.
+        """
 
         with self.library._context_lock, self._lock:
             handle = self.handle
@@ -153,33 +225,103 @@ class Context:
                     )
 
     def source(self, identifier: int) -> Source:
-        """Return a typed source bound to this context."""
+        """Wrap an existing integer source identifier for this context.
+
+        This does not allocate a source or verify that ``identifier`` is live.
+
+        Args:
+            identifier: Non-negative OpenAL source name.
+
+        Returns:
+            Context-affine typed source.
+
+        Raises:
+            TypeError: ``identifier`` is not an integer.
+            ValueError: ``identifier`` is negative.
+            HandleClosedError: This context is closed.
+        """
 
         from pyalsoft.bindings._generated.objects import Source
 
         return Source(self, identifier)
 
     def buffer(self, identifier: int) -> Buffer:
-        """Return a typed buffer bound to this context."""
+        """Wrap an existing integer buffer identifier for this context.
+
+        This does not allocate a buffer or verify that ``identifier`` is live.
+
+        Args:
+            identifier: Non-negative OpenAL buffer name.
+
+        Returns:
+            Context-affine typed buffer.
+
+        Raises:
+            TypeError: ``identifier`` is not an integer.
+            ValueError: ``identifier`` is negative.
+            HandleClosedError: This context is closed.
+        """
 
         return Buffer(self, identifier)
 
     def effect(self, identifier: int) -> Effect:
-        """Return a typed effect bound to this context."""
+        """Wrap an existing integer EFX effect identifier for this context.
+
+        This does not allocate an effect or verify that ``identifier`` is live.
+
+        Args:
+            identifier: Non-negative OpenAL effect name.
+
+        Returns:
+            Context-affine typed effect.
+
+        Raises:
+            TypeError: ``identifier`` is not an integer.
+            ValueError: ``identifier`` is negative.
+            HandleClosedError: This context is closed.
+        """
 
         from pyalsoft.bindings._generated.objects import Effect
 
         return Effect(self, identifier)
 
     def filter(self, identifier: int) -> Filter:
-        """Return a typed filter bound to this context."""
+        """Wrap an existing integer EFX filter identifier for this context.
+
+        This does not allocate a filter or verify that ``identifier`` is live.
+
+        Args:
+            identifier: Non-negative OpenAL filter name.
+
+        Returns:
+            Context-affine typed filter.
+
+        Raises:
+            TypeError: ``identifier`` is not an integer.
+            ValueError: ``identifier`` is negative.
+            HandleClosedError: This context is closed.
+        """
 
         from pyalsoft.bindings._generated.objects import Filter
 
         return Filter(self, identifier)
 
     def auxiliary_effect_slot(self, identifier: int) -> AuxiliaryEffectSlot:
-        """Return a typed auxiliary effect slot bound to this context."""
+        """Wrap an existing EFX auxiliary-slot identifier for this context.
+
+        This does not allocate a slot or verify that ``identifier`` is live.
+
+        Args:
+            identifier: Non-negative OpenAL auxiliary effect slot name.
+
+        Returns:
+            Context-affine typed auxiliary effect slot.
+
+        Raises:
+            TypeError: ``identifier`` is not an integer.
+            ValueError: ``identifier`` is negative.
+            HandleClosedError: This context is closed.
+        """
 
         from pyalsoft.bindings._generated.objects import AuxiliaryEffectSlot
 
@@ -187,7 +329,11 @@ class Context:
 
     @property
     def listener(self) -> Listener:
-        """Return the typed listener singleton bound to this context."""
+        """Return the typed listener singleton bound to this context.
+
+        Raises:
+            HandleClosedError: This context is closed.
+        """
 
         from pyalsoft.bindings._generated.objects import Listener
 
@@ -207,19 +353,19 @@ class Context:
 
     @property
     def vendor(self) -> str | None:
-        """The current AL implementation vendor."""
+        """The current AL implementation vendor, or ``None`` on native failure."""
 
         return self._get_string(_constants.AL_VENDOR)
 
     @property
     def version(self) -> str | None:
-        """The current AL implementation version."""
+        """The current AL implementation version, or ``None`` on native failure."""
 
         return self._get_string(_constants.AL_VERSION)
 
     @property
     def renderer(self) -> str | None:
-        """The current AL renderer name."""
+        """The current AL renderer name, or ``None`` on native failure."""
 
         return self._get_string(_constants.AL_RENDERER)
 
@@ -232,6 +378,12 @@ class Context:
 
     @property
     def doppler_factor(self) -> float:
+        """Get or set the global Doppler scale.
+
+        OpenAL defines non-negative values and uses 1.0 by default. The low-level
+        setter forwards the value without consuming the native AL error state.
+        """
+
         return self._get_float(_constants.AL_DOPPLER_FACTOR)
 
     @doppler_factor.setter
@@ -240,6 +392,12 @@ class Context:
 
     @property
     def doppler_velocity(self) -> float:
+        """Get or set the legacy Doppler reference velocity.
+
+        This OpenAL 1.0 control is retained for compatibility; prefer
+        ``speed_of_sound`` for OpenAL 1.1 behavior.
+        """
+
         return self._get_float(_constants.AL_DOPPLER_VELOCITY)
 
     @doppler_velocity.setter
@@ -248,6 +406,12 @@ class Context:
 
     @property
     def speed_of_sound(self) -> float:
+        """Get or set propagation speed for Doppler calculations.
+
+        Values are in world-units per second. OpenAL requires at least 0.0001 and
+        uses 343.3 by default.
+        """
+
         return self._get_float(_constants.AL_SPEED_OF_SOUND)
 
     @speed_of_sound.setter
@@ -256,6 +420,11 @@ class Context:
 
     @property
     def distance_model(self) -> _enums.ALDistanceModel | int:
+        """Get or set the global distance-attenuation model.
+
+        Unknown future values are returned as integers.
+        """
+
         with self.activate():
             value = self.library.al.get_integer(_constants.AL_DISTANCE_MODEL)
         return _enum_or_int(_enums.ALDistanceModel, value)
@@ -267,7 +436,12 @@ class Context:
 
     @property
     def default_filter_order(self) -> int:
-        """The default resampler filter order for this context."""
+        """The default resampler filter order for this context.
+
+        Raises:
+            ExtensionUnavailableError: ``ALC_EXT_DEFAULT_FILTER_ORDER`` is absent.
+            HandleClosedError: This context or its device is closed.
+        """
 
         self.device.require_extension("ALC_EXT_DEFAULT_FILTER_ORDER")
         with self.activate():
@@ -279,7 +453,28 @@ class Context:
         *,
         event_types: Sequence[int] = (),
     ) -> CallbackRegistration:
-        """Register and retain a safe ``AL_SOFT_events`` callback."""
+        """Register and retain an ``AL_SOFT_events`` callback.
+
+        The callback receives ``(event_type, object_id, parameter, message)``.
+        Registering another event callback on this context closes the previous
+        registration. Python exceptions are retained instead of crossing the C
+        boundary.
+
+        Args:
+            callback: Function invoked for enabled AL events.
+            event_types: Registry event-type values to enable. An empty sequence
+                installs the callback without explicitly enabling event types.
+
+        Returns:
+            Owned registration that keeps the native trampoline alive.
+
+        Raises:
+            TypeError: ``callback`` is not callable or an event type is not integer-like.
+            HandleClosedError: This context is closed.
+            ExtensionUnavailableError: ``AL_SOFT_events`` is unavailable.
+            CallbackControlError: The previous callback cannot be removed safely.
+            ContextActivationError: This context cannot be activated or restored.
+        """
 
         if not callable(callback):
             raise TypeError("callback must be callable")
@@ -357,7 +552,27 @@ class Context:
         *,
         enable_output: bool = True,
     ) -> CallbackRegistration:
-        """Register and retain a safe ``AL_EXT_debug`` message callback."""
+        """Register and retain an ``AL_EXT_debug`` message callback.
+
+        The callback receives ``(source, type, identifier, severity, message)``.
+        Registering another debug callback on this context closes the previous
+        registration. Python exceptions are retained by the registration.
+
+        Args:
+            callback: Function invoked for native debug messages.
+            enable_output: Enable ``AL_DEBUG_OUTPUT_EXT`` for the registration and
+                restore its previous disabled state when the registration closes.
+
+        Returns:
+            Owned registration that keeps the native trampoline alive.
+
+        Raises:
+            TypeError: ``callback`` is not callable.
+            HandleClosedError: This context is closed.
+            ExtensionUnavailableError: ``AL_EXT_debug`` is unavailable.
+            CallbackControlError: The previous callback cannot be removed safely.
+            ContextActivationError: This context cannot be activated or restored.
+        """
 
         if not callable(callback):
             raise TypeError("callback must be callable")
@@ -442,8 +657,35 @@ class Context:
         """Register a lifetime-safe ``AL_SOFT_callback_buffer`` callback.
 
         The callback receives a writable byte view valid only for that callback
-        invocation and must return the number of bytes written. Python callback
-        execution is not guaranteed to satisfy hard real-time constraints.
+        invocation and returns the number of bytes written. Exceptions and invalid
+        byte counts are retained and reported to OpenAL as zero bytes. Python
+        callback execution is not guaranteed to satisfy hard real-time constraints.
+
+        Registering again for the same buffer closes the prior registration.
+        Successful installation replaces retained static-buffer storage. Closing
+        can fail while the buffer remains attached to a source; in that case the
+        registration retains its native trampoline until cleanup can be retried or
+        the context closes.
+
+        Args:
+            buffer: Positive integer buffer name or typed buffer from this context.
+            format: OpenAL sample-format value produced by the callback.
+            frequency: Positive sample rate in frames per second.
+            callback: Function that fills the temporary writable view and returns
+                a byte count from zero through the view length.
+
+        Returns:
+            Owned registration that keeps the native trampoline alive.
+
+        Raises:
+            TypeError: A value has the wrong type or ``callback`` is not callable.
+            ValueError: The buffer belongs to another context or an integer value
+                is outside its supported range.
+            HandleClosedError: This context is closed.
+            ExtensionUnavailableError: ``AL_SOFT_callback_buffer`` is unavailable.
+            CallbackControlError: Native callback installation, replacement, or
+                rollback cannot be completed safely.
+            ContextActivationError: This context cannot be activated or restored.
         """
 
         if not callable(callback):
@@ -571,7 +813,34 @@ class Context:
         memory: object,
         callback: FoldbackCallback,
     ) -> FoldbackRegistration:
-        """Start an owned ``AL_EXT_FOLDBACK`` request."""
+        """Start an owned ``AL_EXT_FOLDBACK`` request.
+
+        The callback receives ``(event_type, block_index)``. Starting another
+        request closes the prior foldback registration. The returned registration
+        retains both the native trampoline and the exact writable sample backing.
+
+        Args:
+            mode: ``AL_FOLDBACK_MODE_MONO`` or ``AL_FOLDBACK_MODE_STEREO``.
+            count: Number of sample blocks; at least two.
+            length: Positive number of frames in each block.
+            memory: Writable ``ALfloat`` ctypes array, writable contiguous byte
+                buffer, or numeric sequence. Sequences are copied to retained
+                native storage.
+            callback: Function invoked for foldback start, block, and stop events.
+
+        Returns:
+            Owned foldback registration exposing the retained sample memory.
+
+        Raises:
+            TypeError: A value has the wrong type, storage is not writable and
+                contiguous, or ``callback`` is not callable.
+            ValueError: The mode, dimensions, or storage capacity is invalid.
+            HandleClosedError: This context is closed.
+            ExtensionUnavailableError: ``AL_EXT_FOLDBACK`` is unavailable.
+            CallbackControlError: A previous foldback request cannot close safely.
+            NativeCallError: OpenAL reports an error before or during startup.
+            ContextActivationError: This context cannot be activated or restored.
+        """
 
         if not callable(callback):
             raise TypeError("callback must be callable")
@@ -664,7 +933,30 @@ class Context:
         data: bytes | bytearray | memoryview,
         frequency: int,
     ) -> None:
-        """Set ``AL_EXT_STATIC_BUFFER`` data and retain its native backing."""
+        """Set ``AL_EXT_STATIC_BUFFER`` data and retain its native backing.
+
+        Writable ``bytearray`` and ``memoryview`` inputs are borrowed without a
+        copy and must not be resized while retained. Immutable or read-only input
+        is copied into native storage. The backing remains alive until this buffer
+        is updated again or the context closes. An active callback on the buffer is
+        closed before static storage is installed.
+
+        Args:
+            buffer: Positive integer buffer name or typed buffer from this context.
+            format: OpenAL sample-format value.
+            data: Contiguous PCM bytes to retain or copy.
+            frequency: Positive sample rate in frames per second.
+
+        Raises:
+            TypeError: A value has the wrong type or ``data`` is not contiguous.
+            ValueError: The buffer belongs to another context or an integer value
+                is outside its supported range.
+            HandleClosedError: This context is closed.
+            ExtensionUnavailableError: ``AL_EXT_STATIC_BUFFER`` is unavailable.
+            CallbackControlError: An existing buffer callback cannot be removed.
+            NativeCallError: OpenAL has a pre-existing error or rejects the update.
+            ContextActivationError: This context cannot be activated or restored.
+        """
 
         buffer_id = _buffer_identifier(buffer, self)
         frequency = _positive_integer(frequency, label="frequency")
@@ -688,7 +980,18 @@ class Context:
             self._static_buffers[buffer_id] = (backing, *resources)
 
     def close(self) -> None:
-        """Stop foldback, detach, and destroy the native context."""
+        """Stop foldback, detach, and destroy the native context.
+
+        Closing an already closed context is harmless. Active callbacks are marked
+        closed after native context destruction, and retained static-buffer storage
+        is released. All typed objects bound to the context become unusable.
+
+        Raises:
+            CallbackControlError: Foldback or callback cleanup cannot complete.
+            NativeCallError: OpenAL rejects an active foldback stop request.
+            ContextActivationError: The context cannot be detached before
+                destruction.
+        """
 
         registrations: tuple[CallbackRegistration, ...]
         with self.library._context_lock, self._lock:

@@ -9,6 +9,8 @@ from os import PathLike
 from typing import cast
 
 type Vector3 = tuple[float, float, float]
+"""A Cartesian ``(x, y, z)`` vector used for spatial coordinates."""
+
 type AudioPath = str | PathLike[str]
 
 _FLOAT32_MAX = float.fromhex("0x1.fffffep+127")
@@ -58,7 +60,12 @@ class InvalidVoiceStateError(AudioError):
 
 
 class SampleType(Enum):
-    """PCM sample representations supported by core OpenAL."""
+    """PCM sample representations supported by the managed API.
+
+    Attributes:
+        UINT8: Unsigned 8-bit samples, with silence at 128.
+        INT16: Signed 16-bit samples, with silence at 0.
+    """
 
     UINT8 = "uint8"
     INT16 = "int16"
@@ -71,7 +78,14 @@ class SampleType(Enum):
 
 
 class VoiceState(Enum):
-    """Observed playback state of a voice."""
+    """Observed playback state of a static voice.
+
+    Attributes:
+        INITIAL: Ready to play from the beginning.
+        PLAYING: Currently advancing through the clip.
+        PAUSED: Paused at the current playhead position.
+        STOPPED: Finished naturally or explicitly stopped.
+    """
 
     INITIAL = "initial"
     PLAYING = "playing"
@@ -80,7 +94,15 @@ class VoiceState(Enum):
 
 
 class StreamState(Enum):
-    """Managed lifecycle state of a stream."""
+    """Managed lifecycle state of a stream.
+
+    Attributes:
+        INITIAL: Created but not yet started.
+        PLAYING: Started and logically playing, including during an underrun.
+        PAUSED: Explicitly paused.
+        FINISHED: End-of-input was declared and all queued audio drained.
+        STOPPED: Explicitly stopped; queued audio was discarded.
+    """
 
     INITIAL = "initial"
     PLAYING = "playing"
@@ -90,7 +112,14 @@ class StreamState(Enum):
 
 
 class SoundEndReason(Enum):
-    """Why a convenience playback handle entered its terminal state."""
+    """Why a convenience playback handle entered its terminal state.
+
+    Attributes:
+        FINISHED: Playback reached the end of the source naturally.
+        STOPPED: The sound was stopped explicitly.
+        SHUTDOWN: The convenience runtime was shut down while the sound was active.
+        DEVICE_LOST: The backend reported that the playback device disconnected.
+    """
 
     FINISHED = "finished"
     STOPPED = "stopped"
@@ -99,7 +128,21 @@ class SoundEndReason(Enum):
 
 
 class DistanceModel(Enum):
-    """Distance-attenuation model used by a playback context."""
+    """Distance-attenuation model used by a playback context.
+
+    ``NONE`` disables distance attenuation. The other values select the OpenAL
+    inverse, linear, or exponential formulas, with either clamped or unclamped
+    distance inputs.
+
+    Attributes:
+        NONE: Do not attenuate sounds based on distance.
+        INVERSE: Use the inverse-distance formula.
+        INVERSE_CLAMPED: Use inverse distance clamped to the configured bounds.
+        LINEAR: Use the linear-distance formula.
+        LINEAR_CLAMPED: Use linear distance clamped to the configured bounds.
+        EXPONENT: Use the exponential-distance formula.
+        EXPONENT_CLAMPED: Use exponential distance clamped to the configured bounds.
+    """
 
     NONE = "none"
     INVERSE = "inverse"
@@ -111,7 +154,18 @@ class DistanceModel(Enum):
 
 
 class HRTFStatus(Enum):
-    """Observed HRTF state for an open playback session."""
+    """Observed HRTF state for an open playback session.
+
+    Attributes:
+        UNAVAILABLE: The device does not expose ``ALC_SOFT_HRTF``.
+        DISABLED: HRTF rendering is disabled.
+        ENABLED: HRTF rendering is enabled.
+        DENIED: HRTF was requested but could not be enabled.
+        REQUIRED: HRTF was enabled because the device requires it.
+        HEADPHONES_DETECTED: HRTF was enabled after headphone detection.
+        UNSUPPORTED_FORMAT: The output format does not support HRTF rendering.
+        UNKNOWN: The backend returned a status unknown to this PyALSoft version.
+    """
 
     UNAVAILABLE = "unavailable"
     DISABLED = "disabled"
@@ -185,7 +239,20 @@ def _vector3(name: str, value: Vector3) -> Vector3:
 
 @dataclass(frozen=True, slots=True)
 class PlaybackDevice:
-    """A named playback device reported by the current OpenAL runtime."""
+    """A named playback device reported by the selected OpenAL runtime.
+
+    Instances returned by
+    [`list_playback_devices`][pyalsoft.list_playback_devices] can be passed
+    directly to [`open_playback`][pyalsoft.open_playback].
+
+    Attributes:
+        name: Implementation-provided device specifier.
+        is_default: Whether the runtime reported this as its default device.
+
+    Raises:
+        TypeError: ``name`` is not a string or ``is_default`` is not a boolean.
+        ValueError: ``name`` is empty.
+    """
 
     name: str
     is_default: bool = False
@@ -201,7 +268,17 @@ class PlaybackDevice:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PlaybackConfig:
-    """Preferences applied while creating an OpenAL playback context."""
+    """Preferences applied while creating an OpenAL playback context.
+
+    Attributes:
+        hrtf: Whether to request HRTF rendering. ``None`` leaves the backend's
+            default unchanged. A request is ignored when the selected device
+            does not expose ``ALC_SOFT_HRTF``; inspect ``PlaybackInfo.hrtf_status``
+            for the result.
+
+    Raises:
+        TypeError: ``hrtf`` is neither a boolean nor ``None``.
+    """
 
     hrtf: bool | None = None
 
@@ -212,7 +289,15 @@ class PlaybackConfig:
 
 @dataclass(frozen=True, slots=True)
 class PlaybackInfo:
-    """Observed properties of an open playback session."""
+    """Observed properties of an open playback session.
+
+    Attributes:
+        device_name: Implementation-provided name of the opened device.
+        renderer: Active OpenAL renderer name.
+        version: Active OpenAL implementation version.
+        hrtf_status: Observed HRTF state.
+        hrtf_name: Active HRTF specifier, or ``None`` when none is available.
+    """
 
     device_name: str
     renderer: str
@@ -223,7 +308,23 @@ class PlaybackInfo:
 
 @dataclass(frozen=True, slots=True)
 class SoundInfo:
-    """Format and length information for immutable PCM audio."""
+    """Format and length information for immutable PCM audio.
+
+    Attributes:
+        channels: Number of interleaved channels, either 1 (mono) or 2 (stereo).
+        sample_rate: Number of sample frames per second.
+        sample_type: Representation used by each channel sample.
+        frame_count: Number of interleaved sample frames; always positive.
+        duration_seconds: Duration on the source-audio timeline.
+        sample_width_bytes: Number of bytes used by one channel sample.
+        bit_depth: Number of bits used by one channel sample.
+        frame_width_bytes: Number of bytes used by one interleaved frame.
+        byte_count: Total number of sample bytes.
+
+    Raises:
+        TypeError: A constructor argument has the wrong type.
+        ValueError: The channel count, sample rate, or frame count is unsupported.
+    """
 
     channels: int
     sample_rate: int
@@ -279,7 +380,15 @@ class SoundInfo:
 
 @dataclass(frozen=True, slots=True)
 class SoundCacheInfo:
-    """Observed state of the implicit file-clip cache."""
+    """Observed state of the implicit file-clip cache.
+
+    Attributes:
+        max_bytes: Configured byte budget, or ``None`` when unlimited.
+        current_bytes: Bytes occupied by all cached clips, including pinned ones.
+        clip_count: Number of cached file clips.
+        active_clip_count: Number of cached clips pinned by active sounds.
+        pending_eviction_count: Pinned clips marked for eviction after playback.
+    """
 
     max_bytes: int | None
     current_bytes: int
@@ -290,7 +399,24 @@ class SoundCacheInfo:
 
 @dataclass(frozen=True, slots=True)
 class PCM:
-    """Immutable, interleaved PCM sample data ready to upload."""
+    """Immutable, interleaved PCM sample data ready to upload.
+
+    The constructor copies any bytes-like input to immutable ``bytes``.
+    The byte count must contain a whole number of frames.
+
+    Attributes:
+        samples: Interleaved sample bytes.
+        channels: Number of channels, either 1 (mono) or 2 (stereo).
+        sample_rate: Positive number of sample frames per second.
+        sample_type: Representation used by each channel sample.
+        frame_count: Number of complete sample frames.
+        duration: Duration in seconds on the source-audio timeline.
+        info: Format and length information as a [`SoundInfo`][pyalsoft.SoundInfo].
+
+    Raises:
+        TypeError: A constructor argument has the wrong type.
+        ValueError: The samples or format do not describe supported, complete PCM.
+    """
 
     samples: bytes
     channels: int
@@ -344,7 +470,34 @@ class PCM:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Reverb:
-    """Immutable standard EFX reverb parameters."""
+    """Immutable standard EFX reverb parameters.
+
+    Values use the OpenAL EFX standard-reverb ranges and defaults. Attach a
+    reverb to a voice through [`EffectSend`][pyalsoft.EffectSend].
+
+    Attributes:
+        density: Modal density, from 0.0 through 1.0.
+        diffusion: Echo density, from 0.0 through 1.0.
+        gain: Overall linear wet-signal gain, from 0.0 through 1.0.
+        high_frequency_gain: High-frequency wet gain, from 0.0 through 1.0.
+        decay_time: Reverberation decay time in seconds, from 0.1 through 20.0.
+        high_frequency_decay_ratio: High-frequency to low-frequency decay ratio,
+            from 0.1 through 2.0.
+        reflections_gain: Early-reflections gain, from 0.0 through 3.16.
+        reflections_delay: Early-reflections delay in seconds, from 0.0 through 0.3.
+        late_reverb_gain: Late-reverberation gain, from 0.0 through 10.0.
+        late_reverb_delay: Late-reverberation delay in seconds, from 0.0 through 0.1.
+        air_absorption_high_frequency_gain: Per-meter high-frequency air absorption
+            gain, from 0.892 through 1.0.
+        room_rolloff_factor: Distance-based room attenuation factor, from 0.0
+            through 10.0.
+        high_frequency_decay_limit: Whether air absorption limits high-frequency
+            decay time.
+
+    Raises:
+        TypeError: A parameter has the wrong type.
+        ValueError: A parameter is non-finite or outside its supported range.
+    """
 
     density: float = 1.0
     diffusion: float = 1.0
@@ -397,7 +550,16 @@ class Reverb:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class LowPassFilter:
-    """An EFX filter that attenuates the high-frequency signal."""
+    """An EFX filter that attenuates the high-frequency signal.
+
+    Attributes:
+        gain: Overall linear gain, from 0.0 through 1.0.
+        high_frequency_gain: Additional high-frequency gain, from 0.0 through 1.0.
+
+    Raises:
+        TypeError: A gain has the wrong type.
+        ValueError: A gain is non-finite or outside its supported range.
+    """
 
     gain: float = 1.0
     high_frequency_gain: float = 1.0
@@ -413,7 +575,16 @@ class LowPassFilter:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class HighPassFilter:
-    """An EFX filter that attenuates the low-frequency signal."""
+    """An EFX filter that attenuates the low-frequency signal.
+
+    Attributes:
+        gain: Overall linear gain, from 0.0 through 1.0.
+        low_frequency_gain: Additional low-frequency gain, from 0.0 through 1.0.
+
+    Raises:
+        TypeError: A gain has the wrong type.
+        ValueError: A gain is non-finite or outside its supported range.
+    """
 
     gain: float = 1.0
     low_frequency_gain: float = 1.0
@@ -428,12 +599,25 @@ class HighPassFilter:
 
 
 type Filter = LowPassFilter | HighPassFilter
+"""A supported direct or auxiliary EFX filter configuration."""
+
 _OMITTED_FILTER = cast(Filter | None, _UNSET)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class EffectSend:
-    """One auxiliary effect route, with an optional filter on its wet signal."""
+    """One auxiliary effect route, with an optional wet-signal filter.
+
+    Tuple order in ``VoiceConfig.effect_sends`` determines the native
+    auxiliary-send index. The device limits the number of simultaneous sends.
+
+    Attributes:
+        effect: Reverb applied to this route.
+        filter: Optional low-pass or high-pass filter applied only to this route.
+
+    Raises:
+        TypeError: ``effect`` or ``filter`` is not a supported configuration.
+    """
 
     effect: Reverb
     filter: Filter | None = None
@@ -449,7 +633,38 @@ class EffectSend:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class VoiceConfig:
-    """Desired configurable state for one playing voice."""
+    """Complete immutable configuration for a voice or stream.
+
+    Mono audio is normally required for positional controls to have an audible
+    effect. Gain values are linear amplitude multipliers; pitch changes playback
+    rate and pitch together. Streaming voices reject ``looping=True``.
+
+    Attributes:
+        position: Sound position in world or listener-relative coordinates.
+        velocity: Sound velocity used for Doppler shift.
+        direction: Direction of the attenuation cone; the zero vector is
+            omnidirectional.
+        gain: Non-negative pre-attenuation linear gain.
+        pitch: Playback-rate multiplier from 0.5 through 2.0.
+        looping: Whether static audio repeats after reaching its end.
+        relative: Whether coordinates are relative to the listener.
+        min_gain: Lower post-attenuation gain clamp, from 0.0 through 1.0.
+        max_gain: Upper post-attenuation gain clamp, from 0.0 through 1.0 and
+            not less than ``min_gain``.
+        reference_distance: Non-negative distance at which attenuation has
+            unity gain.
+        max_distance: Non-negative outer bound used by clamped distance models.
+        rolloff_factor: Non-negative multiplier for distance attenuation.
+        cone_inner_angle: Full unattenuated cone angle in degrees, from 0 to 360.
+        cone_outer_angle: Full outer cone angle in degrees, from 0 to 360.
+        cone_outer_gain: Linear gain outside the outer cone, from 0.0 through 1.0.
+        filter: Optional EFX filter applied directly to the dry signal.
+        effect_sends: Ordered auxiliary EFX routes applied to the wet signal.
+
+    Raises:
+        TypeError: A field has the wrong type.
+        ValueError: A numeric field is non-finite or outside its supported range.
+    """
 
     position: Vector3 = (0.0, 0.0, 0.0)
     velocity: Vector3 = (0.0, 0.0, 0.0)
@@ -535,7 +750,19 @@ class VoiceConfig:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Listener:
-    """Desired spatial state for the playback context's listener."""
+    """Complete immutable spatial state for a playback listener.
+
+    Attributes:
+        position: Listener position in world coordinates.
+        velocity: Listener velocity used for Doppler shift.
+        forward: Non-zero vector describing the viewing direction.
+        up: Non-zero vector describing the upward direction.
+        gain: Non-negative linear gain applied to the final mix.
+
+    Raises:
+        TypeError: A field has the wrong type.
+        ValueError: A vector is invalid or ``gain`` is negative or non-finite.
+    """
 
     position: Vector3 = (0.0, 0.0, 0.0)
     velocity: Vector3 = (0.0, 0.0, 0.0)
@@ -562,7 +789,18 @@ class Listener:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Acoustics:
-    """Global distance and Doppler settings for one playback context."""
+    """Complete immutable acoustic settings for one playback context.
+
+    Attributes:
+        distance_model: Formula used for distance attenuation.
+        doppler_factor: Non-negative scale for Doppler shift; 0 disables it.
+        speed_of_sound: Propagation speed in world-units per second; at least
+            0.0001. The default 343.3 represents meters per second in dry air.
+
+    Raises:
+        TypeError: A field has the wrong type.
+        ValueError: A numeric field is non-finite or outside its supported range.
+    """
 
     distance_model: DistanceModel = DistanceModel.INVERSE_CLAMPED
     doppler_factor: float = 1.0
@@ -583,7 +821,13 @@ class Acoustics:
 
 @dataclass(frozen=True, slots=True)
 class VoiceStatus:
-    """Runtime state observed from a voice."""
+    """Runtime state observed from a static voice.
+
+    Attributes:
+        state: Current OpenAL playback state.
+        offset_seconds: Current playhead position in source-audio seconds.
+        offset_frames: Current playhead position as an exact sample-frame index.
+    """
 
     state: VoiceState
     offset_seconds: float
@@ -592,7 +836,16 @@ class VoiceStatus:
 
 @dataclass(frozen=True, slots=True)
 class StreamStatus:
-    """Runtime state and queue accounting for a stream."""
+    """Runtime state and queue accounting for a stream.
+
+    Attributes:
+        state: Current managed lifecycle state.
+        input_finished: Whether end-of-input has been declared.
+        queued_chunks: Chunks queued for playback, including the active chunk.
+        queued_seconds: Approximate source-audio duration remaining in the queue.
+        underrun_count: Number of distinct times a playing stream exhausted its
+            queue before end-of-input.
+    """
 
     state: StreamState
     input_finished: bool
@@ -603,7 +856,12 @@ class StreamStatus:
 
 @dataclass(frozen=True, slots=True)
 class Clip:
-    """Opaque identity for PCM uploaded to a playback session."""
+    """Opaque identity for PCM uploaded to a playback session.
+
+    Do not construct instances directly. A clip belongs to the
+    [`Playback`][pyalsoft.Playback] that returned it and remains valid until it
+    is passed to [`release`][pyalsoft.release] or that session is closed.
+    """
 
     _owner: object = field(repr=False)
     _token: object = field(repr=False)
@@ -634,7 +892,12 @@ class Clip:
 
 @dataclass(frozen=True, slots=True)
 class Voice:
-    """Opaque identity for one playback instance of a clip."""
+    """Opaque identity for one playback instance of a clip.
+
+    Do not construct instances directly. A voice belongs to the
+    [`Playback`][pyalsoft.Playback] that returned it and remains valid until it
+    is released or its session is closed.
+    """
 
     _owner: object = field(repr=False)
     _token: object = field(repr=False)
@@ -646,7 +909,12 @@ class Voice:
 
 @dataclass(frozen=True, slots=True)
 class Stream:
-    """Opaque identity for one managed streaming source."""
+    """Opaque identity for one managed streaming source.
+
+    Do not construct instances directly. A stream belongs to the
+    [`Playback`][pyalsoft.Playback] that returned it and remains valid until it
+    is released or its session is closed.
+    """
 
     _owner: object = field(repr=False)
     _token: object = field(repr=False)

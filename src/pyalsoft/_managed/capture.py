@@ -23,7 +23,21 @@ class CaptureOpenError(AudioError):
 
 @dataclass(frozen=True, slots=True)
 class CaptureDevice:
-    """A named capture device reported by the current OpenAL runtime."""
+    """A named capture device reported by the selected OpenAL runtime.
+
+    Instances returned by
+    [`list_capture_devices`][pyalsoft.list_capture_devices] can be passed
+    directly to [`start_recording`][pyalsoft.start_recording] or
+    [`record`][pyalsoft.record].
+
+    Attributes:
+        name: Implementation-provided device specifier.
+        is_default: Whether the runtime reported this as its default device.
+
+    Raises:
+        TypeError: ``name`` is not a string or ``is_default`` is not a boolean.
+        ValueError: ``name`` is empty.
+    """
 
     name: str
     is_default: bool = False
@@ -38,7 +52,14 @@ class CaptureDevice:
 
 
 class Recording:
-    """Opaque handle for a recording that is being collected in memory."""
+    """Opaque handle for an in-memory recording in progress.
+
+    Do not construct instances directly. Pass the value returned by
+    [`start_recording`][pyalsoft.start_recording] to
+    [`stop_recording`][pyalsoft.stop_recording]. The collector owns a background
+    thread and capture device until it is stopped. Captured bytes accumulate in
+    memory without a size limit.
+    """
 
     __slots__ = (
         "_channels",
@@ -140,7 +161,20 @@ def _capture_layout(
 def list_capture_devices(
     *, library: bindings.OpenALLibrary | None = None
 ) -> tuple[CaptureDevice, ...]:
-    """Return capture devices known to the selected OpenAL runtime."""
+    """Return capture devices known to the selected OpenAL runtime.
+
+    Args:
+        library: Loaded low-level library to query. By default, discover and load
+            the platform's OpenAL implementation.
+
+    Returns:
+        Devices in runtime order, with duplicate names removed. The tuple may be
+        empty when the runtime reports no capture devices.
+
+    Raises:
+        CaptureOpenError: No OpenAL implementation could be loaded.
+        AudioBackendError: Device enumeration failed.
+    """
 
     library = _load_capture_library(library)
     _clear_alc_errors(library)
@@ -187,7 +221,31 @@ def start_recording(
     sample_type: SampleType = SampleType.INT16,
     library: bindings.OpenALLibrary | None = None,
 ) -> Recording:
-    """Start collecting captured audio in memory on a background thread."""
+    """Start collecting captured audio in memory on a background thread.
+
+    The default format is mono, 48 kHz, signed 16-bit PCM. Collection continues
+    until [`stop_recording`][pyalsoft.stop_recording] is called; there is no
+    duration or memory limit.
+
+    Args:
+        device_name: Capture device object or device specifier. ``None`` selects
+            the runtime's default capture device. A ``bytes`` value is passed
+            to OpenAL unchanged.
+        channels: Number of interleaved channels, either 1 or 2.
+        sample_rate: Positive number of sample frames to capture per second.
+        sample_type: Representation used by each channel sample.
+        library: Loaded low-level library to use. By default, discover and load
+            the platform's OpenAL implementation.
+
+    Returns:
+        A recording handle to stop later.
+
+    Raises:
+        TypeError: A format or device argument has the wrong type.
+        ValueError: The channel count or sample rate is unsupported.
+        CaptureOpenError: OpenAL could not be loaded or the device could not open.
+        AudioBackendError: The backend could not start capture.
+    """
 
     format_name, _ = _capture_layout(channels, sample_rate, sample_type)
     if isinstance(device_name, CaptureDevice):
@@ -237,7 +295,24 @@ def start_recording(
 
 
 def stop_recording(recording: Recording) -> PCM:
-    """Stop a recording and return all captured audio as one PCM value."""
+    """Stop a recording and return all captured audio as one PCM value.
+
+    This waits for the collector thread, drains frames already buffered by the
+    device, and closes the device. Calling it again after a successful stop
+    returns the same [`PCM`][pyalsoft.PCM] object.
+
+    Args:
+        recording: Handle returned by
+            [`start_recording`][pyalsoft.start_recording].
+
+    Returns:
+        All captured frames as immutable, interleaved PCM.
+
+    Raises:
+        TypeError: ``recording`` is not a [`Recording`][pyalsoft.Recording].
+        AudioBackendError: Capture or cleanup failed, or the device returned no
+            audio.
+    """
 
     if not isinstance(recording, Recording):
         raise TypeError("recording must be a Recording")
@@ -296,7 +371,32 @@ def record(
     sample_type: SampleType = SampleType.INT16,
     library: bindings.OpenALLibrary | None = None,
 ) -> PCM:
-    """Record for a fixed duration and return the captured PCM audio."""
+    """Record for a fixed duration and return the captured PCM audio.
+
+    This blocking convenience function is equivalent to starting a recording,
+    waiting for the requested duration, and stopping it. Interrupting the wait
+    still closes the capture device.
+
+    Args:
+        duration_seconds: Positive, finite wall-clock duration to record.
+        device_name: Capture device object or device specifier. ``None`` selects
+            the runtime's default capture device.
+        channels: Number of interleaved channels, either 1 or 2.
+        sample_rate: Positive number of sample frames to capture per second.
+        sample_type: Representation used by each channel sample.
+        library: Loaded low-level library to use. By default, discover and load
+            the platform's OpenAL implementation.
+
+    Returns:
+        Captured frames as immutable, interleaved PCM.
+
+    Raises:
+        TypeError: A duration, format, or device argument has the wrong type.
+        ValueError: The duration or requested format is invalid.
+        CaptureOpenError: OpenAL could not be loaded or the device could not open.
+        AudioBackendError: Capture or cleanup failed, or the device returned no
+            audio.
+    """
 
     if isinstance(duration_seconds, bool) or not isinstance(
         duration_seconds, (int, float)

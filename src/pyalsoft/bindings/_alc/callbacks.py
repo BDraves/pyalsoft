@@ -12,10 +12,19 @@ from pyalsoft.bindings._generated import types as _types
 from pyalsoft.bindings._library import _pointer_address
 
 type EventCallback = Callable[[int, int, int, str], None]
+"""An ``AL_SOFT_events`` callback receiving type, object, parameter, and message."""
+
 type DebugCallback = Callable[[int, int, int, int, str], None]
+"""An ``AL_EXT_debug`` callback receiving source, type, ID, severity, and message."""
+
 type SystemEventCallback = Callable[[int, int, object | None, str], None]
+"""An ALC system callback receiving event type, device type, handle, and message."""
+
 type BufferCallback = Callable[[memoryview], int]
+"""A buffer callback that fills a temporary writable view and returns bytes used."""
+
 type FoldbackCallback = Callable[[int, int], None]
+"""A foldback callback receiving the event type and completed block index."""
 
 
 def _message_text(message: bytes | None, length: int) -> str:
@@ -101,8 +110,18 @@ class CallbackRegistration:
     """Own a native callback and unregister it deterministically.
 
     Native audio callbacks must never allow a Python exception to cross the C
-    boundary. Exceptions are retained and can be observed through :attr:`errors`
-    or re-raised in the registering thread with :meth:`raise_if_failed`.
+    boundary. Exceptions are retained and can be observed through ``errors`` or
+    re-raised in an application-controlled thread with ``raise_if_failed``.
+
+    Do not construct instances directly. Registration helpers return them after
+    installing and retaining the native ``ctypes`` trampoline. Use a ``with``
+    statement or call ``close`` deterministically; losing the Python reference
+    does not unregister the native callback.
+
+    Attributes:
+        closed: Whether unregistration completed.
+        errors: Snapshot of exceptions retained from callback invocations or
+            callback-control cleanup.
     """
 
     def __init__(
@@ -156,7 +175,12 @@ class CallbackRegistration:
             return tuple(self._errors)
 
     def raise_if_failed(self) -> None:
-        """Raise and clear exceptions retained from native callback threads."""
+        """Raise and clear exceptions retained from native callback threads.
+
+        Raises:
+            BaseExceptionGroup: One or more retained callback exceptions. The
+                retained list is cleared before the group is raised.
+        """
 
         with self._lock:
             errors = tuple(self._errors)
@@ -184,7 +208,16 @@ class CallbackRegistration:
             self._condition.notify_all()
 
     def close(self) -> None:
-        """Unregister the callback. Calling this more than once is harmless."""
+        """Unregister the callback and wait for in-flight invocations.
+
+        Calling this more than once is harmless. If native unregistration fails,
+        the registration remains open so cleanup can be retried. A callback must
+        never close its own registration.
+
+        Raises:
+            CallbackControlError: Called from this registration's callback or
+                re-entered on the thread already closing it.
+        """
 
         thread = threading.get_ident()
         while True:
@@ -262,7 +295,18 @@ class CallbackRegistration:
 
 
 class FoldbackRegistration(CallbackRegistration):
-    """Own an active foldback request and its writable sample storage."""
+    """Own an active foldback request and its writable sample storage.
+
+    Do not construct instances directly. ``Context.start_foldback`` returns this
+    specialization. The public ``memory`` attribute is the exact ``ALfloat``
+    backing passed to OpenAL and remains available after closure.
+
+    Attributes:
+        memory: Retained writable ``ALfloat`` storage containing foldback samples.
+        stopping: Whether a native stop was requested but has not completed.
+        closed: Whether the native STOP event was received and cleanup completed.
+        errors: Exceptions retained from the callback or stop preparation.
+    """
 
     def __init__(
         self,
@@ -298,7 +342,17 @@ class FoldbackRegistration(CallbackRegistration):
             self._condition.notify_all()
 
     def close(self) -> None:
-        """Request foldback stop and wait for the native STOP event."""
+        """Request foldback stop and wait for the native STOP event.
+
+        Calling this after closure is harmless. OpenAL provides no timeout for the
+        STOP notification, so this call waits until the native implementation
+        delivers it and all in-flight callbacks return.
+
+        Raises:
+            CallbackControlError: Called from the foldback callback or re-entered
+                on the thread already closing it.
+            NativeCallError: OpenAL rejects the stop request.
+        """
 
         with self._serialized():
             with self._condition:

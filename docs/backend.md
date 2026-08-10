@@ -8,7 +8,8 @@
   hiding the underlying native pointers.
 
 The generated API remains available for applications that already manage ALC
-lifetimes themselves.
+lifetimes themselves. The hand-written classes and functions described here are
+listed in the [owned backend API reference](backend-api.md).
 
 ## Playback contexts
 

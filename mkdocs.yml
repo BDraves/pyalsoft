@@ -24,6 +24,7 @@ nav:
   - API reference: api.md
   - Advanced:
       - Owned backend handles: backend.md
+      - Owned backend API: backend-api.md
       - Low-level bindings: reference.md
 
 plugins:

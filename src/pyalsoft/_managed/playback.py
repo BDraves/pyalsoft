@@ -111,6 +111,11 @@ class Playback:
     [`close_playback`][pyalsoft.close_playback] for deterministic cleanup.
     Operations are serialized per session and across sessions sharing a native
     library, so a session may safely be used from multiple Python threads.
+
+    When this session's context is still current, closing restores the context
+    that was current when the session opened. Do not construct instances
+    directly. Closing a session invalidates every [`Clip`][pyalsoft.Clip],
+    [`Voice`][pyalsoft.Voice], and [`Stream`][pyalsoft.Stream] that belongs to it.
     """
 
     __slots__ = (
@@ -848,7 +853,20 @@ def _load_playback_library(
 def list_playback_devices(
     *, library: bindings.OpenALLibrary | None = None
 ) -> tuple[PlaybackDevice, ...]:
-    """Return playback devices known to the selected OpenAL runtime."""
+    """Return playback devices known to the selected OpenAL runtime.
+
+    Args:
+        library: Loaded low-level library to query. By default, discover and load
+            the platform's OpenAL implementation.
+
+    Returns:
+        Devices in runtime order, with duplicate names removed. The tuple may be
+        empty when the runtime reports no playback devices.
+
+    Raises:
+        PlaybackOpenError: No OpenAL implementation could be loaded.
+        AudioBackendError: Device enumeration failed.
+    """
 
     library = _load_playback_library(library)
     _clear_alc_errors(library, None)
@@ -875,7 +893,27 @@ def open_playback(
     config: PlaybackConfig = _DEFAULT_PLAYBACK_CONFIG,
     library: bindings.OpenALLibrary | None = None,
 ) -> Playback:
-    """Open a managed playback session."""
+    """Open a managed playback session and make its context current.
+
+    The session restores the previously current context when it closes. Prefer a
+    ``with`` statement so native resources are released deterministically.
+
+    Args:
+        device_name: Playback device object or device specifier. ``None`` selects
+            the runtime's default playback device. A ``bytes`` value is
+            passed to OpenAL unchanged.
+        config: Context-creation preferences such as HRTF.
+        library: Loaded low-level library to use. By default, discover and load
+            the platform's OpenAL implementation.
+
+    Returns:
+        A new, open playback session.
+
+    Raises:
+        TypeError: A device or configuration argument has the wrong type.
+        PlaybackOpenError: OpenAL could not be loaded or the device, context, or
+            context activation could not be created.
+    """
 
     if not isinstance(config, PlaybackConfig):
         raise TypeError("config must be a PlaybackConfig")
@@ -921,7 +959,18 @@ def open_playback(
 
 @_serialized_playback
 def get_playback_info(playback: Playback) -> PlaybackInfo:
-    """Return observed device, renderer, version, and HRTF information."""
+    """Return observed device, renderer, version, and HRTF information.
+
+    Args:
+        playback: Open session to query.
+
+    Returns:
+        Properties reported by the active backend.
+
+    Raises:
+        PlaybackClosedError: ``playback`` is closed.
+        AudioBackendError: OpenAL rejects the query or returns incomplete data.
+    """
 
     _prepare_al(playback)
     library = playback._library
@@ -962,7 +1011,16 @@ def get_playback_info(playback: Playback) -> PlaybackInfo:
 def close_playback(playback: Playback) -> None:
     """Release every resource and close a playback session.
 
-    Closing an already closed session is harmless.
+    Closing an already closed session is harmless. All clips, voices, and
+    streams owned by the session become invalid, even when cleanup reports an
+    error.
+
+    Args:
+        playback: Session to close.
+
+    Raises:
+        TypeError: ``playback`` is not a [`Playback`][pyalsoft.Playback].
+        AudioBackendError: OpenAL reports a resource or context cleanup failure.
     """
 
     if not isinstance(playback, Playback):
@@ -1071,7 +1129,24 @@ def _close_playback(playback: Playback) -> None:
 
 @_serialized_playback
 def upload(playback: Playback, pcm: PCM) -> Clip:
-    """Upload immutable PCM data and return its opaque clip identity."""
+    """Upload immutable PCM data to a playback session.
+
+    OpenAL copies the samples into a native buffer. The returned clip may be
+    played more than once and remains owned by ``playback`` until it is released
+    explicitly or the session closes.
+
+    Args:
+        playback: Open session that will own the clip.
+        pcm: Complete PCM sample data to copy.
+
+    Returns:
+        An opaque clip identity for the uploaded audio.
+
+    Raises:
+        TypeError: ``pcm`` is not a [`PCM`][pyalsoft.PCM].
+        PlaybackClosedError: ``playback`` is closed.
+        AudioBackendError: OpenAL cannot allocate or populate the buffer.
+    """
 
     if not isinstance(pcm, PCM):
         raise TypeError("pcm must be a PCM value")
@@ -1196,7 +1271,31 @@ def open_stream(
     buffer_count: int = 4,
     config: VoiceConfig = _DEFAULT_VOICE_CONFIG,
 ) -> Stream:
-    """Create an unstarted source with a bounded pool of streaming buffers."""
+    """Create an unstarted source with a bounded pool of streaming buffers.
+
+    Queue at least one chunk with
+    [`try_write_stream`][pyalsoft.try_write_stream] before calling
+    [`start_stream`][pyalsoft.start_stream]. All chunks must use the format
+    declared here. Streams cannot use ``VoiceConfig(looping=True)``.
+
+    Args:
+        playback: Open session that will own the stream.
+        channels: Number of interleaved channels, either 1 or 2.
+        sample_rate: Positive number of sample frames per second.
+        sample_type: Representation used by each channel sample.
+        buffer_count: Positive maximum number of chunks that may be queued before
+            backpressure is reported.
+        config: Initial voice configuration. ``looping`` must be false.
+
+    Returns:
+        An opaque stream in the ``StreamState.INITIAL`` state.
+
+    Raises:
+        TypeError: A format or configuration argument has the wrong type.
+        ValueError: The format or buffer count is invalid, or looping is enabled.
+        PlaybackClosedError: ``playback`` is closed.
+        AudioBackendError: OpenAL cannot allocate or configure stream resources.
+    """
 
     _validate_stream_layout(channels, sample_rate, sample_type, buffer_count)
     if not isinstance(config, VoiceConfig):
@@ -1275,7 +1374,30 @@ def try_write_stream(
     stream: Stream,
     samples: Buffer,
 ) -> bool:
-    """Queue one complete PCM chunk, or report bounded-buffer backpressure."""
+    """Queue one complete PCM chunk, or report bounded-buffer backpressure.
+
+    This function copies ``samples`` before returning. Call
+    [`update_stream`][pyalsoft.update_stream] regularly to reclaim processed
+    buffers, then retry when this function returns ``False``.
+
+    Args:
+        playback: Session that owns ``stream``.
+        stream: Live stream that has not reached end-of-input.
+        samples: Non-empty bytes-like object containing a whole number of frames
+            in the format declared by [`open_stream`][pyalsoft.open_stream].
+
+    Returns:
+        ``True`` when the chunk was queued, or ``False`` when every stream buffer
+        is still in use. ``False`` does not consume or validate ``samples``.
+
+    Raises:
+        TypeError: ``samples`` is not bytes-like or a handle has the wrong type.
+        ValueError: ``samples`` is empty or ends with a partial frame.
+        InvalidHandleError: ``stream`` is released or belongs to another session.
+        InvalidVoiceStateError: The stream is terminal or input is already finished.
+        PlaybackClosedError: ``playback`` is closed.
+        AudioBackendError: OpenAL cannot upload or queue the chunk.
+    """
 
     record = _stream_record(playback, stream)
     if record.state in (StreamState.FINISHED, StreamState.STOPPED):
@@ -1337,7 +1459,19 @@ def try_write_stream(
 
 @_serialized_playback
 def start_stream(playback: Playback, stream: Stream) -> None:
-    """Start a primed stream for the first and only time."""
+    """Start a primed stream for the first and only time.
+
+    Args:
+        playback: Session that owns ``stream``.
+        stream: Initial stream with at least one queued chunk.
+
+    Raises:
+        InvalidHandleError: ``stream`` is released or belongs to another session.
+        InvalidVoiceStateError: The stream was already started or has no queued
+            audio.
+        PlaybackClosedError: ``playback`` is closed.
+        AudioBackendError: OpenAL cannot start playback.
+    """
 
     record = _stream_record(playback, stream)
     if record.state is not StreamState.INITIAL:
@@ -1368,7 +1502,25 @@ def _stream_status(record: _StreamRecord, offset_seconds: float = 0.0) -> Stream
 
 @_serialized_playback
 def update_stream(playback: Playback, stream: Stream) -> StreamStatus:
-    """Reclaim processed chunks, recover underruns, and return stream status."""
+    """Reclaim processed chunks, recover underruns, and return stream status.
+
+    Call this regularly while producing audio. A logically playing stream
+    restarts automatically when new audio follows an underrun. Once
+    [`finish_stream`][pyalsoft.finish_stream] has declared end-of-input, the
+    state changes to ``FINISHED`` after the queue drains.
+
+    Args:
+        playback: Session that owns ``stream``.
+        stream: Live stream to service.
+
+    Returns:
+        Current lifecycle state, queue depth, queued duration, and underrun count.
+
+    Raises:
+        InvalidHandleError: ``stream`` is released or belongs to another session.
+        PlaybackClosedError: ``playback`` is closed.
+        AudioBackendError: OpenAL reports invalid queue state or a native failure.
+    """
 
     record = _stream_record(playback, stream)
     if record.state in (StreamState.FINISHED, StreamState.STOPPED):
@@ -1426,7 +1578,21 @@ def update_stream(playback: Playback, stream: Stream) -> StreamStatus:
 
 @_serialized_playback
 def finish_stream(playback: Playback, stream: Stream) -> None:
-    """Declare end-of-input and allow already queued chunks to drain."""
+    """Declare end-of-input and allow already queued chunks to drain.
+
+    Calling this again after end-of-input is harmless. Continue calling
+    [`update_stream`][pyalsoft.update_stream] until it reports ``FINISHED``. If
+    no chunks remain, the stream becomes finished immediately.
+
+    Args:
+        playback: Session that owns ``stream``.
+        stream: Live stream that will receive no more chunks.
+
+    Raises:
+        InvalidHandleError: ``stream`` is released or belongs to another session.
+        InvalidVoiceStateError: ``stream`` was explicitly stopped.
+        PlaybackClosedError: ``playback`` is closed.
+    """
 
     record = _stream_record(playback, stream)
     if record.state is StreamState.STOPPED:
@@ -1528,14 +1694,44 @@ def _set_voice_config(
 def set_voice_config(
     playback: Playback, voice: Voice | Stream, config: VoiceConfig
 ) -> None:
-    """Apply a complete immutable configuration to a live voice or stream."""
+    """Apply a complete immutable configuration to a live voice or stream.
+
+    Existing filters, effects, and auxiliary sends are replaced by the values in
+    ``config``. Stream configurations cannot enable looping.
+
+    Args:
+        playback: Session that owns ``voice``.
+        voice: Live static voice or stream to configure.
+        config: Complete replacement configuration.
+
+    Raises:
+        TypeError: ``config`` is not a [`VoiceConfig`][pyalsoft.VoiceConfig].
+        ValueError: Looping is enabled for a stream.
+        InvalidHandleError: The handle is released or belongs to another session.
+        PlaybackClosedError: ``playback`` is closed.
+        AudioBackendError: OpenAL cannot apply the configuration or requested EFX.
+    """
 
     _set_voice_config(playback, voice, config, changed_only=False)
 
 
 @_serialized_playback
 def seek(playback: Playback, voice: Voice, offset_seconds: float) -> None:
-    """Move a static voice's playhead to an offset in source-audio seconds."""
+    """Move a static voice's playhead to a source-audio time offset.
+
+    Args:
+        playback: Session that owns ``voice``.
+        voice: Live static voice to seek.
+        offset_seconds: Finite offset greater than or equal to zero and strictly
+            less than the clip duration.
+
+    Raises:
+        TypeError: ``offset_seconds`` is not numeric or a handle has the wrong type.
+        ValueError: ``offset_seconds`` is non-finite or outside the clip.
+        InvalidHandleError: ``voice`` is released or belongs to another session.
+        PlaybackClosedError: ``playback`` is closed.
+        AudioBackendError: OpenAL cannot move the playhead.
+    """
 
     info = _voice_clip_info(playback, voice)
     offset_seconds = _sound_offset(offset_seconds, info.duration_seconds)
@@ -1547,7 +1743,22 @@ def seek(playback: Playback, voice: Voice, offset_seconds: float) -> None:
 
 @_serialized_playback
 def seek_frames(playback: Playback, voice: Voice, offset_frames: int) -> None:
-    """Move a static voice's playhead to an exact sample-frame offset."""
+    """Move a static voice's playhead to an exact sample-frame offset.
+
+    Args:
+        playback: Session that owns ``voice``.
+        voice: Live static voice to seek.
+        offset_frames: Integer frame index greater than or equal to zero and
+            strictly less than the clip's frame count.
+
+    Raises:
+        TypeError: ``offset_frames`` is not an integer or a handle has the wrong
+            type.
+        ValueError: ``offset_frames`` is outside the clip.
+        InvalidHandleError: ``voice`` is released or belongs to another session.
+        PlaybackClosedError: ``playback`` is closed.
+        AudioBackendError: OpenAL cannot move the playhead.
+    """
 
     info = _voice_clip_info(playback, voice)
     offset_frames = _frame_offset(offset_frames, info.frame_count)
@@ -1559,14 +1770,34 @@ def seek_frames(playback: Playback, voice: Voice, offset_frames: int) -> None:
 
 @_serialized_playback
 def rewind(playback: Playback, voice: Voice) -> None:
-    """Move a static voice to its beginning and set it to the initial state."""
+    """Move a static voice to its beginning and set it to the initial state.
+
+    Args:
+        playback: Session that owns ``voice``.
+        voice: Live static voice to rewind.
+
+    Raises:
+        InvalidHandleError: ``voice`` is released or belongs to another session.
+        PlaybackClosedError: ``playback`` is closed.
+        AudioBackendError: OpenAL cannot rewind the voice.
+    """
 
     _control_voice(playback, voice, "rewind")
 
 
 @_serialized_playback
 def restart(playback: Playback, voice: Voice) -> None:
-    """Rewind a static voice and immediately start it playing."""
+    """Rewind a static voice and immediately start it playing.
+
+    Args:
+        playback: Session that owns ``voice``.
+        voice: Live static voice to restart.
+
+    Raises:
+        InvalidHandleError: ``voice`` is released or belongs to another session.
+        PlaybackClosedError: ``playback`` is closed.
+        AudioBackendError: OpenAL cannot rewind or play the voice.
+    """
 
     identifier = _voice_identifier(playback, voice)
     _prepare_al(playback)
@@ -1651,7 +1882,20 @@ def _get_acoustics(playback: Playback) -> Acoustics:
 
 @_serialized_playback
 def get_voice_status(playback: Playback, voice: Voice) -> VoiceStatus:
-    """Return the current state and playback offset of a live voice."""
+    """Return the current state and playback offset of a live static voice.
+
+    Args:
+        playback: Session that owns ``voice``.
+        voice: Live static voice to query.
+
+    Returns:
+        The observed OpenAL state and source-timeline offsets.
+
+    Raises:
+        InvalidHandleError: ``voice`` is released or belongs to another session.
+        PlaybackClosedError: ``playback`` is closed.
+        AudioBackendError: OpenAL returns an unknown state or rejects the query.
+    """
 
     identifier = _voice_identifier(playback, voice)
     _prepare_al(playback)
@@ -1691,7 +1935,20 @@ def _control_voice(playback: Playback, voice: Voice, operation: str) -> None:
 
 @_serialized_playback
 def pause(playback: Playback, voice: Voice | Stream) -> None:
-    """Pause a live voice or a logically playing stream."""
+    """Pause a live voice or a logically playing stream.
+
+    Pausing a stream that is not currently playing is harmless. Static voices
+    follow the underlying OpenAL pause semantics.
+
+    Args:
+        playback: Session that owns ``voice``.
+        voice: Live static voice or stream to pause.
+
+    Raises:
+        InvalidHandleError: The handle is released or belongs to another session.
+        PlaybackClosedError: ``playback`` is closed.
+        AudioBackendError: OpenAL cannot pause the source.
+    """
 
     if isinstance(voice, Stream):
         record = _stream_record(playback, voice)
@@ -1708,7 +1965,18 @@ def pause(playback: Playback, voice: Voice | Stream) -> None:
 
 @_serialized_playback
 def resume(playback: Playback, voice: Voice | Stream) -> None:
-    """Resume a paused voice or stream."""
+    """Resume a paused voice or stream.
+
+    Args:
+        playback: Session that owns ``voice``.
+        voice: Paused static voice or stream to resume.
+
+    Raises:
+        InvalidHandleError: The handle is released or belongs to another session.
+        InvalidVoiceStateError: ``voice`` is not paused.
+        PlaybackClosedError: ``playback`` is closed.
+        AudioBackendError: OpenAL cannot resume the source.
+    """
 
     if isinstance(voice, Stream):
         record = _stream_record(playback, voice)
@@ -1734,7 +2002,21 @@ def resume(playback: Playback, voice: Voice | Stream) -> None:
 
 @_serialized_playback
 def stop(playback: Playback, voice: Voice | Stream) -> None:
-    """Stop a live voice or discard a stream's queued audio."""
+    """Stop a live voice or discard a stream's queued audio.
+
+    Stopping a terminal stream is harmless. The handle remains allocated until
+    [`release`][pyalsoft.release],
+    [`release_finished`][pyalsoft.release_finished], or session closure.
+
+    Args:
+        playback: Session that owns ``voice``.
+        voice: Live static voice or stream to stop.
+
+    Raises:
+        InvalidHandleError: The handle is released or belongs to another session.
+        PlaybackClosedError: ``playback`` is closed.
+        AudioBackendError: OpenAL cannot stop the source or discard stream buffers.
+    """
 
     if isinstance(voice, Stream):
         record = _stream_record(playback, voice)
@@ -1768,6 +2050,16 @@ def release_finished(playback: Playback) -> int:
     OpenAL reports both naturally completed and explicitly stopped voices as
     stopped. Streams are collected only after their managed state becomes
     ``FINISHED`` or ``STOPPED``; this function never updates active streams.
+
+    Args:
+        playback: Open session whose terminal resources should be released.
+
+    Returns:
+        Total number of released static voices and streams.
+
+    Raises:
+        PlaybackClosedError: ``playback`` is closed.
+        AudioBackendError: OpenAL cannot query or release the resources.
     """
 
     _prepare_al(playback)
@@ -1842,7 +2134,23 @@ def release(playback: Playback, resource: Stream) -> None: ...
 
 
 def release(playback: Playback, resource: Clip | Voice | Stream) -> None:
-    """Release a clip, voice, or stream before its playback session closes."""
+    """Release a clip, voice, or stream before its playback session closes.
+
+    Releasing a voice stops it. Releasing a stream stops it and discards queued
+    audio. A clip cannot be released while any live voice still refers to it.
+    Every successful release permanently invalidates the handle.
+
+    Args:
+        playback: Session that owns ``resource``.
+        resource: Live clip, static voice, or stream to release.
+
+    Raises:
+        TypeError: ``resource`` is not a supported handle.
+        InvalidHandleError: The handle is released or belongs to another session.
+        ResourceInUseError: ``resource`` is a clip attached to a live voice.
+        PlaybackClosedError: ``playback`` is closed.
+        AudioBackendError: OpenAL cannot release the native resources.
+    """
 
     _release(playback, resource)
 

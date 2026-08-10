@@ -31,9 +31,23 @@ if TYPE_CHECKING:
 class Device:
     """An owned ALC device handle.
 
-    Use the more specific :class:`PlaybackDevice`, :class:`LoopbackDevice`, or
-    :class:`CaptureDevice` subclasses returned by the module-level open helpers.
-    Closing a device first closes contexts created through that device.
+    Do not construct instances directly. Use the more specific ``PlaybackDevice``,
+    ``LoopbackDevice``, or ``CaptureDevice`` returned by the module-level open
+    helpers. Closing a playback device first closes every context created through
+    it. Context-manager exit calls ``close``.
+
+    Extension-backed properties raise ``ExtensionUnavailableError`` when the
+    device does not expose their named extension. Access requiring a native handle
+    raises ``HandleClosedError`` after closure. Query helpers forward directly to
+    generated commands; callers remain responsible for the native ALC error state.
+
+    Attributes:
+        library: Loaded OpenAL library that owns the command wrappers.
+        closed: Whether the native device has been closed.
+        handle: Native ALC device pointer for generated raw calls.
+        name: Implementation-provided device specifier, when available.
+        extensions: Extension names reported for this device.
+        version: Reported ALC major and minor version.
     """
 
     def __init__(self, library: OpenALLibrary, handle: object) -> None:
@@ -50,24 +64,58 @@ class Device:
 
     @property
     def handle(self) -> object:
-        """The underlying ALC device pointer for raw generated calls."""
+        """The underlying ALC device pointer for raw generated calls.
+
+        Raises:
+            HandleClosedError: This device has been closed.
+        """
 
         if self._handle is None:
             raise HandleClosedError("ALC device is closed")
         return self._handle
 
     def require_extension(self, name: str) -> None:
-        """Require an ALC extension on this device."""
+        """Require an ALC extension on this device.
+
+        Args:
+            name: Registry extension name.
+
+        Raises:
+            KeyError: ``name`` is not a known registry extension.
+            HandleClosedError: This device is closed.
+            ExtensionUnavailableError: The device does not report ``name``.
+        """
 
         self.library.extensions[name].require(self.handle)
 
     def is_extension_present(self, name: str) -> bool:
-        """Return whether an ALC extension is present on this device."""
+        """Return whether an ALC extension is present on this device.
+
+        Args:
+            name: ASCII registry extension name.
+
+        Returns:
+            Whether the device reports the extension.
+
+        Raises:
+            HandleClosedError: This device is closed.
+            ValueError: ``name`` contains non-ASCII characters.
+        """
 
         return self.library.is_alc_extension_present(name, self.handle)
 
     def get_string(self, parameter: _enums.ALCContextString | int) -> str | None:
-        """Query one device string through ``alcGetString``."""
+        """Query one device string through ``alcGetString``.
+
+        Args:
+            parameter: ALC string selector.
+
+        Returns:
+            Decoded implementation string, or ``None`` for a null result.
+
+        Raises:
+            HandleClosedError: This device is closed.
+        """
 
         return self.library.alc.get_string(self.handle, parameter)
 
@@ -76,7 +124,20 @@ class Device:
         parameter: _enums.ALCContextInteger | int,
         count: int = 1,
     ) -> tuple[int, ...]:
-        """Query one or more device integers through ``alcGetIntegerv``."""
+        """Query one or more device integers through ``alcGetIntegerv``.
+
+        Args:
+            parameter: ALC integer selector.
+            count: Positive number of integers to return.
+
+        Returns:
+            Exactly ``count`` integer values.
+
+        Raises:
+            TypeError: ``count`` is not an integer.
+            ValueError: ``count`` is less than one.
+            HandleClosedError: This device is closed.
+        """
 
         if isinstance(count, bool) or not isinstance(count, int):
             raise TypeError("count must be an integer")
@@ -85,12 +146,36 @@ class Device:
         return self.library.alc.get_integerv(self.handle, parameter, count)
 
     def get_integer(self, parameter: _enums.ALCContextInteger | int) -> int:
-        """Query one device integer through ``alcGetIntegerv``."""
+        """Query one device integer through ``alcGetIntegerv``.
+
+        Args:
+            parameter: ALC integer selector.
+
+        Returns:
+            The queried integer value.
+
+        Raises:
+            HandleClosedError: This device is closed.
+        """
 
         return self.get_integers(parameter)[0]
 
     def get_integer64s(self, parameter: int, count: int = 1) -> tuple[int, ...]:
-        """Query device clock values through ``ALC_SOFT_device_clock``."""
+        """Query device clock values through ``ALC_SOFT_device_clock``.
+
+        Args:
+            parameter: Extension integer selector.
+            count: Positive number of 64-bit integers to return.
+
+        Returns:
+            Exactly ``count`` integer values.
+
+        Raises:
+            TypeError: ``count`` is not an integer.
+            ValueError: ``count`` is less than one.
+            HandleClosedError: This device is closed.
+            ExtensionUnavailableError: ``ALC_SOFT_device_clock`` is unavailable.
+        """
 
         if isinstance(count, bool) or not isinstance(count, int):
             raise TypeError("count must be an integer")
@@ -158,7 +243,20 @@ class Device:
         return self.get_integer(_constants.ALC_NUM_HRTF_SPECIFIERS_SOFT)
 
     def get_hrtf_specifier(self, index: int) -> str | None:
-        """Return one available HRTF specifier by index."""
+        """Return one available HRTF specifier by index.
+
+        Args:
+            index: Non-negative index less than ``hrtf_specifier_count``.
+
+        Returns:
+            Implementation-provided HRTF name, or ``None`` for a null result.
+
+        Raises:
+            TypeError: ``index`` is not an integer.
+            ValueError: ``index`` is negative.
+            HandleClosedError: This device is closed.
+            ExtensionUnavailableError: ``ALC_SOFT_HRTF`` is unavailable.
+        """
 
         if isinstance(index, bool) or not isinstance(index, int):
             raise TypeError("index must be an integer")
@@ -225,7 +323,15 @@ class Device:
         )
 
     def close(self) -> None:
-        """Close owned contexts and then the native device."""
+        """Close owned contexts and then the native device.
+
+        Contexts are closed in reverse creation order. Calling this again after a
+        successful close is harmless. Exceptions raised while closing an owned
+        context propagate and leave the device open.
+
+        Raises:
+            DeviceCloseError: OpenAL refuses to close the native device.
+        """
 
         with self.library._context_lock, self._lock:
             if self._handle is None:
@@ -264,10 +370,22 @@ class Device:
 
 
 class PlaybackDevice(Device):
-    """An owned playback device that can create AL contexts."""
+    """An owned playback device that can create and own AL contexts."""
 
     def create_context(self, attributes: Sequence[int] | None = None) -> Context:
-        """Create an owned context attached to this device."""
+        """Create an owned context attached to this device.
+
+        Args:
+            attributes: Flat ALC attribute/value sequence terminated by the
+                generated wrapper. ``None`` requests backend defaults.
+
+        Returns:
+            Open context owned by this device.
+
+        Raises:
+            HandleClosedError: This device is closed.
+            ContextCreateError: OpenAL cannot create the requested context.
+        """
 
         from pyalsoft.bindings._alc.context import Context
 
@@ -283,7 +401,11 @@ class PlaybackDevice(Device):
 
 
 class LoopbackDevice(PlaybackDevice):
-    """An ``ALC_SOFT_loopback`` device for deterministic offline rendering."""
+    """An ``ALC_SOFT_loopback`` device for deterministic offline rendering.
+
+    Create a context with explicit loopback format attributes, start AL sources,
+    then render frames into caller-owned writable storage with ``render_samples``.
+    """
 
     def is_render_format_supported(
         self,
@@ -291,7 +413,19 @@ class LoopbackDevice(PlaybackDevice):
         channels: _enums.ALCRenderFormatChannelSOFT | int,
         sample_type: _enums.ALCRenderFormatTypeSOFT | int,
     ) -> bool:
-        """Return whether a loopback render format is supported."""
+        """Return whether a loopback render format is supported.
+
+        Args:
+            frequency: Requested sample rate in frames per second.
+            channels: ``ALC_SOFT_loopback`` channel-layout value.
+            sample_type: ``ALC_SOFT_loopback`` sample representation.
+
+        Returns:
+            Whether the device accepts this exact render format.
+
+        Raises:
+            HandleClosedError: This device is closed.
+        """
 
         return self.library.alc.is_render_format_supported_soft(
             self.handle,
@@ -301,7 +435,20 @@ class LoopbackDevice(PlaybackDevice):
         )
 
     def render_samples(self, buffer: object, samples: int) -> None:
-        """Render *samples* frames into caller-owned writable storage."""
+        """Render frames into caller-owned writable storage.
+
+        The caller must size ``buffer`` for ``samples`` complete frames in the
+        format selected when creating the active loopback context.
+
+        Args:
+            buffer: Writable buffer accepted by the generated command wrapper.
+            samples: Non-negative number of sample frames to render.
+
+        Raises:
+            TypeError: ``samples`` is not an integer or ``buffer`` is incompatible.
+            ValueError: ``samples`` is negative.
+            HandleClosedError: This device is closed.
+        """
 
         if isinstance(samples, bool) or not isinstance(samples, int):
             raise TypeError("samples must be an integer")
@@ -311,7 +458,22 @@ class LoopbackDevice(PlaybackDevice):
 
 
 class CaptureDevice(Device):
-    """An owned input device opened through the core ALC capture API."""
+    """An owned input device opened through the core ALC capture API.
+
+    Do not construct instances directly. Use ``open_capture_device``. The handle
+    remembers the requested format for callers but does not convert captured
+    samples.
+
+    Attributes:
+        library: Loaded OpenAL library used by this device.
+        frequency: Capture sample rate in frames per second.
+        format: OpenAL sample-format value requested at open time.
+        available_samples: Number of complete frames currently ready to read.
+        name: Implementation-provided capture device specifier.
+        capturing: Whether ``start`` has been called without a matching ``stop``.
+        closed: Whether the native capture device has been closed.
+        handle: Native ALC capture-device pointer for generated raw calls.
+    """
 
     def __init__(
         self,
@@ -345,7 +507,13 @@ class CaptureDevice(Device):
         return self._capturing
 
     def start(self) -> None:
-        """Start input capture. Calling this while started is harmless."""
+        """Start input capture.
+
+        Calling this while capture is already started is harmless.
+
+        Raises:
+            HandleClosedError: This capture device is closed.
+        """
 
         if self._capturing:
             return
@@ -353,7 +521,11 @@ class CaptureDevice(Device):
         self._capturing = True
 
     def stop(self) -> None:
-        """Stop input capture. Buffered samples remain available."""
+        """Stop input capture while preserving buffered samples.
+
+        Calling this while capture is not started is harmless.
+
+        """
 
         if not self._capturing:
             return
@@ -361,7 +533,20 @@ class CaptureDevice(Device):
         self._capturing = False
 
     def read_samples(self, buffer: object, samples: int) -> None:
-        """Read capture frames into caller-owned writable storage."""
+        """Read capture frames into caller-owned writable storage.
+
+        The caller must provide storage for ``samples`` complete frames in this
+        device's ``format`` and should not request more than ``available_samples``.
+
+        Args:
+            buffer: Writable buffer accepted by the generated command wrapper.
+            samples: Non-negative number of sample frames to read.
+
+        Raises:
+            TypeError: ``samples`` is not an integer or ``buffer`` is incompatible.
+            ValueError: ``samples`` is negative.
+            HandleClosedError: This capture device is closed.
+        """
 
         if isinstance(samples, bool) or not isinstance(samples, int):
             raise TypeError("samples must be an integer")
@@ -370,6 +555,14 @@ class CaptureDevice(Device):
         self.library.alc.capture_samples(self.handle, buffer, samples)
 
     def close(self) -> None:
+        """Stop capture and close the native capture device.
+
+        Calling this again after a successful close is harmless.
+
+        Raises:
+            DeviceCloseError: OpenAL refuses to close the native capture device.
+        """
+
         if not self.closed:
             self.stop()
         super().close()
@@ -398,7 +591,23 @@ def open_device(
     library: OpenALLibrary | None = None,
     path: LibraryPath | None = None,
 ) -> PlaybackDevice:
-    """Open an owned playback device."""
+    """Open an owned playback device.
+
+    Args:
+        name: Device specifier as text or encoded bytes. ``None`` selects the
+            implementation's default playback device.
+        library: Existing loaded library to use.
+        path: Shared-library path to load when ``library`` is omitted.
+
+    Returns:
+        Open playback device that owns contexts created through it.
+
+    Raises:
+        TypeError: ``name`` or ``path`` has an unsupported type.
+        ValueError: ``library`` and ``path`` are both supplied.
+        DeviceOpenError: OpenAL cannot be loaded or the requested device cannot
+            be opened.
+    """
 
     selected = _selected_library(library, path)
     handle = selected.alc.open_device(name)
@@ -413,7 +622,23 @@ def open_loopback_device(
     library: OpenALLibrary | None = None,
     path: LibraryPath | None = None,
 ) -> LoopbackDevice:
-    """Open an owned ``ALC_SOFT_loopback`` device."""
+    """Open an owned ``ALC_SOFT_loopback`` device.
+
+    Args:
+        name: Device specifier as text or encoded bytes. ``None`` selects the
+            implementation's default loopback device.
+        library: Existing loaded library to use.
+        path: Shared-library path to load when ``library`` is omitted.
+
+    Returns:
+        Open loopback device for context creation and offline rendering.
+
+    Raises:
+        TypeError: ``name`` or ``path`` has an unsupported type.
+        ValueError: ``library`` and ``path`` are both supplied.
+        DeviceOpenError: OpenAL cannot be loaded or a loopback device cannot open.
+        ExtensionUnavailableError: ``ALC_SOFT_loopback`` is unavailable.
+    """
 
     selected = _selected_library(library, path)
     selected.extensions["ALC_SOFT_loopback"].require()
@@ -432,7 +657,31 @@ def open_capture_device(
     library: OpenALLibrary | None = None,
     path: LibraryPath | None = None,
 ) -> CaptureDevice:
-    """Open an owned core ALC capture device."""
+    """Open an owned core ALC capture device.
+
+    ``buffer_size`` controls the native capture ring capacity; it is measured in
+    sample frames, not bytes.
+
+    Args:
+        frequency: Positive capture sample rate in frames per second.
+        format: Core OpenAL mono or stereo sample-format value.
+        buffer_size: Positive native capture-buffer capacity in sample frames.
+        name: Device specifier as text or encoded bytes. ``None`` selects the
+            implementation's default capture device.
+        library: Existing loaded library to use.
+        path: Shared-library path to load when ``library`` is omitted.
+
+    Returns:
+        Open capture device with explicit start, stop, and read operations.
+
+    Raises:
+        TypeError: A name, path, format, frequency, or buffer size has an
+            unsupported type.
+        ValueError: A size is non-positive or ``library`` and ``path`` are both
+            supplied.
+        DeviceOpenError: OpenAL cannot be loaded or the requested capture device
+            cannot be opened.
+    """
 
     if isinstance(frequency, bool) or not isinstance(frequency, int):
         raise TypeError("frequency must be an integer")

@@ -45,7 +45,8 @@ play("notification.wav")
   device selection, HRTF, and deterministic resource lifetimes.
 - The [API reference](api.md) documents every public class and function in the
   managed API.
-- [Owned backend handles](backend.md) and the
+- [Owned backend handles](backend.md), the
+  [owned backend API reference](backend-api.md), and the
   [low-level bindings reference](reference.md) document direct OpenAL access.
 
 Complete runnable programs are available in the
