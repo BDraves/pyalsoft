@@ -9,7 +9,12 @@ from dataclasses import dataclass
 from threading import Event, RLock, Thread
 
 from pyalsoft import bindings
-from pyalsoft._playback import PCM, AudioBackendError, AudioError, SampleType
+from pyalsoft._managed.models import (
+    PCM,
+    AudioBackendError,
+    AudioError,
+    SampleType,
+)
 
 
 class CaptureOpenError(AudioError):

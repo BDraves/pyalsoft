@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-import pyalsoft._playback as playback
+import pyalsoft._managed.sound as sound_module
 from pyalsoft import (
     PCM,
     Acoustics,
@@ -42,7 +42,7 @@ from pyalsoft import (
     update_acoustics,
     update_listener,
 )
-from tests.test_playback import FakeLibrary, as_library
+from tests._support.managed_backend import FakeLibrary, as_library
 
 
 def _write_wave(
@@ -68,7 +68,7 @@ def default_library(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeLibrary]:
     shutdown()
     library = FakeLibrary()
     monkeypatch.setattr(
-        playback,
+        sound_module,
         "open_playback",
         lambda: open_playback(library=as_library(library)),
     )

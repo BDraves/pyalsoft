@@ -9,7 +9,7 @@ from typing import cast
 
 import pytest
 
-import pyalsoft._capture as capture
+import pyalsoft._managed.capture as capture
 from pyalsoft import (
     AudioBackendError,
     CaptureDevice,
