@@ -4,6 +4,13 @@ Notable user-facing changes to PyALSoft are documented here.
 
 ## Unreleased
 
+## 1.0.1 - 2026.08.13
+
+### Added
+
+- Added `play_stationary()` for non-spatial convenience playback that bypasses
+  position, distance, Doppler, directional-cone, and HRTF processing. (@BDraves)
+
 ## 1.0.0 - 2026-08-10
 
 ### Added

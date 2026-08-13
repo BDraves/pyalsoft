@@ -1184,6 +1184,7 @@ def _create_voice(
     offset_seconds: float = 0.0,
     offset_frames: int | None = None,
     start: bool = True,
+    spatialize: bool | None = None,
 ) -> Voice:
     """Create one configured static voice and optionally start it."""
 
@@ -1191,11 +1192,19 @@ def _create_voice(
         raise TypeError("config must be a VoiceConfig")
     if not isinstance(start, bool):
         raise TypeError("start must be a boolean")
+    if spatialize is not None and not isinstance(spatialize, bool):
+        raise TypeError("spatialize must be a boolean or None")
     clip_identifier = _clip_identifier(playback, clip)
     offset_seconds, offset_frames = _validate_offsets(
         clip.info, offset_seconds, offset_frames
     )
     _prepare_al(playback)
+    if spatialize is not None and not playback._library.is_al_extension_present(
+        "AL_SOFT_source_spatialize"
+    ):
+        raise AudioBackendError(
+            "play_stationary requires the AL_SOFT_source_spatialize extension"
+        )
     identifiers = playback._library.al.gen_sources()
     if len(identifiers) != 1:
         raise AudioBackendError("OpenAL did not create exactly one source")
@@ -1204,6 +1213,12 @@ def _create_voice(
     try:
         _check_al_error(playback, "create voice")
         _apply_voice_config(playback, identifier, config)
+        if spatialize is not None:
+            playback._library.al.sourcei(
+                identifier,
+                bindings.AL_SOURCE_SPATIALIZE_SOFT,
+                bindings.AL_TRUE if spatialize else bindings.AL_FALSE,
+            )
         playback._library.al.sourcei(identifier, bindings.AL_BUFFER, clip_identifier)
         if offset_frames is not None:
             playback._library.al.sourcei(
@@ -1248,6 +1263,7 @@ def _play_voice(
     *,
     offset_seconds: float = 0.0,
     offset_frames: int | None = None,
+    spatialize: bool | None = None,
 ) -> Voice:
     """Create and immediately play one voice using a clip."""
 
@@ -1258,6 +1274,7 @@ def _play_voice(
         offset_seconds=offset_seconds,
         offset_frames=offset_frames,
         start=True,
+        spatialize=spatialize,
     )
 
 
