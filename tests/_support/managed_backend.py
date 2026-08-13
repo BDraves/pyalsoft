@@ -388,6 +388,10 @@ class FakeLibrary:
         self.al = FakeAL()
         self.alc = FakeALC()
         self._context_lock = RLock()
+        self.al_extensions = {"AL_SOFT_source_spatialize"}
+
+    def is_al_extension_present(self, extension: str) -> bool:
+        return extension in self.al_extensions
 
 
 def as_library(library: FakeLibrary) -> bindings.OpenALLibrary:

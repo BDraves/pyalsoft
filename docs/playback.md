@@ -65,6 +65,21 @@ remains unchanged. For sample-accurate work, use `offset_frames`,
 `rewind()` follows OpenAL behavior by moving to the beginning and entering the
 `INITIAL` state. `restart()` moves to the beginning and immediately plays.
 
+For sounds attached to the player, UI sounds, and other sources that should not
+use position, distance attenuation, directional cones, Doppler shift, or HRTF
+positioning, use [`play_stationary()`][pyalsoft.play_stationary]:
+
+```python
+from pyalsoft import play_stationary
+
+footstep = play_stationary("footstep.wav", gain=0.8)
+```
+
+This explicitly disables source spatialization. It does not disable sample-rate
+conversion when the source and output-device rates differ. The bundled runtime
+supports this behavior; a separately installed OpenAL implementation must expose
+`AL_SOFT_source_spatialize`.
+
 ## Inspect a sound
 
 Format and length information is available without opening an audio device:

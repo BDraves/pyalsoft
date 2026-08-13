@@ -35,6 +35,7 @@ from pyalsoft import (
     get_sound_info,
     open_playback,
     play,
+    play_stationary,
     set_acoustics,
     set_listener,
     set_sound_cache_limit,
@@ -150,6 +151,33 @@ def test_default_runtime_plays_in_memory_pcm(
     )
     default_library.al.states[101] = bindings.AL_STOPPED
     assert sound.finished
+    assert default_library.al.allocated_buffers == set()
+
+
+def test_play_stationary_disables_spatialization_across_restarts(
+    default_library: FakeLibrary,
+) -> None:
+    pcm = PCM(b"\0\0" * 8, channels=1, sample_rate=8_000)
+
+    sound = play_stationary(pcm, gain=0.5)
+
+    assert default_library.al.sources[100][bindings.AL_SOURCE_SPATIALIZE_SOFT] == 0
+    assert default_library.al.sources[100][bindings.AL_GAIN] == 0.5
+    sound.stop()
+    sound.restart()
+    assert default_library.al.sources[101][bindings.AL_SOURCE_SPATIALIZE_SOFT] == 0
+
+
+def test_play_stationary_requires_source_spatialize_extension(
+    default_library: FakeLibrary,
+) -> None:
+    default_library.al_extensions.clear()
+    pcm = PCM(b"\0\0", channels=1, sample_rate=8_000)
+
+    with pytest.raises(AudioError, match="AL_SOFT_source_spatialize"):
+        play_stationary(pcm)
+
+    assert default_library.al.sources == {}
     assert default_library.al.allocated_buffers == set()
 
 

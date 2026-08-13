@@ -40,6 +40,9 @@ while sound.playing:
     time.sleep(0.1)
 ```
 
+Use `play_stationary("sound.wav")` for player-attached or UI audio that should
+not receive positional, distance, Doppler, or HRTF processing.
+
 The managed API also supports spatial audio, effects and filters, recording,
 streaming, device selection, HRTF, and explicit playback sessions. See the
 [documentation](https://bdraves.github.io/pyalsoft/) for guides and the complete

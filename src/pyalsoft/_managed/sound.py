@@ -80,6 +80,7 @@ class _SoundRecord:
     path: Path | None
     pcm: PCM | None
     config: VoiceConfig
+    spatialize: bool | None = None
     final_status: VoiceStatus | None = None
     end_reason: SoundEndReason | None = None
 
@@ -799,6 +800,7 @@ class _DefaultRuntime:
                 offset_seconds=offset_seconds,
                 offset_frames=offset_frames,
                 start=start,
+                spatialize=record.spatialize,
             )
         except BaseException:
             if uploaded:
@@ -849,6 +851,7 @@ class _DefaultRuntime:
         *,
         offset_seconds: float = 0.0,
         offset_frames: int | None = None,
+        spatialize: bool | None = None,
     ) -> PlayingSound:
         if not isinstance(config, VoiceConfig):
             raise TypeError("config must be a VoiceConfig")
@@ -891,6 +894,7 @@ class _DefaultRuntime:
                     config,
                     offset_seconds=offset_seconds,
                     offset_frames=offset_frames,
+                    spatialize=spatialize,
                 )
             except BaseException:
                 if isinstance(sound, PCM):
@@ -909,6 +913,7 @@ class _DefaultRuntime:
                 path=normalized,
                 pcm=sound if isinstance(sound, PCM) else None,
                 config=config,
+                spatialize=spatialize,
             )
             self._active[token] = record
             return PlayingSound(self, record)
@@ -1648,6 +1653,112 @@ def play(
         resolved_config,
         offset_seconds=offset_seconds,
         offset_frames=offset_frames,
+    )
+
+
+def play_stationary(
+    sound: AudioPath | PCM,
+    /,
+    *,
+    config: VoiceConfig | None = None,
+    position: Vector3 | None = None,
+    velocity: Vector3 | None = None,
+    direction: Vector3 | None = None,
+    gain: float | None = None,
+    pitch: float | None = None,
+    looping: bool | None = None,
+    relative: bool | None = None,
+    min_gain: float | None = None,
+    max_gain: float | None = None,
+    reference_distance: float | None = None,
+    max_distance: float | None = None,
+    rolloff_factor: float | None = None,
+    cone_inner_angle: float | None = None,
+    cone_outer_angle: float | None = None,
+    cone_outer_gain: float | None = None,
+    filter: Filter | None = _OMITTED_FILTER,
+    effect_sends: tuple[EffectSend, ...] | list[EffectSend] | None = None,
+    offset_seconds: float = 0.0,
+    offset_frames: int | None = None,
+) -> PlayingSound:
+    """Play a sound without spatial rendering through the convenience runtime.
+
+    This is the non-spatial counterpart to ``play(sound, ...)``. It disables
+    OpenAL source spatialization, so position, distance attenuation, directional
+    cones, Doppler shift, and HRTF positioning do not affect the dry source.
+    Other controls, including gain, pitch, looping, filters, effects, and
+    timeline offsets, behave as they do for [`play`][pyalsoft.play].
+
+    The bundled OpenAL Soft runtime supports the required
+    ``AL_SOFT_source_spatialize`` extension. A separately installed OpenAL
+    implementation may not.
+
+    Args:
+        sound: WAV path or in-memory [`PCM`][pyalsoft.PCM] value.
+        config: Base voice configuration. ``None`` uses all defaults.
+        position: Stored source position; ignored by non-spatial rendering.
+        velocity: Stored source velocity; ignored by non-spatial rendering.
+        direction: Stored cone direction; ignored by non-spatial rendering.
+        gain: Non-negative linear gain.
+        pitch: Playback-rate multiplier from 0.5 through 2.0.
+        looping: Whether the complete source repeats.
+        relative: Stored coordinate mode; ignored by non-spatial rendering.
+        min_gain: Lower post-processing gain clamp.
+        max_gain: Upper post-processing gain clamp.
+        reference_distance: Stored reference distance; ignored by non-spatial
+            rendering.
+        max_distance: Stored maximum distance; ignored by non-spatial rendering.
+        rolloff_factor: Stored distance rolloff; ignored by non-spatial rendering.
+        cone_inner_angle: Stored inner cone angle; ignored by non-spatial
+            rendering.
+        cone_outer_angle: Stored outer cone angle; ignored by non-spatial
+            rendering.
+        cone_outer_gain: Stored outer cone gain; ignored by non-spatial rendering.
+        filter: Direct EFX filter, or ``None`` to remove the base filter.
+        effect_sends: Ordered auxiliary EFX routes. An empty sequence removes all.
+        offset_seconds: Initial position in source-audio seconds.
+        offset_frames: Exact initial sample-frame index. When provided,
+            ``offset_seconds`` must remain 0.0.
+
+    Returns:
+        A [`PlayingSound`][pyalsoft.PlayingSound] owned by the convenience runtime.
+
+    Raises:
+        TypeError: The sound or an argument has the wrong type.
+        ValueError: A configuration or initial offset is invalid.
+        AudioFileError: A WAV file cannot be read or has an unsupported format.
+        PlaybackOpenError: The convenience runtime cannot open an audio session.
+        AudioBackendError: OpenAL cannot disable spatialization or start playback.
+    """
+
+    if not isinstance(sound, (str, PathLike, PCM)):
+        raise TypeError("sound must be a path to a WAV file or a PCM value")
+    resolved_config = _voice_config_with_overrides(
+        config,
+        position=position,
+        velocity=velocity,
+        direction=direction,
+        gain=gain,
+        pitch=pitch,
+        looping=looping,
+        relative=relative,
+        min_gain=min_gain,
+        max_gain=max_gain,
+        reference_distance=reference_distance,
+        max_distance=max_distance,
+        rolloff_factor=rolloff_factor,
+        cone_inner_angle=cone_inner_angle,
+        cone_outer_angle=cone_outer_angle,
+        cone_outer_gain=cone_outer_gain,
+        filter=filter,
+        effect_sends=effect_sends,
+    )
+    return _get_default_runtime().play(
+        sound,
+        resolved_config,
+        offset_seconds=offset_seconds,
+        offset_frames=offset_frames,
+        spatialize=False,
     )
 
 
