@@ -289,8 +289,7 @@ _FILTER_TYPES = (LowPassFilter, HighPassFilter, BandPassFilter)
 def _validate_filter(name: str, value: object) -> None:
     if value is not None and not isinstance(value, _FILTER_TYPES):
         raise TypeError(
-            f"{name} must be a LowPassFilter, HighPassFilter, "
-            "BandPassFilter, or None"
+            f"{name} must be a LowPassFilter, HighPassFilter, BandPassFilter, or None"
         )
 
 
