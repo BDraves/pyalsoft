@@ -4,7 +4,7 @@ Notable user-facing changes to PyALSoft are documented here.
 
 ## 1.1.1 - 2026.08.14
 
-## Added
+### Added
 
 - Added `direct_channels=True` playback, including automatic mono-to-stereo
   expansion for convenience playback, to bypass HRTF virtualization. (@BDraves)
