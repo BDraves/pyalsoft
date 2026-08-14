@@ -4,6 +4,8 @@ Notable user-facing changes to PyALSoft are documented here.
 
 ## Unreleased
 
+## 1.0.2 - 2026.08.13
+
 ### Changed
 
 - Replaced `play_stationary()` with the `spatialize` keyword on `play()`, which
