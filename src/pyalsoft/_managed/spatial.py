@@ -1,20 +1,18 @@
-"""Values and opaque handles shared by the managed audio APIs."""
+"""Spatial, acoustic, and effects configuration values."""
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from os import PathLike
 from typing import cast
+
+from pyalsoft._managed.audio import SoundInfo
 
 type Vector3 = tuple[float, float, float]
 """A Cartesian ``(x, y, z)`` vector used for spatial coordinates."""
 
-type AudioPath = str | PathLike[str]
-
 _FLOAT32_MAX = float.fromhex("0x1.fffffep+127")
-_DEFAULT_SOUND_CACHE_LIMIT = 64 * 1024 * 1024
 
 
 class _UnsetType:
@@ -25,106 +23,6 @@ class _UnsetType:
 
 
 _UNSET = _UnsetType()
-
-
-class AudioError(Exception):
-    """Base exception for the managed audio API."""
-
-
-class AudioFileError(AudioError):
-    """Raised when a file cannot be decoded by the convenience API."""
-
-
-class PlaybackOpenError(AudioError):
-    """Raised when a playback device or context cannot be opened."""
-
-
-class AudioBackendError(AudioError):
-    """Raised when OpenAL rejects a managed API operation."""
-
-
-class PlaybackClosedError(AudioError):
-    """Raised when an operation uses a closed playback session."""
-
-
-class InvalidHandleError(AudioError):
-    """Raised when a resource is stale or belongs to another session."""
-
-
-class ResourceInUseError(AudioError):
-    """Raised when a resource is still referenced by another live resource."""
-
-
-class InvalidVoiceStateError(AudioError):
-    """Raised when an operation is not valid for a voice's current state."""
-
-
-class SampleType(Enum):
-    """PCM sample representations supported by the managed API.
-
-    Attributes:
-        UINT8: Unsigned 8-bit samples, with silence at 128.
-        INT16: Signed 16-bit samples, with silence at 0.
-    """
-
-    UINT8 = "uint8"
-    INT16 = "int16"
-
-    @property
-    def byte_width(self) -> int:
-        """Number of bytes used by one channel sample."""
-
-        return 1 if self is SampleType.UINT8 else 2
-
-
-class VoiceState(Enum):
-    """Observed playback state of a static voice.
-
-    Attributes:
-        INITIAL: Ready to play from the beginning.
-        PLAYING: Currently advancing through the clip.
-        PAUSED: Paused at the current playhead position.
-        STOPPED: Finished naturally or explicitly stopped.
-    """
-
-    INITIAL = "initial"
-    PLAYING = "playing"
-    PAUSED = "paused"
-    STOPPED = "stopped"
-
-
-class StreamState(Enum):
-    """Managed lifecycle state of a stream.
-
-    Attributes:
-        INITIAL: Created but not yet started.
-        PLAYING: Started and logically playing, including during an underrun.
-        PAUSED: Explicitly paused.
-        FINISHED: End-of-input was declared and all queued audio drained.
-        STOPPED: Explicitly stopped; queued audio was discarded.
-    """
-
-    INITIAL = "initial"
-    PLAYING = "playing"
-    PAUSED = "paused"
-    FINISHED = "finished"
-    STOPPED = "stopped"
-
-
-class SoundEndReason(Enum):
-    """Why a convenience playback handle entered its terminal state.
-
-    Attributes:
-        FINISHED: Playback reached the end of the source naturally.
-        STOPPED: The sound was stopped explicitly.
-        SHUTDOWN: The convenience runtime was shut down while the sound was active.
-        DEVICE_LOST: The backend reported that the playback device disconnected.
-    """
-
-    FINISHED = "finished"
-    STOPPED = "stopped"
-    SHUTDOWN = "shutdown"
-    DEVICE_LOST = "device_lost"
 
 
 class DistanceModel(Enum):
@@ -151,30 +49,6 @@ class DistanceModel(Enum):
     LINEAR_CLAMPED = "linear_clamped"
     EXPONENT = "exponent"
     EXPONENT_CLAMPED = "exponent_clamped"
-
-
-class HRTFStatus(Enum):
-    """Observed HRTF state for an open playback session.
-
-    Attributes:
-        UNAVAILABLE: The device does not expose ``ALC_SOFT_HRTF``.
-        DISABLED: HRTF rendering is disabled.
-        ENABLED: HRTF rendering is enabled.
-        DENIED: HRTF was requested but could not be enabled.
-        REQUIRED: HRTF was enabled because the device requires it.
-        HEADPHONES_DETECTED: HRTF was enabled after headphone detection.
-        UNSUPPORTED_FORMAT: The output format does not support HRTF rendering.
-        UNKNOWN: The backend returned a status unknown to this PyALSoft version.
-    """
-
-    UNAVAILABLE = "unavailable"
-    DISABLED = "disabled"
-    ENABLED = "enabled"
-    DENIED = "denied"
-    REQUIRED = "required"
-    HEADPHONES_DETECTED = "headphones_detected"
-    UNSUPPORTED_FORMAT = "unsupported_format"
-    UNKNOWN = "unknown"
 
 
 def _finite_float(name: str, value: float) -> float:
@@ -235,237 +109,6 @@ def _vector3(name: str, value: Vector3) -> Vector3:
             _finite_float(f"{name}[{index}]", item) for index, item in enumerate(value)
         ),
     )
-
-
-@dataclass(frozen=True, slots=True)
-class PlaybackDevice:
-    """A named playback device reported by the selected OpenAL runtime.
-
-    Instances returned by
-    [`list_playback_devices`][pyalsoft.list_playback_devices] can be passed
-    directly to [`open_playback`][pyalsoft.open_playback].
-
-    Attributes:
-        name: Implementation-provided device specifier.
-        is_default: Whether the runtime reported this as its default device.
-
-    Raises:
-        TypeError: ``name`` is not a string or ``is_default`` is not a boolean.
-        ValueError: ``name`` is empty.
-    """
-
-    name: str
-    is_default: bool = False
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.name, str):
-            raise TypeError("name must be a string")
-        if not self.name:
-            raise ValueError("name cannot be empty")
-        if not isinstance(self.is_default, bool):
-            raise TypeError("is_default must be a boolean")
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class PlaybackConfig:
-    """Preferences applied while creating an OpenAL playback context.
-
-    Attributes:
-        hrtf: Whether to request HRTF rendering. ``None`` leaves the backend's
-            default unchanged. A request is ignored when the selected device
-            does not expose ``ALC_SOFT_HRTF``; inspect ``PlaybackInfo.hrtf_status``
-            for the result.
-
-    Raises:
-        TypeError: ``hrtf`` is neither a boolean nor ``None``.
-    """
-
-    hrtf: bool | None = None
-
-    def __post_init__(self) -> None:
-        if self.hrtf is not None and not isinstance(self.hrtf, bool):
-            raise TypeError("hrtf must be a boolean or None")
-
-
-@dataclass(frozen=True, slots=True)
-class PlaybackInfo:
-    """Observed properties of an open playback session.
-
-    Attributes:
-        device_name: Implementation-provided name of the opened device.
-        renderer: Active OpenAL renderer name.
-        version: Active OpenAL implementation version.
-        hrtf_status: Observed HRTF state.
-        hrtf_name: Active HRTF specifier, or ``None`` when none is available.
-    """
-
-    device_name: str
-    renderer: str
-    version: str
-    hrtf_status: HRTFStatus
-    hrtf_name: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class SoundInfo:
-    """Format and length information for immutable PCM audio.
-
-    Attributes:
-        channels: Number of interleaved channels, either 1 (mono) or 2 (stereo).
-        sample_rate: Number of sample frames per second.
-        sample_type: Representation used by each channel sample.
-        frame_count: Number of interleaved sample frames; always positive.
-        duration_seconds: Duration on the source-audio timeline.
-        sample_width_bytes: Number of bytes used by one channel sample.
-        bit_depth: Number of bits used by one channel sample.
-        frame_width_bytes: Number of bytes used by one interleaved frame.
-        byte_count: Total number of sample bytes.
-
-    Raises:
-        TypeError: A constructor argument has the wrong type.
-        ValueError: The channel count, sample rate, or frame count is unsupported.
-    """
-
-    channels: int
-    sample_rate: int
-    sample_type: SampleType
-    frame_count: int
-
-    def __post_init__(self) -> None:
-        if isinstance(self.channels, bool) or not isinstance(self.channels, int):
-            raise TypeError("channels must be an integer")
-        if self.channels not in (1, 2):
-            raise ValueError("channels must be 1 or 2")
-        if isinstance(self.sample_rate, bool) or not isinstance(self.sample_rate, int):
-            raise TypeError("sample_rate must be an integer")
-        if self.sample_rate <= 0:
-            raise ValueError("sample_rate must be positive")
-        if not isinstance(self.sample_type, SampleType):
-            raise TypeError("sample_type must be a SampleType")
-        if isinstance(self.frame_count, bool) or not isinstance(self.frame_count, int):
-            raise TypeError("frame_count must be an integer")
-        if self.frame_count <= 0:
-            raise ValueError("frame_count must be positive")
-
-    @property
-    def duration_seconds(self) -> float:
-        """Duration in source-audio seconds."""
-
-        return self.frame_count / self.sample_rate
-
-    @property
-    def sample_width_bytes(self) -> int:
-        """Number of bytes used by one channel sample."""
-
-        return self.sample_type.byte_width
-
-    @property
-    def bit_depth(self) -> int:
-        """Number of bits used by one channel sample."""
-
-        return self.sample_width_bytes * 8
-
-    @property
-    def frame_width_bytes(self) -> int:
-        """Number of bytes used by one interleaved sample frame."""
-
-        return self.channels * self.sample_width_bytes
-
-    @property
-    def byte_count(self) -> int:
-        """Total number of PCM data bytes."""
-
-        return self.frame_count * self.frame_width_bytes
-
-
-@dataclass(frozen=True, slots=True)
-class SoundCacheInfo:
-    """Observed state of the implicit file-clip cache.
-
-    Attributes:
-        max_bytes: Configured byte budget, or ``None`` when unlimited.
-        current_bytes: Bytes occupied by all cached clips, including pinned ones.
-        clip_count: Number of cached file clips.
-        active_clip_count: Number of cached clips pinned by active sounds.
-        pending_eviction_count: Pinned clips marked for eviction after playback.
-    """
-
-    max_bytes: int | None
-    current_bytes: int
-    clip_count: int
-    active_clip_count: int
-    pending_eviction_count: int
-
-
-@dataclass(frozen=True, slots=True)
-class PCM:
-    """Immutable, interleaved PCM sample data ready to upload.
-
-    The constructor copies any bytes-like input to immutable ``bytes``.
-    The byte count must contain a whole number of frames.
-
-    Attributes:
-        samples: Interleaved sample bytes.
-        channels: Number of channels, either 1 (mono) or 2 (stereo).
-        sample_rate: Positive number of sample frames per second.
-        sample_type: Representation used by each channel sample.
-        frame_count: Number of complete sample frames.
-        duration: Duration in seconds on the source-audio timeline.
-        info: Format and length information as a [`SoundInfo`][pyalsoft.SoundInfo].
-
-    Raises:
-        TypeError: A constructor argument has the wrong type.
-        ValueError: The samples or format do not describe supported, complete PCM.
-    """
-
-    samples: bytes
-    channels: int
-    sample_rate: int
-    sample_type: SampleType = SampleType.INT16
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.samples, (bytes, bytearray, memoryview)):
-            raise TypeError("samples must be bytes-like")
-        samples = bytes(self.samples)
-        if not samples:
-            raise ValueError("samples cannot be empty")
-        if isinstance(self.channels, bool) or not isinstance(self.channels, int):
-            raise TypeError("channels must be an integer")
-        if self.channels not in (1, 2):
-            raise ValueError("channels must be 1 or 2")
-        if isinstance(self.sample_rate, bool) or not isinstance(self.sample_rate, int):
-            raise TypeError("sample_rate must be an integer")
-        if self.sample_rate <= 0:
-            raise ValueError("sample_rate must be positive")
-        if not isinstance(self.sample_type, SampleType):
-            raise TypeError("sample_type must be a SampleType")
-        frame_width = self.channels * self.sample_type.byte_width
-        if len(samples) % frame_width:
-            raise ValueError("samples must contain a whole number of frames")
-        object.__setattr__(self, "samples", samples)
-
-    @property
-    def frame_count(self) -> int:
-        """Number of sample frames in this PCM value."""
-
-        return len(self.samples) // (self.channels * self.sample_type.byte_width)
-
-    @property
-    def duration(self) -> float:
-        """Duration of this PCM value in seconds."""
-
-        return self.frame_count / self.sample_rate
-
-    @property
-    def info(self) -> SoundInfo:
-        """Format and length information for this PCM value."""
-
-        return SoundInfo(
-            channels=self.channels,
-            sample_rate=self.sample_rate,
-            sample_type=self.sample_type,
-            frame_count=self.frame_count,
-        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -748,6 +391,9 @@ class VoiceConfig:
         object.__setattr__(self, "effect_sends", effect_sends)
 
 
+_DEFAULT_VOICE_CONFIG = VoiceConfig()
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Listener:
     """Complete immutable spatial state for a playback listener.
@@ -819,106 +465,5 @@ class Acoustics:
         object.__setattr__(self, "speed_of_sound", speed_of_sound)
 
 
-@dataclass(frozen=True, slots=True)
-class VoiceStatus:
-    """Runtime state observed from a static voice.
-
-    Attributes:
-        state: Current OpenAL playback state.
-        offset_seconds: Current playhead position in source-audio seconds.
-        offset_frames: Current playhead position as an exact sample-frame index.
-    """
-
-    state: VoiceState
-    offset_seconds: float
-    offset_frames: int = 0
-
-
-@dataclass(frozen=True, slots=True)
-class StreamStatus:
-    """Runtime state and queue accounting for a stream.
-
-    Attributes:
-        state: Current managed lifecycle state.
-        input_finished: Whether end-of-input has been declared.
-        queued_chunks: Chunks queued for playback, including the active chunk.
-        queued_seconds: Approximate source-audio duration remaining in the queue.
-        underrun_count: Number of distinct times a playing stream exhausted its
-            queue before end-of-input.
-    """
-
-    state: StreamState
-    input_finished: bool
-    queued_chunks: int
-    queued_seconds: float
-    underrun_count: int
-
-
-@dataclass(frozen=True, slots=True)
-class Clip:
-    """Opaque identity for PCM uploaded to a playback session.
-
-    Do not construct instances directly. A clip belongs to the
-    [`Playback`][pyalsoft.Playback] that returned it and remains valid until it
-    is passed to [`release`][pyalsoft.release] or that session is closed.
-    """
-
-    _owner: object = field(repr=False)
-    _token: object = field(repr=False)
-    _identifier: int = field(repr=False)
-    _info: SoundInfo = field(repr=False)
-
-    @property
-    def info(self) -> SoundInfo:
-        """Format and length information for this clip."""
-
-        return self._info
-
-    @property
-    def duration_seconds(self) -> float:
-        """Duration of this clip in source-audio seconds."""
-
-        return self.info.duration_seconds
-
-    @property
-    def frame_count(self) -> int:
-        """Number of sample frames in this clip."""
-
-        return self.info.frame_count
-
-    def __repr__(self) -> str:
-        return "Clip(<opaque>)"
-
-
-@dataclass(frozen=True, slots=True)
-class Voice:
-    """Opaque identity for one playback instance of a clip.
-
-    Do not construct instances directly. A voice belongs to the
-    [`Playback`][pyalsoft.Playback] that returned it and remains valid until it
-    is released or its session is closed.
-    """
-
-    _owner: object = field(repr=False)
-    _token: object = field(repr=False)
-    _identifier: int = field(repr=False)
-
-    def __repr__(self) -> str:
-        return "Voice(<opaque>)"
-
-
-@dataclass(frozen=True, slots=True)
-class Stream:
-    """Opaque identity for one managed streaming source.
-
-    Do not construct instances directly. A stream belongs to the
-    [`Playback`][pyalsoft.Playback] that returned it and remains valid until it
-    is released or its session is closed.
-    """
-
-    _owner: object = field(repr=False)
-    _token: object = field(repr=False)
-    _identifier: int = field(repr=False)
-
-    def __repr__(self) -> str:
-        return "Stream(<opaque>)"
+_DEFAULT_LISTENER = Listener()
+_DEFAULT_ACOUSTICS = Acoustics()

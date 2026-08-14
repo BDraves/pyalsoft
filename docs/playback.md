@@ -67,18 +67,21 @@ remains unchanged. For sample-accurate work, use `offset_frames`,
 
 For sounds attached to the player, UI sounds, and other sources that should not
 use position, distance attenuation, directional cones, Doppler shift, or HRTF
-positioning, use [`play_stationary()`][pyalsoft.play_stationary]:
+positioning, pass `spatialize=False` to [`play()`][pyalsoft.play]:
 
 ```python
-from pyalsoft import play_stationary
+from pyalsoft import play
 
-footstep = play_stationary("footstep.wav", gain=0.8)
+footstep = play("footstep.wav", gain=0.8, spatialize=False)
 ```
 
 This explicitly disables source spatialization. It does not disable sample-rate
 conversion when the source and output-device rates differ. The bundled runtime
 supports this behavior; a separately installed OpenAL implementation must expose
 `AL_SOFT_source_spatialize`.
+
+When `spatialize` is omitted or `None`, OpenAL chooses automatically based on the
+source format. Pass `True` or `False` only to override that backend decision.
 
 ## Inspect a sound
 

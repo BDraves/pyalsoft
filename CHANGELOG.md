@@ -4,6 +4,14 @@ Notable user-facing changes to PyALSoft are documented here.
 
 ## Unreleased
 
+## 1.0.2 - 2026.08.13
+
+### Changed
+
+- Replaced `play_stationary()` with the `spatialize` keyword on `play()`, which
+  now supports non-spatial playback for both convenience and explicit sessions.
+  (@BDraves)
+
 ## 1.0.1 - 2026.08.13
 
 ### Added

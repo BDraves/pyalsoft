@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-import pyalsoft._managed.playback as playback_module
+import pyalsoft._managed.playback.streams as streams_module
 from pyalsoft import (
     EffectSend,
     HighPassFilter,
@@ -61,7 +61,7 @@ def test_stream_uses_bounded_reusable_buffers_and_drains_finished_input(
             del samples
             raise AssertionError("backpressure copied a rejected chunk")
 
-        monkeypatch.setattr(playback_module, "_copy_stream_samples", fail_copy)
+        monkeypatch.setattr(streams_module, "_copy_stream_samples", fail_copy)
         assert not try_write_stream(playback, stream, b"\0\0")
 
         start_stream(playback, stream)
@@ -266,3 +266,32 @@ def test_primed_finished_stream_can_start_and_close_releases_all_buffers() -> No
 
     assert library.al.sources == {}
     assert library.al.allocated_buffers == set()
+
+
+def test_failed_stream_creation_releases_partial_native_resources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = FakeLibrary()
+    failure = RuntimeError("stream configuration failed")
+
+    def fail_configuration(
+        _playback: object,
+        _identifier: int,
+        _config: VoiceConfig,
+    ) -> None:
+        raise failure
+
+    with open_playback(library=as_library(library)) as playback:
+        monkeypatch.setattr(
+            streams_module,
+            "_apply_voice_config",
+            fail_configuration,
+        )
+
+        with pytest.raises(RuntimeError, match="stream configuration failed") as caught:
+            open_stream(playback, channels=1, sample_rate=8_000)
+
+        assert caught.value is failure
+        assert library.al.sources == {}
+        assert library.al.allocated_buffers == set()
+        assert playback._streams == {}

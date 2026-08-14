@@ -1,6 +1,7 @@
 """Function-oriented managed audio and low-level OpenAL Soft bindings."""
 
 from pyalsoft import bindings
+from pyalsoft._managed.audio import PCM, SampleType, SoundInfo
 from pyalsoft._managed.capture import (
     CaptureDevice,
     CaptureOpenError,
@@ -10,41 +11,15 @@ from pyalsoft._managed.capture import (
     start_recording,
     stop_recording,
 )
-from pyalsoft._managed.models import (
-    PCM,
-    Acoustics,
+from pyalsoft._managed.errors import (
     AudioBackendError,
     AudioError,
     AudioFileError,
-    Clip,
-    DistanceModel,
-    EffectSend,
-    Filter,
-    HighPassFilter,
-    HRTFStatus,
     InvalidHandleError,
     InvalidVoiceStateError,
-    Listener,
-    LowPassFilter,
     PlaybackClosedError,
-    PlaybackConfig,
-    PlaybackDevice,
-    PlaybackInfo,
     PlaybackOpenError,
     ResourceInUseError,
-    Reverb,
-    SampleType,
-    SoundCacheInfo,
-    SoundEndReason,
-    SoundInfo,
-    Stream,
-    StreamState,
-    StreamStatus,
-    Vector3,
-    Voice,
-    VoiceConfig,
-    VoiceState,
-    VoiceStatus,
 )
 from pyalsoft._managed.playback import (
     Playback,
@@ -70,6 +45,21 @@ from pyalsoft._managed.playback import (
     update_stream,
     upload,
 )
+from pyalsoft._managed.resources import (
+    Clip,
+    HRTFStatus,
+    PlaybackConfig,
+    PlaybackDevice,
+    PlaybackInfo,
+    SoundCacheInfo,
+    SoundEndReason,
+    Stream,
+    StreamState,
+    StreamStatus,
+    Voice,
+    VoiceState,
+    VoiceStatus,
+)
 from pyalsoft._managed.sound import (
     PlayingSound,
     clear_sound_cache,
@@ -78,13 +68,24 @@ from pyalsoft._managed.sound import (
     get_sound_cache_info,
     get_sound_info,
     play,
-    play_stationary,
     set_acoustics,
     set_listener,
     set_sound_cache_limit,
     shutdown,
     update_acoustics,
     update_listener,
+)
+from pyalsoft._managed.spatial import (
+    Acoustics,
+    DistanceModel,
+    EffectSend,
+    Filter,
+    HighPassFilter,
+    Listener,
+    LowPassFilter,
+    Reverb,
+    Vector3,
+    VoiceConfig,
 )
 
 __all__ = [
@@ -143,7 +144,6 @@ __all__ = [
     "open_stream",
     "pause",
     "play",
-    "play_stationary",
     "release",
     "release_finished",
     "record",
