@@ -9,7 +9,7 @@ from threading import RLock
 
 from pyalsoft import bindings
 from pyalsoft._managed._backend import _check_alc_error, _clear_alc_errors
-from pyalsoft._managed.audio import PCM, AudioPath
+from pyalsoft._managed.audio import PCM, AudioPath, _as_stereo
 from pyalsoft._managed.errors import InvalidVoiceStateError
 from pyalsoft._managed.playback.session import (
     Playback,
@@ -84,11 +84,11 @@ class _DefaultRuntime:
 
     def __init__(self) -> None:
         self._playback: Playback | None = None
-        self._clips: OrderedDict[Path, _CachedSoundClip] = OrderedDict()
+        self._clips: OrderedDict[tuple[Path, bool], _CachedSoundClip] = OrderedDict()
         self._active: dict[object, _SoundRecord] = {}
         self._cache_limit: int | None = _DEFAULT_SOUND_CACHE_LIMIT
         self._cache_bytes = 0
-        self._pending_evictions: set[Path] = set()
+        self._pending_evictions: set[tuple[Path, bool]] = set()
         self._listener = _DEFAULT_LISTENER
         self._acoustics = _DEFAULT_ACOUSTICS
         self._closed = False
@@ -110,41 +110,45 @@ class _DefaultRuntime:
             raise InvalidVoiceStateError("the sound was not started")
         return self._playback
 
-    def _active_cache_paths(self) -> set[Path]:
+    def _active_cache_keys(self) -> set[tuple[Path, bool]]:
         return {
-            record.path
+            record.cache_key
             for record in self._active.values()
-            if record.path is not None and record.path in self._clips
+            if record.cache_key is not None and record.cache_key in self._clips
         }
 
-    def _evict_cached_path(self, path: Path, active_paths: set[Path]) -> bool:
-        cached = self._clips.get(path)
+    def _evict_cached_clip(
+        self,
+        key: tuple[Path, bool],
+        active_keys: set[tuple[Path, bool]],
+    ) -> bool:
+        cached = self._clips.get(key)
         if cached is None:
-            self._pending_evictions.discard(path)
+            self._pending_evictions.discard(key)
             return False
-        if path in active_paths:
-            self._pending_evictions.add(path)
+        if key in active_keys:
+            self._pending_evictions.add(key)
             return False
         release(self._opened_playback(), cached.clip)
-        del self._clips[path]
+        del self._clips[key]
         self._cache_bytes -= cached.clip.info.byte_count
-        self._pending_evictions.discard(path)
+        self._pending_evictions.discard(key)
         return True
 
-    def _trim_cache(self, *, protected: Path | None = None) -> None:
-        active_paths = self._active_cache_paths()
+    def _trim_cache(self, *, protected: tuple[Path, bool] | None = None) -> None:
+        active_keys = self._active_cache_keys()
         if protected is not None:
-            active_paths.add(protected)
-        for path in tuple(self._pending_evictions):
-            self._evict_cached_path(path, active_paths)
+            active_keys.add(protected)
+        for key in tuple(self._pending_evictions):
+            self._evict_cached_clip(key, active_keys)
         while self._cache_limit is not None and self._cache_bytes > self._cache_limit:
             candidate = next(
-                (path for path in self._clips if path not in active_paths),
+                (key for key in self._clips if key not in active_keys),
                 None,
             )
             if candidate is None:
                 return
-            self._evict_cached_path(candidate, active_paths)
+            self._evict_cached_clip(candidate, active_keys)
 
     def _finalize(
         self,
@@ -191,6 +195,7 @@ class _DefaultRuntime:
                 offset_frames=offset_frames,
                 start=start,
                 spatialize=record.spatialize,
+                direct_channels=record.direct_channels,
             )
         except BaseException:
             if uploaded:
@@ -260,9 +265,12 @@ class _DefaultRuntime:
         offset_seconds: float = 0.0,
         offset_frames: int | None = None,
         spatialize: bool | None = None,
+        direct_channels: bool = False,
     ) -> PlayingSound:
         if not isinstance(config, VoiceConfig):
             raise TypeError("config must be a VoiceConfig")
+        if not isinstance(direct_channels, bool):
+            raise TypeError("direct_channels must be a boolean")
         normalized = (
             None if isinstance(sound, PCM) else Path(sound).expanduser().resolve()
         )
@@ -270,30 +278,37 @@ class _DefaultRuntime:
             self._require_open()
             self._reap_finished()
             if isinstance(sound, PCM):
-                pcm = sound
+                source_info = sound.info
                 offset_seconds, offset_frames = _validate_offsets(
-                    pcm.info, offset_seconds, offset_frames
+                    source_info, offset_seconds, offset_frames
                 )
+                pcm = _as_stereo(sound) if direct_channels else sound
                 clip = upload(self._ensure_playback(), pcm)
+                cache_key = None
             else:
                 assert normalized is not None
-                cached = self._clips.get(normalized)
+                cache_key = (normalized, direct_channels)
+                cached = self._clips.get(cache_key)
                 if cached is None:
-                    pcm = _read_wave(normalized)
+                    source_pcm = _read_wave(normalized)
+                    source_info = source_pcm.info
                     offset_seconds, offset_frames = _validate_offsets(
-                        pcm.info, offset_seconds, offset_frames
+                        source_info, offset_seconds, offset_frames
                     )
+                    pcm = _as_stereo(source_pcm) if direct_channels else source_pcm
                     cached = _CachedSoundClip(
                         clip=upload(self._ensure_playback(), pcm),
+                        info=source_info,
                     )
-                    self._clips[normalized] = cached
+                    self._clips[cache_key] = cached
                     self._cache_bytes += cached.clip.info.byte_count
                 else:
+                    source_info = cached.info
                     offset_seconds, offset_frames = _validate_offsets(
-                        cached.clip.info, offset_seconds, offset_frames
+                        source_info, offset_seconds, offset_frames
                     )
-                self._clips.move_to_end(normalized)
-                self._trim_cache(protected=normalized)
+                self._clips.move_to_end(cache_key)
+                self._trim_cache(protected=cache_key)
                 clip = cached.clip
             try:
                 voice = _play_voice(
@@ -303,6 +318,7 @@ class _DefaultRuntime:
                     offset_seconds=offset_seconds,
                     offset_frames=offset_frames,
                     spatialize=spatialize,
+                    direct_channels=direct_channels,
                 )
             except BaseException:
                 if isinstance(sound, PCM):
@@ -317,11 +333,13 @@ class _DefaultRuntime:
                 token=token,
                 voice=voice,
                 clip=clip,
-                info=clip.info,
+                info=source_info,
                 path=normalized,
-                pcm=sound if isinstance(sound, PCM) else None,
+                pcm=pcm if isinstance(sound, PCM) else None,
                 config=config,
                 spatialize=spatialize,
+                direct_channels=direct_channels,
+                cache_key=cache_key,
             )
             self._active[token] = record
             return PlayingSound(self, record)
@@ -337,24 +355,28 @@ class _DefaultRuntime:
         with self._lock:
             self._require_open()
             self._reap_finished()
-            active_paths = self._active_cache_paths()
+            active_keys = self._active_cache_keys()
             if path is not None:
-                return int(self._evict_cached_path(path, active_paths))
+                return sum(
+                    self._evict_cached_clip(key, active_keys)
+                    for key in tuple(self._clips)
+                    if key[0] == path
+                )
             evicted = 0
-            for cached_path in tuple(self._clips):
-                evicted += self._evict_cached_path(cached_path, active_paths)
+            for key in tuple(self._clips):
+                evicted += self._evict_cached_clip(key, active_keys)
             return evicted
 
     def cache_info(self) -> SoundCacheInfo:
         with self._lock:
             self._require_open()
             self._reap_finished()
-            active_paths = self._active_cache_paths()
+            active_keys = self._active_cache_keys()
             return SoundCacheInfo(
                 max_bytes=self._cache_limit,
                 current_bytes=self._cache_bytes,
                 clip_count=len(self._clips),
-                active_clip_count=len(active_paths),
+                active_clip_count=len(active_keys),
                 pending_eviction_count=len(self._pending_evictions),
             )
 

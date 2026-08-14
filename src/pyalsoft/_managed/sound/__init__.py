@@ -371,6 +371,7 @@ def play(
     offset_seconds: float = 0.0,
     offset_frames: int | None = None,
     spatialize: bool | None = None,
+    direct_channels: bool = False,
 ) -> Voice: ...
 
 
@@ -400,6 +401,7 @@ def play(
     offset_seconds: float = 0.0,
     offset_frames: int | None = None,
     spatialize: bool | None = None,
+    direct_channels: bool = False,
 ) -> PlayingSound: ...
 
 
@@ -428,6 +430,7 @@ def play(
     offset_seconds: float = 0.0,
     offset_frames: int | None = None,
     spatialize: bool | None = None,
+    direct_channels: bool = False,
 ) -> Voice | PlayingSound:
     """Play an explicit clip, WAV file, or PCM value.
 
@@ -442,8 +445,10 @@ def play(
     ``filter`` to preserve the value from ``config``. Use an empty
     ``effect_sends`` sequence to remove configured auxiliary routes.
     Pass ``spatialize=False`` for UI, player-attached, and other sounds that
-    should bypass position, distance, Doppler, directional-cone, and HRTF
-    processing.
+    should ignore position, distance, Doppler, and directional cones. Pass
+    ``direct_channels=True`` when the source must additionally bypass HRTF
+    virtualization. Convenience playback duplicates mono frames into stereo;
+    explicit-session clips must already be stereo.
 
     Args:
         playback: Explicit playback session in the two-argument form; otherwise,
@@ -474,6 +479,10 @@ def play(
         spatialize: ``True`` forces spatial rendering, ``False`` disables it,
             and ``None`` leaves the decision to OpenAL based on the source
             format.
+        direct_channels: Whether to route stereo channels directly to matching
+            outputs, bypassing HRTF virtualization. Mono WAV and PCM values are
+            duplicated to stereo by convenience playback. Explicit clips must
+            already be stereo.
 
     Returns:
         A [`Voice`][pyalsoft.Voice] owned by the explicit session, or a
@@ -487,7 +496,8 @@ def play(
         PlaybackClosedError: The explicit session is closed.
         InvalidHandleError: ``clip`` is released or belongs to another session.
         AudioBackendError: OpenAL cannot create, configure, or start the voice,
-            or non-spatial playback is requested without backend support.
+            or an explicit spatialization or direct-channel mode is requested
+            without backend support.
     """
 
     resolved_config = _voice_config_with_overrides(
@@ -520,6 +530,7 @@ def play(
             offset_seconds=offset_seconds,
             offset_frames=offset_frames,
             spatialize=spatialize,
+            direct_channels=direct_channels,
         )
     if clip is not None:
         raise TypeError("clip is only valid with an explicit Playback")
@@ -531,6 +542,7 @@ def play(
         offset_seconds=offset_seconds,
         offset_frames=offset_frames,
         spatialize=spatialize,
+        direct_channels=direct_channels,
     )
 
 

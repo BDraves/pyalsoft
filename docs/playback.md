@@ -66,8 +66,8 @@ remains unchanged. For sample-accurate work, use `offset_frames`,
 `INITIAL` state. `restart()` moves to the beginning and immediately plays.
 
 For sounds attached to the player, UI sounds, and other sources that should not
-use position, distance attenuation, directional cones, Doppler shift, or HRTF
-positioning, pass `spatialize=False` to [`play()`][pyalsoft.play]:
+use position, distance attenuation, directional cones, Doppler shift, or
+positional panning, pass `spatialize=False` to [`play()`][pyalsoft.play]:
 
 ```python
 from pyalsoft import play
@@ -76,12 +76,31 @@ footstep = play("footstep.wav", gain=0.8, spatialize=False)
 ```
 
 This explicitly disables source spatialization. It does not disable sample-rate
-conversion when the source and output-device rates differ. The bundled runtime
-supports this behavior; a separately installed OpenAL implementation must expose
+conversion when the source and output-device rates differ. On an HRTF output,
+OpenAL Soft can still render the resulting fixed local source through a
+front-center HRTF response. The bundled runtime supports this behavior; a
+separately installed OpenAL implementation must expose
 `AL_SOFT_source_spatialize`.
 
 When `spatialize` is omitted or `None`, OpenAL chooses automatically based on the
 source format. Pass `True` or `False` only to override that backend decision.
+
+To bypass HRTF virtualization completely, use direct-channel playback:
+
+```python
+from pyalsoft import play
+
+footstep = play("footstep.wav", gain=0.8, direct_channels=True)
+```
+
+Direct-channel playback routes stereo channels to the matching outputs without
+virtual-speaker rendering. For convenience playback, mono WAV and
+[`PCM`][pyalsoft.PCM] sample frames are duplicated into identical left and
+right channels before upload; the returned sound continues to report the
+original source format. The normal and stereo-expanded forms of a cached WAV
+occupy separate cache entries. With an explicit playback session, the
+[`Clip`][pyalsoft.Clip] passed to `play()` must already be stereo. A separately
+installed OpenAL implementation must expose `AL_SOFT_direct_channels`.
 
 ## Inspect a sound
 

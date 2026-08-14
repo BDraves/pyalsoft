@@ -2,6 +2,13 @@
 
 Notable user-facing changes to PyALSoft are documented here.
 
+## 1.1.1 - 2026.08.14
+
+### Added
+
+- Added `direct_channels=True` playback, including automatic mono-to-stereo
+  expansion for convenience playback, to bypass HRTF virtualization. (@BDraves)
+
 ## 1.1.0 - 2026.08.14
 
 ### Added
@@ -22,7 +29,7 @@ Notable user-facing changes to PyALSoft are documented here.
 ### Added
 
 - Added `play_stationary()` for non-spatial convenience playback that bypasses
-  position, distance, Doppler, directional-cone, and HRTF processing. (@BDraves)
+  position, distance, Doppler, and directional-cone processing. (@BDraves)
 
 ## 1.0.0 - 2026-08-10
 
