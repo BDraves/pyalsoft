@@ -1,11 +1,11 @@
-"""Replace and remove direct low/high-pass filters on a playing sound."""
+"""Replace and remove direct low/high/band-pass filters on a playing sound."""
 
 from __future__ import annotations
 
 import time
 from pathlib import Path
 
-from pyalsoft import HighPassFilter, LowPassFilter, play
+from pyalsoft import BandPassFilter, HighPassFilter, LowPassFilter, play
 
 EXAMPLE_SOUND = Path(__file__).with_name("example.wav")
 DEMO_STEP_SECONDS = 1.0
@@ -27,6 +27,16 @@ def main() -> None:
     # This keeps the hardware constraint visible instead of implying a chain.
     sound.update(
         filter=HighPassFilter(gain=1.0, low_frequency_gain=0.1),
+    )
+    time.sleep(DEMO_STEP_SECONDS)
+
+    # Band-pass controls the low- and high-frequency attenuation independently.
+    sound.update(
+        filter=BandPassFilter(
+            gain=1.0,
+            low_frequency_gain=0.1,
+            high_frequency_gain=0.1,
+        ),
     )
     time.sleep(DEMO_STEP_SECONDS)
 

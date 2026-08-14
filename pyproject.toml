@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pyalsoft"
-version = "1.0.2"
+version = "1.1.0"
 description = "Function-oriented Python audio API and typed OpenAL Soft bindings with bundled runtimes"
 readme = "README.md"
 authors = [

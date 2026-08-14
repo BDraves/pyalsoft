@@ -12,6 +12,7 @@ from examples.play_sine import SAMPLE_RATE, play_sine, sine_pcm
 from examples.stream_sine import stream_sine
 from pyalsoft import (
     PCM,
+    BandPassFilter,
     EffectSend,
     HighPassFilter,
     LowPassFilter,
@@ -77,7 +78,12 @@ def test_bundled_runtime_supports_managed_efx(
         set_voice_config(
             playback,
             voice,
-            VoiceConfig(filter=HighPassFilter(low_frequency_gain=0.1)),
+            VoiceConfig(
+                filter=BandPassFilter(
+                    low_frequency_gain=0.1,
+                    high_frequency_gain=0.2,
+                )
+            ),
         )
         release(playback, voice)
         release(playback, clip)

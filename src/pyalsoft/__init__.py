@@ -77,6 +77,7 @@ from pyalsoft._managed.sound import (
 )
 from pyalsoft._managed.spatial import (
     Acoustics,
+    BandPassFilter,
     DistanceModel,
     EffectSend,
     Filter,
@@ -93,6 +94,7 @@ __all__ = [
     "AudioBackendError",
     "AudioError",
     "AudioFileError",
+    "BandPassFilter",
     "CaptureDevice",
     "CaptureOpenError",
     "Clip",

@@ -2,7 +2,12 @@
 
 Notable user-facing changes to PyALSoft are documented here.
 
-## Unreleased
+## 1.1.0 - 2026.08.14
+
+### Added
+
+- Added managed `BandPassFilter` support for direct and auxiliary EFX routes.
+  (@BDraves)
 
 ## 1.0.2 - 2026.08.13
 
