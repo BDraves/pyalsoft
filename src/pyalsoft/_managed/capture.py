@@ -9,11 +9,17 @@ from dataclasses import dataclass
 from threading import Event, RLock, Thread
 
 from pyalsoft import bindings
+from pyalsoft._managed._backend import (
+    _FORMAT_BY_LAYOUT,
+    _check_alc_error,
+    _clear_alc_errors,
+)
 from pyalsoft._managed.models import (
     PCM,
     AudioBackendError,
     AudioError,
     SampleType,
+    _validate_pcm_layout,
 )
 
 
@@ -97,13 +103,6 @@ class Recording:
         return "Recording(<opaque>)"
 
 
-_CAPTURE_FORMAT_BY_LAYOUT = {
-    (1, SampleType.UINT8): bindings.enums.ALFormat.FORMAT_MONO8,
-    (1, SampleType.INT16): bindings.enums.ALFormat.FORMAT_MONO16,
-    (2, SampleType.UINT8): bindings.enums.ALFormat.FORMAT_STEREO8,
-    (2, SampleType.INT16): bindings.enums.ALFormat.FORMAT_STEREO16,
-}
-
 _active_recordings: set[Recording] = set()
 _active_recordings_lock = RLock()
 
@@ -119,42 +118,15 @@ def _load_capture_library(
         raise CaptureOpenError("could not load an OpenAL library") from error
 
 
-def _clear_alc_errors(
-    library: bindings.OpenALLibrary, device: object | None = None
-) -> None:
-    library.alc.get_error(device)
-
-
-def _check_alc_error(
-    library: bindings.OpenALLibrary,
-    device: object | None,
-    operation: str,
-) -> None:
-    error = int(library.alc.get_error(device))
-    if error != bindings.ALC_NO_ERROR:
-        raise AudioBackendError(
-            f"OpenAL failed to {operation} (ALC error 0x{error:04x})"
-        )
-
-
 def _capture_layout(
     channels: int,
     sample_rate: int,
     sample_type: SampleType,
 ) -> tuple[bindings.enums.ALFormat, int]:
-    if isinstance(channels, bool) or not isinstance(channels, int):
-        raise TypeError("channels must be an integer")
-    if channels not in (1, 2):
-        raise ValueError("channels must be 1 or 2")
-    if isinstance(sample_rate, bool) or not isinstance(sample_rate, int):
-        raise TypeError("sample_rate must be an integer")
-    if sample_rate <= 0:
-        raise ValueError("sample_rate must be positive")
-    if not isinstance(sample_type, SampleType):
-        raise TypeError("sample_type must be a SampleType")
+    frame_width = _validate_pcm_layout(channels, sample_rate, sample_type)
     return (
-        _CAPTURE_FORMAT_BY_LAYOUT[(channels, sample_type)],
-        channels * sample_type.byte_width,
+        _FORMAT_BY_LAYOUT[(channels, sample_type)],
+        frame_width,
     )
 
 

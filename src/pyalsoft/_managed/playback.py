@@ -13,6 +13,11 @@ from types import TracebackType
 from typing import Concatenate, Self, overload
 
 from pyalsoft import bindings
+from pyalsoft._managed._backend import (
+    _FORMAT_BY_LAYOUT,
+    _check_alc_error,
+    _clear_alc_errors,
+)
 from pyalsoft._managed.models import (
     _OMITTED_FILTER,
     PCM,
@@ -248,13 +253,6 @@ def _live_previous_context(playback: Playback) -> object | None:
     return playback._previous_context
 
 
-_FORMAT_BY_LAYOUT = {
-    (1, SampleType.UINT8): bindings.enums.ALFormat.FORMAT_MONO8,
-    (1, SampleType.INT16): bindings.enums.ALFormat.FORMAT_MONO16,
-    (2, SampleType.UINT8): bindings.enums.ALFormat.FORMAT_STEREO8,
-    (2, SampleType.INT16): bindings.enums.ALFormat.FORMAT_STEREO16,
-}
-
 _VOICE_STATE_BY_AL = {
     int(bindings.enums.ALSourceState.INITIAL): VoiceState.INITIAL,
     int(bindings.enums.ALSourceState.PLAYING): VoiceState.PLAYING,
@@ -368,13 +366,6 @@ def _clear_al_errors(playback: Playback) -> None:
     raise AudioBackendError("OpenAL error state could not be cleared")
 
 
-def _clear_alc_errors(library: bindings.OpenALLibrary, device: object | None) -> None:
-    for _ in range(16):
-        if int(library.alc.get_error(device)) == bindings.ALC_NO_ERROR:
-            return
-    raise AudioBackendError("OpenAL ALC error state could not be cleared")
-
-
 def _prepare_al(playback: Playback) -> None:
     _activate(playback)
     _clear_al_errors(playback)
@@ -389,21 +380,6 @@ def _check_al_error(playback: Playback, operation: str) -> None:
     except ValueError:
         name = f"unknown error 0x{code:04x}"
     raise AudioBackendError(f"{operation} failed: OpenAL {name}")
-
-
-def _check_alc_error(
-    library: bindings.OpenALLibrary,
-    device: object | None,
-    operation: str,
-) -> None:
-    code = int(library.alc.get_error(device))
-    if code == bindings.ALC_NO_ERROR:
-        return
-    try:
-        name = bindings.enums.ALCContextErrorCode(code).name
-    except ValueError:
-        name = f"unknown error 0x{code:04x}"
-    raise AudioBackendError(f"{operation} failed: OpenAL ALC {name}")
 
 
 def _clip_identifier(playback: Playback, clip: Clip) -> int:
@@ -767,76 +743,70 @@ def _prepare_efx_replacement(
 
 
 def _apply_voice_config(
-    playback: Playback, identifier: int, config: VoiceConfig
-) -> None:
-    al = playback._library.al
-    al.source3f(identifier, bindings.AL_POSITION, *config.position)
-    al.source3f(identifier, bindings.AL_VELOCITY, *config.velocity)
-    al.source3f(identifier, bindings.AL_DIRECTION, *config.direction)
-    al.sourcef(identifier, bindings.AL_GAIN, config.gain)
-    al.sourcef(identifier, bindings.AL_PITCH, config.pitch)
-    al.sourcef(identifier, bindings.AL_MIN_GAIN, config.min_gain)
-    al.sourcef(identifier, bindings.AL_MAX_GAIN, config.max_gain)
-    al.sourcef(identifier, bindings.AL_REFERENCE_DISTANCE, config.reference_distance)
-    al.sourcef(identifier, bindings.AL_MAX_DISTANCE, config.max_distance)
-    al.sourcef(identifier, bindings.AL_ROLLOFF_FACTOR, config.rolloff_factor)
-    al.sourcef(identifier, bindings.AL_CONE_INNER_ANGLE, config.cone_inner_angle)
-    al.sourcef(identifier, bindings.AL_CONE_OUTER_ANGLE, config.cone_outer_angle)
-    al.sourcef(identifier, bindings.AL_CONE_OUTER_GAIN, config.cone_outer_gain)
-    al.sourcei(identifier, bindings.AL_LOOPING, int(config.looping))
-    al.sourcei(identifier, bindings.AL_SOURCE_RELATIVE, int(config.relative))
-
-
-def _apply_voice_config_changes(
     playback: Playback,
     identifier: int,
-    previous: VoiceConfig,
-    current: VoiceConfig,
+    config: VoiceConfig,
+    *,
+    previous: VoiceConfig | None = None,
 ) -> None:
-    """Apply only properties changed by a partial voice update."""
+    """Apply every voice property, or only values changed from ``previous``."""
 
     al = playback._library.al
-    if current.position != previous.position:
-        al.source3f(identifier, bindings.AL_POSITION, *current.position)
-    if current.velocity != previous.velocity:
-        al.source3f(identifier, bindings.AL_VELOCITY, *current.velocity)
-    if current.direction != previous.direction:
-        al.source3f(identifier, bindings.AL_DIRECTION, *current.direction)
+    apply_all = previous is None
+    if previous is None:
+        previous = config
+    vector_properties = (
+        (bindings.AL_POSITION, previous.position, config.position),
+        (bindings.AL_VELOCITY, previous.velocity, config.velocity),
+        (bindings.AL_DIRECTION, previous.direction, config.direction),
+    )
+    for parameter, old_vector, new_vector in vector_properties:
+        if apply_all or new_vector != old_vector:
+            al.source3f(identifier, parameter, *new_vector)
+
     float_properties = (
-        (bindings.AL_GAIN, previous.gain, current.gain),
-        (bindings.AL_PITCH, previous.pitch, current.pitch),
-        (bindings.AL_MIN_GAIN, previous.min_gain, current.min_gain),
-        (bindings.AL_MAX_GAIN, previous.max_gain, current.max_gain),
+        (bindings.AL_GAIN, previous.gain, config.gain),
+        (bindings.AL_PITCH, previous.pitch, config.pitch),
+        (bindings.AL_MIN_GAIN, previous.min_gain, config.min_gain),
+        (bindings.AL_MAX_GAIN, previous.max_gain, config.max_gain),
         (
             bindings.AL_REFERENCE_DISTANCE,
             previous.reference_distance,
-            current.reference_distance,
+            config.reference_distance,
         ),
-        (bindings.AL_MAX_DISTANCE, previous.max_distance, current.max_distance),
-        (bindings.AL_ROLLOFF_FACTOR, previous.rolloff_factor, current.rolloff_factor),
+        (bindings.AL_MAX_DISTANCE, previous.max_distance, config.max_distance),
+        (
+            bindings.AL_ROLLOFF_FACTOR,
+            previous.rolloff_factor,
+            config.rolloff_factor,
+        ),
         (
             bindings.AL_CONE_INNER_ANGLE,
             previous.cone_inner_angle,
-            current.cone_inner_angle,
+            config.cone_inner_angle,
         ),
         (
             bindings.AL_CONE_OUTER_ANGLE,
             previous.cone_outer_angle,
-            current.cone_outer_angle,
+            config.cone_outer_angle,
         ),
         (
             bindings.AL_CONE_OUTER_GAIN,
             previous.cone_outer_gain,
-            current.cone_outer_gain,
+            config.cone_outer_gain,
         ),
     )
-    for parameter, old_value, new_value in float_properties:
-        if new_value != old_value:
-            al.sourcef(identifier, parameter, new_value)
-    if current.looping != previous.looping:
-        al.sourcei(identifier, bindings.AL_LOOPING, int(current.looping))
-    if current.relative != previous.relative:
-        al.sourcei(identifier, bindings.AL_SOURCE_RELATIVE, int(current.relative))
+    for parameter, old_float, new_float in float_properties:
+        if apply_all or new_float != old_float:
+            al.sourcef(identifier, parameter, new_float)
+
+    integer_properties = (
+        (bindings.AL_LOOPING, previous.looping, config.looping),
+        (bindings.AL_SOURCE_RELATIVE, previous.relative, config.relative),
+    )
+    for parameter, old_boolean, new_boolean in integer_properties:
+        if apply_all or new_boolean != old_boolean:
+            al.sourcei(identifier, parameter, int(new_boolean))
 
 
 def _load_playback_library(
@@ -1203,7 +1173,7 @@ def _create_voice(
         "AL_SOFT_source_spatialize"
     ):
         raise AudioBackendError(
-            "play_stationary requires the AL_SOFT_source_spatialize extension"
+            "explicit spatialization requires the AL_SOFT_source_spatialize extension"
         )
     identifiers = playback._library.al.gen_sources()
     if len(identifiers) != 1:
@@ -1651,10 +1621,12 @@ def _set_voice_config(
         config,
     )
     try:
-        if changed_only:
-            _apply_voice_config_changes(playback, identifier, previous, config)
-        else:
-            _apply_voice_config(playback, identifier, config)
+        _apply_voice_config(
+            playback,
+            identifier,
+            config,
+            previous=previous if changed_only else None,
+        )
         _check_al_error(playback, "configure voice")
         if replacement.direct_filter_changed or replacement.effect_sends_changed:
             _attach_efx_resources(

@@ -77,6 +77,24 @@ class SampleType(Enum):
         return 1 if self is SampleType.UINT8 else 2
 
 
+def _validate_pcm_layout(
+    channels: int, sample_rate: int, sample_type: SampleType
+) -> int:
+    """Validate a managed PCM layout and return its frame width in bytes."""
+
+    if isinstance(channels, bool) or not isinstance(channels, int):
+        raise TypeError("channels must be an integer")
+    if channels not in (1, 2):
+        raise ValueError("channels must be 1 or 2")
+    if isinstance(sample_rate, bool) or not isinstance(sample_rate, int):
+        raise TypeError("sample_rate must be an integer")
+    if sample_rate <= 0:
+        raise ValueError("sample_rate must be positive")
+    if not isinstance(sample_type, SampleType):
+        raise TypeError("sample_type must be a SampleType")
+    return channels * sample_type.byte_width
+
+
 class VoiceState(Enum):
     """Observed playback state of a static voice.
 
@@ -332,16 +350,7 @@ class SoundInfo:
     frame_count: int
 
     def __post_init__(self) -> None:
-        if isinstance(self.channels, bool) or not isinstance(self.channels, int):
-            raise TypeError("channels must be an integer")
-        if self.channels not in (1, 2):
-            raise ValueError("channels must be 1 or 2")
-        if isinstance(self.sample_rate, bool) or not isinstance(self.sample_rate, int):
-            raise TypeError("sample_rate must be an integer")
-        if self.sample_rate <= 0:
-            raise ValueError("sample_rate must be positive")
-        if not isinstance(self.sample_type, SampleType):
-            raise TypeError("sample_type must be a SampleType")
+        _validate_pcm_layout(self.channels, self.sample_rate, self.sample_type)
         if isinstance(self.frame_count, bool) or not isinstance(self.frame_count, int):
             raise TypeError("frame_count must be an integer")
         if self.frame_count <= 0:
@@ -429,17 +438,9 @@ class PCM:
         samples = bytes(self.samples)
         if not samples:
             raise ValueError("samples cannot be empty")
-        if isinstance(self.channels, bool) or not isinstance(self.channels, int):
-            raise TypeError("channels must be an integer")
-        if self.channels not in (1, 2):
-            raise ValueError("channels must be 1 or 2")
-        if isinstance(self.sample_rate, bool) or not isinstance(self.sample_rate, int):
-            raise TypeError("sample_rate must be an integer")
-        if self.sample_rate <= 0:
-            raise ValueError("sample_rate must be positive")
-        if not isinstance(self.sample_type, SampleType):
-            raise TypeError("sample_type must be a SampleType")
-        frame_width = self.channels * self.sample_type.byte_width
+        frame_width = _validate_pcm_layout(
+            self.channels, self.sample_rate, self.sample_type
+        )
         if len(samples) % frame_width:
             raise ValueError("samples must contain a whole number of frames")
         object.__setattr__(self, "samples", samples)

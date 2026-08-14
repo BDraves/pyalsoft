@@ -35,13 +35,13 @@ from pyalsoft import (
     get_sound_info,
     open_playback,
     play,
-    play_stationary,
     set_acoustics,
     set_listener,
     set_sound_cache_limit,
     shutdown,
     update_acoustics,
     update_listener,
+    upload,
 )
 from tests._support.managed_backend import FakeLibrary, as_library
 
@@ -154,12 +154,12 @@ def test_default_runtime_plays_in_memory_pcm(
     assert default_library.al.allocated_buffers == set()
 
 
-def test_play_stationary_disables_spatialization_across_restarts(
+def test_play_can_disable_spatialization_across_restarts(
     default_library: FakeLibrary,
 ) -> None:
     pcm = PCM(b"\0\0" * 8, channels=1, sample_rate=8_000)
 
-    sound = play_stationary(pcm, gain=0.5)
+    sound = play(pcm, gain=0.5, spatialize=False)
 
     assert default_library.al.sources[100][bindings.AL_SOURCE_SPATIALIZE_SOFT] == 0
     assert default_library.al.sources[100][bindings.AL_GAIN] == 0.5
@@ -168,14 +168,35 @@ def test_play_stationary_disables_spatialization_across_restarts(
     assert default_library.al.sources[101][bindings.AL_SOURCE_SPATIALIZE_SOFT] == 0
 
 
-def test_play_stationary_requires_source_spatialize_extension(
+def test_play_can_disable_spatialization_for_an_explicit_session(
+    default_library: FakeLibrary,
+) -> None:
+    pcm = PCM(b"\0\0" * 8, channels=1, sample_rate=8_000)
+
+    with open_playback(library=as_library(default_library)) as playback:
+        clip = upload(playback, pcm)
+        play(playback, clip, spatialize=False)
+        play(playback, clip, spatialize=True)
+
+        assert default_library.al.sources[100][bindings.AL_SOURCE_SPATIALIZE_SOFT] == 0
+        assert default_library.al.sources[101][bindings.AL_SOURCE_SPATIALIZE_SOFT] == 1
+
+
+def test_non_spatial_play_requires_source_spatialize_extension(
     default_library: FakeLibrary,
 ) -> None:
     default_library.al_extensions.clear()
     pcm = PCM(b"\0\0", channels=1, sample_rate=8_000)
 
+    automatic = play(pcm)
+    assert bindings.AL_SOURCE_SPATIALIZE_SOFT not in default_library.al.sources[100]
+    automatic.stop()
+
     with pytest.raises(AudioError, match="AL_SOFT_source_spatialize"):
-        play_stationary(pcm)
+        play(pcm, spatialize=False)
+
+    with pytest.raises(AudioError, match="AL_SOFT_source_spatialize"):
+        play(pcm, spatialize=True)
 
     assert default_library.al.sources == {}
     assert default_library.al.allocated_buffers == set()
