@@ -201,6 +201,7 @@ def _create_voice(
     offset_frames: int | None = None,
     start: bool = True,
     spatialize: bool | None = None,
+    direct_channels: bool = False,
 ) -> Voice:
     """Create one configured static voice and optionally start it."""
 
@@ -210,6 +211,10 @@ def _create_voice(
         raise TypeError("start must be a boolean")
     if spatialize is not None and not isinstance(spatialize, bool):
         raise TypeError("spatialize must be a boolean or None")
+    if not isinstance(direct_channels, bool):
+        raise TypeError("direct_channels must be a boolean")
+    if direct_channels and clip.info.channels != 2:
+        raise ValueError("direct_channels requires a stereo clip")
     clip_identifier = _clip_identifier(playback, clip)
     offset_seconds, offset_frames = _validate_offsets(
         clip.info, offset_seconds, offset_frames
@@ -220,6 +225,12 @@ def _create_voice(
     ):
         raise AudioBackendError(
             "explicit spatialization requires the AL_SOFT_source_spatialize extension"
+        )
+    if direct_channels and not playback._library.is_al_extension_present(
+        "AL_SOFT_direct_channels"
+    ):
+        raise AudioBackendError(
+            "direct channel playback requires the AL_SOFT_direct_channels extension"
         )
     identifiers = playback._library.al.gen_sources()
     if len(identifiers) != 1:
@@ -234,6 +245,12 @@ def _create_voice(
                 identifier,
                 bindings.AL_SOURCE_SPATIALIZE_SOFT,
                 bindings.AL_TRUE if spatialize else bindings.AL_FALSE,
+            )
+        if direct_channels:
+            playback._library.al.sourcei(
+                identifier,
+                bindings.AL_DIRECT_CHANNELS_SOFT,
+                bindings.AL_TRUE,
             )
         playback._library.al.sourcei(identifier, bindings.AL_BUFFER, clip_identifier)
         if offset_frames is not None:
@@ -280,6 +297,7 @@ def _play_voice(
     offset_seconds: float = 0.0,
     offset_frames: int | None = None,
     spatialize: bool | None = None,
+    direct_channels: bool = False,
 ) -> Voice:
     """Create and immediately play one voice using a clip."""
 
@@ -291,6 +309,7 @@ def _play_voice(
         offset_frames=offset_frames,
         start=True,
         spatialize=spatialize,
+        direct_channels=direct_channels,
     )
 
 

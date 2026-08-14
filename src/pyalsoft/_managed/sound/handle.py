@@ -37,6 +37,8 @@ class _SoundRecord:
     pcm: PCM | None
     config: VoiceConfig
     spatialize: bool | None = None
+    direct_channels: bool = False
+    cache_key: tuple[Path, bool] | None = None
     final_status: VoiceStatus | None = None
     end_reason: SoundEndReason | None = None
 
@@ -44,6 +46,7 @@ class _SoundRecord:
 @dataclass(frozen=True, slots=True)
 class _CachedSoundClip:
     clip: Clip
+    info: SoundInfo
 
 
 @dataclass(slots=True, eq=False)

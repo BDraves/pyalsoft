@@ -169,3 +169,23 @@ class PCM:
             sample_type=self.sample_type,
             frame_count=self.frame_count,
         )
+
+
+def _as_stereo(pcm: PCM) -> PCM:
+    """Return *pcm* with mono sample frames duplicated into stereo."""
+
+    if pcm.channels == 2:
+        return pcm
+    sample_width = pcm.sample_type.byte_width
+    frame_width = sample_width * 2
+    samples = bytearray(len(pcm.samples) * 2)
+    for byte_offset in range(sample_width):
+        channel_bytes = pcm.samples[byte_offset::sample_width]
+        samples[byte_offset::frame_width] = channel_bytes
+        samples[byte_offset + sample_width :: frame_width] = channel_bytes
+    return PCM(
+        bytes(samples),
+        channels=2,
+        sample_rate=pcm.sample_rate,
+        sample_type=pcm.sample_type,
+    )

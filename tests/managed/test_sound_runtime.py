@@ -213,6 +213,34 @@ def test_sound_cache_temporarily_exceeds_budget_for_active_clips(
     second.stop()
 
 
+def test_sound_cache_separates_normal_and_direct_channel_variants(
+    tmp_path: Path,
+    default_library: FakeLibrary,
+) -> None:
+    path = tmp_path / "footstep.wav"
+    _write_wave(path)
+
+    positional = play(path)
+    direct = play(path, direct_channels=True)
+
+    assert default_library.al.buffers[1][0] == bindings.AL_FORMAT_MONO16
+    assert default_library.al.buffers[2][0] == bindings.AL_FORMAT_STEREO16
+    assert get_sound_cache_info() == SoundCacheInfo(
+        max_bytes=64 * 1024 * 1024,
+        current_bytes=48,
+        clip_count=2,
+        active_clip_count=2,
+        pending_eviction_count=0,
+    )
+    assert positional.channels == direct.channels == 1
+
+    positional.stop()
+    direct.stop()
+
+    assert clear_sound_cache(path) == 2
+    assert default_library.al.allocated_buffers == set()
+
+
 def test_sound_cache_uses_least_recently_used_eviction(
     tmp_path: Path,
     default_library: FakeLibrary,
