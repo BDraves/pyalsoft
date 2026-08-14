@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from pyalsoft import bindings
-from pyalsoft._managed.models import AudioBackendError, SampleType
+from pyalsoft._managed.audio import SampleType
+from pyalsoft._managed.errors import AudioBackendError
 
 _FORMAT_BY_LAYOUT = {
     (1, SampleType.UINT8): bindings.enums.ALFormat.FORMAT_MONO8,

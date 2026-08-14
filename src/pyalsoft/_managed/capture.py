@@ -14,13 +14,8 @@ from pyalsoft._managed._backend import (
     _check_alc_error,
     _clear_alc_errors,
 )
-from pyalsoft._managed.models import (
-    PCM,
-    AudioBackendError,
-    AudioError,
-    SampleType,
-    _validate_pcm_layout,
-)
+from pyalsoft._managed.audio import PCM, SampleType, _validate_pcm_layout
+from pyalsoft._managed.errors import AudioBackendError, AudioError
 
 
 class CaptureOpenError(AudioError):
