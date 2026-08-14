@@ -192,7 +192,17 @@ class Reverb:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class LowPassFilter:
+class _FilterConfig:
+    """Shared fields and validation for managed EFX filters."""
+
+    gain: float = 1.0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "gain", _bounded_float("gain", self.gain, 0.0, 1.0))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LowPassFilter(_FilterConfig):
     """An EFX filter that attenuates the high-frequency signal.
 
     Attributes:
@@ -204,11 +214,10 @@ class LowPassFilter:
         ValueError: A gain is non-finite or outside its supported range.
     """
 
-    gain: float = 1.0
     high_frequency_gain: float = 1.0
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "gain", _bounded_float("gain", self.gain, 0.0, 1.0))
+        _FilterConfig.__post_init__(self)
         object.__setattr__(
             self,
             "high_frequency_gain",
@@ -217,7 +226,7 @@ class LowPassFilter:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class HighPassFilter:
+class HighPassFilter(_FilterConfig):
     """An EFX filter that attenuates the low-frequency signal.
 
     Attributes:
@@ -229,11 +238,10 @@ class HighPassFilter:
         ValueError: A gain is non-finite or outside its supported range.
     """
 
-    gain: float = 1.0
     low_frequency_gain: float = 1.0
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "gain", _bounded_float("gain", self.gain, 0.0, 1.0))
+        _FilterConfig.__post_init__(self)
         object.__setattr__(
             self,
             "low_frequency_gain",
@@ -241,8 +249,49 @@ class HighPassFilter:
         )
 
 
-type Filter = LowPassFilter | HighPassFilter
+@dataclass(frozen=True, slots=True, kw_only=True)
+class BandPassFilter(_FilterConfig):
+    """An EFX filter that attenuates low and high frequencies independently.
+
+    Attributes:
+        gain: Overall linear gain, from 0.0 through 1.0.
+        low_frequency_gain: Additional low-frequency gain, from 0.0 through 1.0.
+        high_frequency_gain: Additional high-frequency gain, from 0.0 through 1.0.
+
+    Raises:
+        TypeError: A gain has the wrong type.
+        ValueError: A gain is non-finite or outside its supported range.
+    """
+
+    low_frequency_gain: float = 1.0
+    high_frequency_gain: float = 1.0
+
+    def __post_init__(self) -> None:
+        _FilterConfig.__post_init__(self)
+        object.__setattr__(
+            self,
+            "low_frequency_gain",
+            _bounded_float("low_frequency_gain", self.low_frequency_gain, 0.0, 1.0),
+        )
+        object.__setattr__(
+            self,
+            "high_frequency_gain",
+            _bounded_float("high_frequency_gain", self.high_frequency_gain, 0.0, 1.0),
+        )
+
+
+type Filter = LowPassFilter | HighPassFilter | BandPassFilter
 """A supported direct or auxiliary EFX filter configuration."""
+
+_FILTER_TYPES = (LowPassFilter, HighPassFilter, BandPassFilter)
+
+
+def _validate_filter(name: str, value: object) -> None:
+    if value is not None and not isinstance(value, _FILTER_TYPES):
+        raise TypeError(
+            f"{name} must be a LowPassFilter, HighPassFilter, BandPassFilter, or None"
+        )
+
 
 _OMITTED_FILTER = cast(Filter | None, _UNSET)
 
@@ -256,7 +305,8 @@ class EffectSend:
 
     Attributes:
         effect: Reverb applied to this route.
-        filter: Optional low-pass or high-pass filter applied only to this route.
+        filter: Optional low-pass, high-pass, or band-pass filter applied only
+            to this route.
 
     Raises:
         TypeError: ``effect`` or ``filter`` is not a supported configuration.
@@ -268,10 +318,7 @@ class EffectSend:
     def __post_init__(self) -> None:
         if not isinstance(self.effect, Reverb):
             raise TypeError("effect must be a Reverb")
-        if self.filter is not None and not isinstance(
-            self.filter, (LowPassFilter, HighPassFilter)
-        ):
-            raise TypeError("filter must be a LowPassFilter, HighPassFilter, or None")
+        _validate_filter("filter", self.filter)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -369,10 +416,7 @@ class VoiceConfig:
         cone_outer_gain = _finite_float("cone_outer_gain", self.cone_outer_gain)
         if not 0.0 <= cone_outer_gain <= 1.0:
             raise ValueError("cone_outer_gain must be between 0.0 and 1.0")
-        if self.filter is not None and not isinstance(
-            self.filter, (LowPassFilter, HighPassFilter)
-        ):
-            raise TypeError("filter must be a LowPassFilter, HighPassFilter, or None")
+        _validate_filter("filter", self.filter)
         if not isinstance(self.effect_sends, (tuple, list)):
             raise TypeError("effect_sends must be a tuple or list")
         effect_sends = tuple(self.effect_sends)

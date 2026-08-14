@@ -7,6 +7,7 @@ import pytest
 from pyalsoft import (
     PCM,
     AudioBackendError,
+    BandPassFilter,
     EffectSend,
     HighPassFilter,
     LowPassFilter,
@@ -59,10 +60,22 @@ def test_voice_efx_are_created_replaced_and_released_with_the_voice() -> None:
         set_voice_config(
             playback,
             voice,
-            VoiceConfig(filter=HighPassFilter(low_frequency_gain=0.1)),
+            VoiceConfig(
+                filter=BandPassFilter(
+                    gain=0.75,
+                    low_frequency_gain=0.1,
+                    high_frequency_gain=0.2,
+                )
+            ),
         )
 
         assert library.al.sources[100][bindings.AL_DIRECT_FILTER] == 302
+        assert library.al.filters[302] == {
+            bindings.AL_FILTER_TYPE: bindings.AL_FILTER_BANDPASS,
+            bindings.AL_BANDPASS_GAIN: 0.75,
+            bindings.AL_BANDPASS_GAINLF: 0.1,
+            bindings.AL_BANDPASS_GAINHF: 0.2,
+        }
         assert library.al.source_sends[(100, 0)] == (
             bindings.AL_EFFECTSLOT_NULL,
             bindings.AL_FILTER_NULL,
@@ -76,6 +89,37 @@ def test_voice_efx_are_created_replaced_and_released_with_the_voice() -> None:
             bindings.AL_FILTER_NULL
         )
         assert library.al.allocated_filters == set()
+        release(playback, voice)
+        release(playback, clip)
+
+    assert library.al.allocated_effects == set()
+    assert library.al.allocated_effect_slots == set()
+    assert library.al.allocated_filters == set()
+
+
+def test_band_pass_filter_configures_an_auxiliary_send() -> None:
+    library = FakeLibrary()
+    send = EffectSend(
+        effect=Reverb(),
+        filter=BandPassFilter(
+            gain=0.75,
+            low_frequency_gain=0.1,
+            high_frequency_gain=0.2,
+        ),
+    )
+    with open_playback(library=as_library(library)) as playback:
+        clip = upload(playback, PCM(b"\0\0" * 10, channels=1, sample_rate=10))
+        voice = play(playback, clip, effect_sends=(send,))
+
+        slot, filter_identifier = library.al.source_sends[(100, 0)]
+        assert slot == 400
+        assert library.al.filters[filter_identifier] == {
+            bindings.AL_FILTER_TYPE: bindings.AL_FILTER_BANDPASS,
+            bindings.AL_BANDPASS_GAIN: 0.75,
+            bindings.AL_BANDPASS_GAINLF: 0.1,
+            bindings.AL_BANDPASS_GAINHF: 0.2,
+        }
+
         release(playback, voice)
         release(playback, clip)
 

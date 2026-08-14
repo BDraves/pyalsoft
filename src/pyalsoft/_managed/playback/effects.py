@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import suppress
 from dataclasses import dataclass
+from typing import assert_never
 
 from pyalsoft import bindings
 from pyalsoft._managed._backend import _check_alc_error, _clear_alc_errors
@@ -14,8 +15,10 @@ from pyalsoft._managed.playback.session import (
     _clear_al_errors,
 )
 from pyalsoft._managed.spatial import (
+    BandPassFilter,
     EffectSend,
     Filter,
+    HighPassFilter,
     LowPassFilter,
     Reverb,
     VoiceConfig,
@@ -82,7 +85,7 @@ def _configure_filter(playback: Playback, identifier: int, config: Filter) -> No
             bindings.AL_LOWPASS_GAINHF,
             config.high_frequency_gain,
         )
-    else:
+    elif isinstance(config, HighPassFilter):
         al.filteri(identifier, bindings.AL_FILTER_TYPE, bindings.AL_FILTER_HIGHPASS)
         al.filterf(identifier, bindings.AL_HIGHPASS_GAIN, config.gain)
         al.filterf(
@@ -90,6 +93,21 @@ def _configure_filter(playback: Playback, identifier: int, config: Filter) -> No
             bindings.AL_HIGHPASS_GAINLF,
             config.low_frequency_gain,
         )
+    elif isinstance(config, BandPassFilter):
+        al.filteri(identifier, bindings.AL_FILTER_TYPE, bindings.AL_FILTER_BANDPASS)
+        al.filterf(identifier, bindings.AL_BANDPASS_GAIN, config.gain)
+        al.filterf(
+            identifier,
+            bindings.AL_BANDPASS_GAINLF,
+            config.low_frequency_gain,
+        )
+        al.filterf(
+            identifier,
+            bindings.AL_BANDPASS_GAINHF,
+            config.high_frequency_gain,
+        )
+    else:
+        assert_never(config)
 
 
 def _configure_reverb(playback: Playback, identifier: int, config: Reverb) -> None:

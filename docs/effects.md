@@ -19,9 +19,11 @@ sound = play(
 )
 ```
 
-[`LowPassFilter`][pyalsoft.LowPassFilter] and
-[`HighPassFilter`][pyalsoft.HighPassFilter] expose EFX gain controls rather than
-a cutoff frequency. A filter may also be placed on an `EffectSend` to shape
+[`LowPassFilter`][pyalsoft.LowPassFilter],
+[`HighPassFilter`][pyalsoft.HighPassFilter], and
+[`BandPassFilter`][pyalsoft.BandPassFilter] expose EFX gain controls rather than
+cutoff frequencies. Band-pass filters provide independent low- and
+high-frequency gains. A filter may also be placed on an `EffectSend` to shape
 only the wet signal. Send tuple order determines the native auxiliary-send
 index, and the playback device determines how many simultaneous sends it
 supports.

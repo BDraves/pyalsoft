@@ -7,6 +7,7 @@ from dataclasses import FrozenInstanceError, replace
 import pytest
 
 from pyalsoft import (
+    BandPassFilter,
     EffectSend,
     HighPassFilter,
     LowPassFilter,
@@ -40,12 +41,20 @@ def test_efx_descriptions_are_validated_immutable_values() -> None:
     reverb = Reverb(decay_time=2, high_frequency_decay_ratio=0.5)
     low_pass = LowPassFilter(gain=1, high_frequency_gain=0.25)
     high_pass = HighPassFilter(gain=1, low_frequency_gain=0.4)
-    send = EffectSend(effect=reverb, filter=high_pass)
+    band_pass = BandPassFilter(
+        gain=0.8,
+        low_frequency_gain=0.4,
+        high_frequency_gain=0.25,
+    )
+    send = EffectSend(effect=reverb, filter=band_pass)
     config = VoiceConfig(filter=low_pass, effect_sends=(send,))
 
     assert reverb.decay_time == 2.0
     assert low_pass.high_frequency_gain == 0.25
     assert high_pass.low_frequency_gain == 0.4
+    assert band_pass.gain == 0.8
+    assert band_pass.low_frequency_gain == 0.4
+    assert band_pass.high_frequency_gain == 0.25
     assert config.effect_sends == (send,)
     assert replace(reverb, decay_time=3.0).decay_time == 3.0
     with pytest.raises(FrozenInstanceError):
@@ -56,6 +65,12 @@ def test_efx_descriptions_are_validated_immutable_values() -> None:
         LowPassFilter(high_frequency_gain=-0.1)
     with pytest.raises(ValueError, match="low_frequency_gain must be between"):
         HighPassFilter(low_frequency_gain=1.1)
+    with pytest.raises(ValueError, match="gain must be between"):
+        BandPassFilter(gain=1.1)
+    with pytest.raises(ValueError, match="low_frequency_gain must be between"):
+        BandPassFilter(low_frequency_gain=-0.1)
+    with pytest.raises(ValueError, match="high_frequency_gain must be between"):
+        BandPassFilter(high_frequency_gain=1.1)
     with pytest.raises(TypeError, match="high_frequency_decay_limit"):
         Reverb(high_frequency_decay_limit=1)  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="effect must be a Reverb"):
