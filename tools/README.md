@@ -11,7 +11,7 @@ effects; shared implementation belongs in importable modules below them.
 | `generate_bindings.py` | Parse `al.xml` and generate typed bindings, metadata, and reference documentation. | Writes generated Python, `docs/reference.md`, and the README version badge unless `--check` is used. |
 | `changelog.py` | Extract one version's notes from `CHANGELOG.md` for publication. | Read-only; writes the selected notes to standard output. |
 | `sync_openal_soft.py` | Verify or download the pinned OpenAL Soft registry, source archive, Windows runtime, and licenses. | `--check` is read-only; the default mode uses the network and updates `vendor/openal-soft`. |
-| `build_openal_soft.py` | Build or stage the native runtime for the current platform. | Extracts and compiles under `build/`; `PYALSOFT_NATIVE_ROOT` can redirect the staged runtime. |
+| `build_openal_soft.py` | Build or stage the native runtime for the current platform. | Extracts and compiles under `build/`; uses at most two compiler jobs by default. `--jobs` or `PYALSOFT_BUILD_JOBS` can change the limit, and `PYALSOFT_NATIVE_ROOT` can redirect the staged runtime. |
 | `smoke_test_runtime.py` | Exercise device/context creation using the runtime contained in an installed wheel. | Opens the OpenAL null device. |
 | `freeze_test.py` | Build a one-file PyInstaller executable from the runtime smoke test and run it. | Uses a temporary build directory. |
 
@@ -33,6 +33,11 @@ reviewed corrections for semantics that the upstream XML cannot express.
 wheel assembly. It owns manifest validation, checksums, and platform targeting.
 `PYALSOFT_NATIVE_ROOT`, when set, must be an absolute path that both the native
 builder and wheel build can access.
+
+Native compilation is explicitly limited to two concurrent jobs by default.
+Pass `--jobs N` for a one-off build or set `PYALSOFT_BUILD_JOBS=N` for wheel
+builds and other indirect invocations. Values must be positive integers; avoid
+raising the limit on memory-constrained WSL or CI workers.
 
 The thin top-level scripts are intentionally stable: contributor commands, CI,
 and downstream imports do not need to know the internal package layout.

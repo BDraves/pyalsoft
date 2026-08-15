@@ -1,28 +1,16 @@
-"""Spatial, acoustic, and effects configuration values."""
+"""Spatial and acoustic configuration values."""
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from enum import Enum
-from typing import cast
 
+from pyalsoft._managed._values import Vector3 as Vector3
+from pyalsoft._managed._values import _finite_float, _vector3
 from pyalsoft._managed.audio import SoundInfo
-
-type Vector3 = tuple[float, float, float]
-"""A Cartesian ``(x, y, z)`` vector used for spatial coordinates."""
+from pyalsoft._managed.effects import EffectSend, Filter, _validate_filter
 
 _FLOAT32_MAX = float.fromhex("0x1.fffffep+127")
-
-
-class _UnsetType:
-    __slots__ = ()
-
-    def __repr__(self) -> str:
-        return "<omitted>"
-
-
-_UNSET = _UnsetType()
 
 
 class DistanceModel(Enum):
@@ -49,22 +37,6 @@ class DistanceModel(Enum):
     LINEAR_CLAMPED = "linear_clamped"
     EXPONENT = "exponent"
     EXPONENT_CLAMPED = "exponent_clamped"
-
-
-def _finite_float(name: str, value: float) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise TypeError(f"{name} must be a number")
-    converted = float(value)
-    if not math.isfinite(converted):
-        raise ValueError(f"{name} must be finite")
-    return converted
-
-
-def _bounded_float(name: str, value: float, minimum: float, maximum: float) -> float:
-    converted = _finite_float(name, value)
-    if not minimum <= converted <= maximum:
-        raise ValueError(f"{name} must be between {minimum:g} and {maximum:g}")
-    return converted
 
 
 def _sound_offset(value: float, duration_seconds: float) -> float:
@@ -98,227 +70,6 @@ def _validate_offsets(
     if offset_seconds != 0.0:
         raise ValueError("offset_seconds and offset_frames cannot both be set")
     return 0.0, _frame_offset(offset_frames, info.frame_count)
-
-
-def _vector3(name: str, value: Vector3) -> Vector3:
-    if not isinstance(value, (tuple, list)) or len(value) != 3:
-        raise TypeError(f"{name} must be a three-item tuple or list")
-    return cast(
-        Vector3,
-        tuple(
-            _finite_float(f"{name}[{index}]", item) for index, item in enumerate(value)
-        ),
-    )
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class Reverb:
-    """Immutable standard EFX reverb parameters.
-
-    Values use the OpenAL EFX standard-reverb ranges and defaults. Attach a
-    reverb to a voice through [`EffectSend`][pyalsoft.EffectSend].
-
-    Attributes:
-        density: Modal density, from 0.0 through 1.0.
-        diffusion: Echo density, from 0.0 through 1.0.
-        gain: Overall linear wet-signal gain, from 0.0 through 1.0.
-        high_frequency_gain: High-frequency wet gain, from 0.0 through 1.0.
-        decay_time: Reverberation decay time in seconds, from 0.1 through 20.0.
-        high_frequency_decay_ratio: High-frequency to low-frequency decay ratio,
-            from 0.1 through 2.0.
-        reflections_gain: Early-reflections gain, from 0.0 through 3.16.
-        reflections_delay: Early-reflections delay in seconds, from 0.0 through 0.3.
-        late_reverb_gain: Late-reverberation gain, from 0.0 through 10.0.
-        late_reverb_delay: Late-reverberation delay in seconds, from 0.0 through 0.1.
-        air_absorption_high_frequency_gain: Per-meter high-frequency air absorption
-            gain, from 0.892 through 1.0.
-        room_rolloff_factor: Distance-based room attenuation factor, from 0.0
-            through 10.0.
-        high_frequency_decay_limit: Whether air absorption limits high-frequency
-            decay time.
-
-    Raises:
-        TypeError: A parameter has the wrong type.
-        ValueError: A parameter is non-finite or outside its supported range.
-    """
-
-    density: float = 1.0
-    diffusion: float = 1.0
-    gain: float = 0.32
-    high_frequency_gain: float = 0.89
-    decay_time: float = 1.49
-    high_frequency_decay_ratio: float = 0.83
-    reflections_gain: float = 0.05
-    reflections_delay: float = 0.007
-    late_reverb_gain: float = 1.26
-    late_reverb_delay: float = 0.011
-    air_absorption_high_frequency_gain: float = 0.994
-    room_rolloff_factor: float = 0.0
-    high_frequency_decay_limit: bool = True
-
-    def __post_init__(self) -> None:
-        ranges = (
-            ("density", self.density, 0.0, 1.0),
-            ("diffusion", self.diffusion, 0.0, 1.0),
-            ("gain", self.gain, 0.0, 1.0),
-            ("high_frequency_gain", self.high_frequency_gain, 0.0, 1.0),
-            ("decay_time", self.decay_time, 0.1, 20.0),
-            (
-                "high_frequency_decay_ratio",
-                self.high_frequency_decay_ratio,
-                0.1,
-                2.0,
-            ),
-            ("reflections_gain", self.reflections_gain, 0.0, 3.16),
-            ("reflections_delay", self.reflections_delay, 0.0, 0.3),
-            ("late_reverb_gain", self.late_reverb_gain, 0.0, 10.0),
-            ("late_reverb_delay", self.late_reverb_delay, 0.0, 0.1),
-            (
-                "air_absorption_high_frequency_gain",
-                self.air_absorption_high_frequency_gain,
-                0.892,
-                1.0,
-            ),
-            ("room_rolloff_factor", self.room_rolloff_factor, 0.0, 10.0),
-        )
-        for name, value, minimum, maximum in ranges:
-            object.__setattr__(
-                self,
-                name,
-                _bounded_float(name, value, minimum, maximum),
-            )
-        if not isinstance(self.high_frequency_decay_limit, bool):
-            raise TypeError("high_frequency_decay_limit must be a boolean")
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class _FilterConfig:
-    """Shared fields and validation for managed EFX filters."""
-
-    gain: float = 1.0
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "gain", _bounded_float("gain", self.gain, 0.0, 1.0))
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class LowPassFilter(_FilterConfig):
-    """An EFX filter that attenuates the high-frequency signal.
-
-    Attributes:
-        gain: Overall linear gain, from 0.0 through 1.0.
-        high_frequency_gain: Additional high-frequency gain, from 0.0 through 1.0.
-
-    Raises:
-        TypeError: A gain has the wrong type.
-        ValueError: A gain is non-finite or outside its supported range.
-    """
-
-    high_frequency_gain: float = 1.0
-
-    def __post_init__(self) -> None:
-        _FilterConfig.__post_init__(self)
-        object.__setattr__(
-            self,
-            "high_frequency_gain",
-            _bounded_float("high_frequency_gain", self.high_frequency_gain, 0.0, 1.0),
-        )
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class HighPassFilter(_FilterConfig):
-    """An EFX filter that attenuates the low-frequency signal.
-
-    Attributes:
-        gain: Overall linear gain, from 0.0 through 1.0.
-        low_frequency_gain: Additional low-frequency gain, from 0.0 through 1.0.
-
-    Raises:
-        TypeError: A gain has the wrong type.
-        ValueError: A gain is non-finite or outside its supported range.
-    """
-
-    low_frequency_gain: float = 1.0
-
-    def __post_init__(self) -> None:
-        _FilterConfig.__post_init__(self)
-        object.__setattr__(
-            self,
-            "low_frequency_gain",
-            _bounded_float("low_frequency_gain", self.low_frequency_gain, 0.0, 1.0),
-        )
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class BandPassFilter(_FilterConfig):
-    """An EFX filter that attenuates low and high frequencies independently.
-
-    Attributes:
-        gain: Overall linear gain, from 0.0 through 1.0.
-        low_frequency_gain: Additional low-frequency gain, from 0.0 through 1.0.
-        high_frequency_gain: Additional high-frequency gain, from 0.0 through 1.0.
-
-    Raises:
-        TypeError: A gain has the wrong type.
-        ValueError: A gain is non-finite or outside its supported range.
-    """
-
-    low_frequency_gain: float = 1.0
-    high_frequency_gain: float = 1.0
-
-    def __post_init__(self) -> None:
-        _FilterConfig.__post_init__(self)
-        object.__setattr__(
-            self,
-            "low_frequency_gain",
-            _bounded_float("low_frequency_gain", self.low_frequency_gain, 0.0, 1.0),
-        )
-        object.__setattr__(
-            self,
-            "high_frequency_gain",
-            _bounded_float("high_frequency_gain", self.high_frequency_gain, 0.0, 1.0),
-        )
-
-
-type Filter = LowPassFilter | HighPassFilter | BandPassFilter
-"""A supported direct or auxiliary EFX filter configuration."""
-
-_FILTER_TYPES = (LowPassFilter, HighPassFilter, BandPassFilter)
-
-
-def _validate_filter(name: str, value: object) -> None:
-    if value is not None and not isinstance(value, _FILTER_TYPES):
-        raise TypeError(
-            f"{name} must be a LowPassFilter, HighPassFilter, BandPassFilter, or None"
-        )
-
-
-_OMITTED_FILTER = cast(Filter | None, _UNSET)
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class EffectSend:
-    """One auxiliary effect route, with an optional wet-signal filter.
-
-    Tuple order in ``VoiceConfig.effect_sends`` determines the native
-    auxiliary-send index. The device limits the number of simultaneous sends.
-
-    Attributes:
-        effect: Reverb applied to this route.
-        filter: Optional low-pass, high-pass, or band-pass filter applied only
-            to this route.
-
-    Raises:
-        TypeError: ``effect`` or ``filter`` is not a supported configuration.
-    """
-
-    effect: Reverb
-    filter: Filter | None = None
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.effect, Reverb):
-            raise TypeError("effect must be a Reverb")
-        _validate_filter("filter", self.filter)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

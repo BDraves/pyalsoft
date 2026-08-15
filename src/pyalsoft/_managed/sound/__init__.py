@@ -10,6 +10,7 @@ from threading import RLock
 from typing import overload
 
 from pyalsoft._managed.audio import PCM, AudioPath
+from pyalsoft._managed.effects import _OMITTED_FILTER, EffectSend, Filter
 from pyalsoft._managed.playback.session import (
     Playback,
     _get_acoustics,
@@ -27,11 +28,8 @@ from pyalsoft._managed.sound.handle import PlayingSound
 from pyalsoft._managed.sound.runtime import _DefaultRuntime
 from pyalsoft._managed.sound.wave import get_sound_info
 from pyalsoft._managed.spatial import (
-    _OMITTED_FILTER,
     Acoustics,
     DistanceModel,
-    EffectSend,
-    Filter,
     Listener,
     Vector3,
     VoiceConfig,

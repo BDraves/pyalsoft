@@ -10,6 +10,7 @@ from threading import RLock
 from pyalsoft import bindings
 from pyalsoft._managed._backend import _check_alc_error, _clear_alc_errors
 from pyalsoft._managed.audio import PCM, AudioPath, _as_stereo
+from pyalsoft._managed.effects import _OMITTED_FILTER, EffectSend, Filter
 from pyalsoft._managed.errors import InvalidVoiceStateError
 from pyalsoft._managed.playback.session import (
     Playback,
@@ -51,10 +52,7 @@ from pyalsoft._managed.sound.wave import _read_wave
 from pyalsoft._managed.spatial import (
     _DEFAULT_ACOUSTICS,
     _DEFAULT_LISTENER,
-    _OMITTED_FILTER,
     Acoustics,
-    EffectSend,
-    Filter,
     Listener,
     Vector3,
     VoiceConfig,

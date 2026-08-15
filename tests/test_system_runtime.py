@@ -10,8 +10,23 @@ import pytest
 from pyalsoft import (
     PCM,
     Acoustics,
+    AutoWah,
+    Chorus,
+    Compressor,
     DistanceModel,
+    Distortion,
+    EAXReverb,
+    Echo,
+    Effect,
+    EffectSend,
+    Equalizer,
+    Flanger,
+    FrequencyShifter,
     Listener,
+    PitchShifter,
+    Reverb,
+    RingModulator,
+    VocalMorpher,
     VoiceState,
     bindings,
     get_acoustics,
@@ -111,5 +126,36 @@ def test_system_runtime_supports_managed_sound_controls(
         restart(playback, voice)
         assert get_voice_status(playback, voice).state is VoiceState.PLAYING
 
+        release(playback, voice)
+        release(playback, clip)
+
+
+@pytest.mark.parametrize(
+    "effect",
+    [
+        Reverb(),
+        EAXReverb(),
+        Chorus(),
+        Distortion(),
+        Echo(),
+        Flanger(),
+        FrequencyShifter(),
+        VocalMorpher(),
+        PitchShifter(),
+        RingModulator(),
+        AutoWah(),
+        Compressor(),
+        Equalizer(),
+    ],
+)
+def test_system_runtime_supports_every_core_efx_effect(
+    monkeypatch: pytest.MonkeyPatch,
+    effect: Effect,
+) -> None:
+    monkeypatch.setenv("ALSOFT_DRIVERS", "null")
+    path = os.environ.get("PYALSOFT_TEST_LIBRARY")
+    with open_playback(library=bindings.load(path)) as playback:
+        clip = upload(playback, PCM(b"\0\0" * 10, channels=1, sample_rate=10))
+        voice = play(playback, clip, effect_sends=(EffectSend(effect=effect),))
         release(playback, voice)
         release(playback, clip)

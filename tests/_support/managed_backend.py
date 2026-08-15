@@ -87,6 +87,11 @@ class FakeAL:
     def effectf(self, identifier: int, parameter: int, value: float) -> None:
         self.effects[identifier][parameter] = value
 
+    def effectfv(
+        self, identifier: int, parameter: int, values: tuple[float, ...]
+    ) -> None:
+        self.effects[identifier][parameter] = tuple(values)
+
     def gen_filters(self, count: int = 1) -> tuple[int, ...]:
         identifiers = tuple(range(self.next_filter, self.next_filter + count))
         self.next_filter += count

@@ -2,17 +2,50 @@
 
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError, replace
+from dataclasses import FrozenInstanceError, fields, replace
+from typing import Any
 
 import pytest
 
 from pyalsoft import (
+    AutoWah,
     BandPassFilter,
+    Chorus,
+    Compressor,
+    Distortion,
+    EAXReverb,
+    Echo,
     EffectSend,
+    Equalizer,
+    Flanger,
+    FrequencyShifter,
     HighPassFilter,
     LowPassFilter,
+    PitchShifter,
     Reverb,
+    RingModulator,
+    VocalMorpher,
     VoiceConfig,
+)
+from pyalsoft._managed.effects import _parameter_spec, _ParameterKind
+
+_EFX_CONFIG_TYPES: tuple[type[Any], ...] = (
+    Reverb,
+    EAXReverb,
+    Chorus,
+    Distortion,
+    Echo,
+    Flanger,
+    FrequencyShifter,
+    VocalMorpher,
+    PitchShifter,
+    RingModulator,
+    AutoWah,
+    Compressor,
+    Equalizer,
+    LowPassFilter,
+    HighPassFilter,
+    BandPassFilter,
 )
 
 
@@ -73,7 +106,49 @@ def test_efx_descriptions_are_validated_immutable_values() -> None:
         BandPassFilter(high_frequency_gain=1.1)
     with pytest.raises(TypeError, match="high_frequency_decay_limit"):
         Reverb(high_frequency_decay_limit=1)  # type: ignore[arg-type]
-    with pytest.raises(TypeError, match="effect must be a Reverb"):
+    with pytest.raises(TypeError, match="effect must be an Effect"):
         EffectSend(effect=low_pass)  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="effect_sends must contain"):
         VoiceConfig(effect_sends=(reverb,))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("config_type", _EFX_CONFIG_TYPES)
+def test_every_efx_parameter_descriptor_validates_its_value(
+    config_type: type[Any],
+) -> None:
+    config = config_type()
+    for value_field in fields(config):
+        spec = _parameter_spec(value_field)
+        assert spec is not None
+        if spec.kind is _ParameterKind.FLOAT:
+            assert spec.minimum is not None
+            assert spec.maximum is not None
+            assert isinstance(
+                replace(config, **{value_field.name: spec.minimum}), config_type
+            )
+            assert isinstance(
+                replace(config, **{value_field.name: spec.maximum}), config_type
+            )
+            with pytest.raises(ValueError, match=value_field.name):
+                replace(config, **{value_field.name: float("nan")})
+            with pytest.raises(ValueError, match=value_field.name):
+                replace(config, **{value_field.name: float(spec.maximum) + 1.0})
+        elif spec.kind is _ParameterKind.INTEGER:
+            assert spec.minimum is not None
+            assert spec.maximum is not None
+            with pytest.raises(TypeError, match=value_field.name):
+                replace(config, **{value_field.name: True})
+            with pytest.raises(ValueError, match=value_field.name):
+                replace(config, **{value_field.name: int(spec.maximum) + 1})
+        elif spec.kind is _ParameterKind.BOOLEAN:
+            with pytest.raises(TypeError, match=value_field.name):
+                replace(config, **{value_field.name: 1})
+        elif spec.kind is _ParameterKind.ENUM:
+            with pytest.raises(TypeError, match=value_field.name):
+                replace(config, **{value_field.name: "invalid"})
+        else:
+            assert spec.kind is _ParameterKind.VECTOR3
+            normalized = replace(config, **{value_field.name: [1, 2, 3]})
+            assert getattr(normalized, value_field.name) == (1.0, 2.0, 3.0)
+            with pytest.raises(TypeError, match=value_field.name):
+                replace(config, **{value_field.name: (1.0, 2.0)})

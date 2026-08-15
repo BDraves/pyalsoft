@@ -7,7 +7,13 @@ from pathlib import Path
 import pytest
 
 from pyalsoft._pyinstaller import get_hook_dirs
-from tools.build_openal_soft import build_runtime
+from tools.build_openal_soft import (
+    BUILD_JOBS_ENVIRONMENT,
+    DEFAULT_BUILD_JOBS,
+    _build_jobs,
+    _cmake_build_command,
+    build_runtime,
+)
 from tools.openal_soft import (
     NATIVE_ROOT_ENVIRONMENT,
     native_runtime_root,
@@ -48,6 +54,37 @@ def test_build_runtime_uses_configured_native_root(
 
     assert path == configured / "win_amd64" / "soft_oal.dll"
     assert path.is_file()
+
+
+def test_native_build_parallelism_is_explicitly_bounded_by_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv(BUILD_JOBS_ENVIRONMENT, raising=False)
+
+    jobs = _build_jobs()
+    command = _cmake_build_command(tmp_path / "build", jobs)
+
+    assert jobs == DEFAULT_BUILD_JOBS == 2
+    assert command[-2:] == ["--parallel", "2"]
+
+
+def test_native_build_parallelism_can_be_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(BUILD_JOBS_ENVIRONMENT, "3")
+
+    assert _build_jobs() == 3
+    assert _build_jobs(1) == 1
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "many"])
+def test_native_build_parallelism_rejects_invalid_environment_values(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv(BUILD_JOBS_ENVIRONMENT, value)
+
+    with pytest.raises(ValueError, match=BUILD_JOBS_ENVIRONMENT):
+        _build_jobs()
 
 
 @pytest.mark.parametrize(
