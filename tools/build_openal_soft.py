@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -21,6 +22,49 @@ from tools.openal_soft import (
     source_configuration,
     verify_checksum,
 )  # noqa: E402
+
+BUILD_JOBS_ENVIRONMENT = "PYALSOFT_BUILD_JOBS"
+DEFAULT_BUILD_JOBS = 2
+
+
+def _build_jobs(requested: int | None = None) -> int:
+    """Return a validated, explicitly bounded native-build job count."""
+
+    if requested is not None:
+        if isinstance(requested, bool) or not isinstance(requested, int):
+            raise TypeError("jobs must be an integer")
+        if requested < 1:
+            raise ValueError("jobs must be a positive integer")
+        return requested
+
+    configured = os.environ.get(BUILD_JOBS_ENVIRONMENT)
+    if configured is None:
+        return DEFAULT_BUILD_JOBS
+    try:
+        jobs = int(configured)
+    except ValueError as error:
+        raise ValueError(
+            f"{BUILD_JOBS_ENVIRONMENT} must be a positive integer"
+        ) from error
+    if jobs < 1:
+        raise ValueError(f"{BUILD_JOBS_ENVIRONMENT} must be a positive integer")
+    return jobs
+
+
+def _cmake_build_command(build_directory: Path, jobs: int) -> list[str]:
+    """Return the native build command with an explicit parallelism bound."""
+
+    return [
+        "cmake",
+        "--build",
+        str(build_directory),
+        "--config",
+        "Release",
+        "--target",
+        "OpenAL",
+        "--parallel",
+        str(jobs),
+    ]
 
 
 def _source_tree(config: dict[str, str]) -> Path:
@@ -55,7 +99,11 @@ def _built_library(build_directory: Path, target: RuntimeTarget) -> Path:
     return candidates[-1]
 
 
-def build_runtime(target: RuntimeTarget | None = None) -> Path:
+def build_runtime(
+    target: RuntimeTarget | None = None,
+    *,
+    jobs: int | None = None,
+) -> Path:
     """Stage the matching native runtime and return its path."""
 
     selected = target or runtime_target()
@@ -67,6 +115,8 @@ def build_runtime(target: RuntimeTarget | None = None) -> Path:
         source = VENDOR / "runtime" / "win_amd64" / "soft_oal.dll"
         shutil.copy2(source, staged)
         return staged
+
+    build_jobs = _build_jobs(jobs)
 
     config = source_configuration({"version", "library_source_sha256"})
     staged = (
@@ -108,27 +158,28 @@ def build_runtime(target: RuntimeTarget | None = None) -> Path:
         ],
         check=True,
     )
-    subprocess.run(
-        [
-            "cmake",
-            "--build",
-            str(build_directory),
-            "--config",
-            "Release",
-            "--target",
-            "OpenAL",
-            "--parallel",
-        ],
-        check=True,
-    )
+    subprocess.run(_cmake_build_command(build_directory, build_jobs), check=True)
     shutil.copy2(_built_library(build_directory, selected), staged)
     return staged
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.parse_args()
-    path = build_runtime()
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        help=(
+            "maximum concurrent compiler jobs "
+            f"(default: {DEFAULT_BUILD_JOBS}; override with "
+            f"{BUILD_JOBS_ENVIRONMENT})"
+        ),
+    )
+    args = parser.parse_args()
+    try:
+        jobs = _build_jobs(args.jobs)
+    except (TypeError, ValueError) as error:
+        parser.error(str(error))
+    path = build_runtime(jobs=jobs)
     try:
         displayed = path.relative_to(ROOT)
     except ValueError:

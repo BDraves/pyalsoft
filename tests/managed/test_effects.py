@@ -7,11 +7,29 @@ import pytest
 from pyalsoft import (
     PCM,
     AudioBackendError,
+    AutoWah,
     BandPassFilter,
+    Chorus,
+    Compressor,
+    Distortion,
+    EAXReverb,
+    Echo,
+    Effect,
     EffectSend,
+    Equalizer,
+    Flanger,
+    FrequencyShiftDirection,
+    FrequencyShifter,
     HighPassFilter,
     LowPassFilter,
+    ModulationWaveform,
+    PitchShifter,
     Reverb,
+    RingModulator,
+    RingModulatorWaveform,
+    VocalMorpher,
+    VocalMorpherPhoneme,
+    VocalMorpherWaveform,
     VoiceConfig,
     bindings,
     open_playback,
@@ -21,6 +39,224 @@ from pyalsoft import (
     upload,
 )
 from tests._support.managed_backend import FakeLibrary, as_library
+
+
+@pytest.mark.parametrize(
+    ("effect", "effect_type", "properties"),
+    [
+        (
+            Reverb(),
+            bindings.AL_EFFECT_REVERB,
+            {
+                bindings.AL_REVERB_DENSITY: 1.0,
+                bindings.AL_REVERB_DIFFUSION: 1.0,
+                bindings.AL_REVERB_GAIN: 0.32,
+                bindings.AL_REVERB_GAINHF: 0.89,
+                bindings.AL_REVERB_DECAY_TIME: 1.49,
+                bindings.AL_REVERB_DECAY_HFRATIO: 0.83,
+                bindings.AL_REVERB_REFLECTIONS_GAIN: 0.05,
+                bindings.AL_REVERB_REFLECTIONS_DELAY: 0.007,
+                bindings.AL_REVERB_LATE_REVERB_GAIN: 1.26,
+                bindings.AL_REVERB_LATE_REVERB_DELAY: 0.011,
+                bindings.AL_REVERB_AIR_ABSORPTION_GAINHF: 0.994,
+                bindings.AL_REVERB_ROOM_ROLLOFF_FACTOR: 0.0,
+                bindings.AL_REVERB_DECAY_HFLIMIT: 1,
+            },
+        ),
+        (
+            EAXReverb(
+                reflections_pan=(1, 2, 3),
+                late_reverb_pan=(-1, -2, -3),
+                high_frequency_decay_limit=False,
+            ),
+            bindings.AL_EFFECT_EAXREVERB,
+            {
+                bindings.AL_EAXREVERB_DENSITY: 1.0,
+                bindings.AL_EAXREVERB_DIFFUSION: 1.0,
+                bindings.AL_EAXREVERB_GAIN: 0.32,
+                bindings.AL_EAXREVERB_GAINHF: 0.89,
+                bindings.AL_EAXREVERB_GAINLF: 1.0,
+                bindings.AL_EAXREVERB_DECAY_TIME: 1.49,
+                bindings.AL_EAXREVERB_DECAY_HFRATIO: 0.83,
+                bindings.AL_EAXREVERB_DECAY_LFRATIO: 1.0,
+                bindings.AL_EAXREVERB_REFLECTIONS_GAIN: 0.05,
+                bindings.AL_EAXREVERB_REFLECTIONS_DELAY: 0.007,
+                bindings.AL_EAXREVERB_REFLECTIONS_PAN: (1.0, 2.0, 3.0),
+                bindings.AL_EAXREVERB_LATE_REVERB_GAIN: 1.26,
+                bindings.AL_EAXREVERB_LATE_REVERB_DELAY: 0.011,
+                bindings.AL_EAXREVERB_LATE_REVERB_PAN: (-1.0, -2.0, -3.0),
+                bindings.AL_EAXREVERB_ECHO_TIME: 0.25,
+                bindings.AL_EAXREVERB_ECHO_DEPTH: 0.0,
+                bindings.AL_EAXREVERB_MODULATION_TIME: 0.25,
+                bindings.AL_EAXREVERB_MODULATION_DEPTH: 0.0,
+                bindings.AL_EAXREVERB_AIR_ABSORPTION_GAINHF: 0.994,
+                bindings.AL_EAXREVERB_HFREFERENCE: 5000.0,
+                bindings.AL_EAXREVERB_LFREFERENCE: 250.0,
+                bindings.AL_EAXREVERB_ROOM_ROLLOFF_FACTOR: 0.0,
+                bindings.AL_EAXREVERB_DECAY_HFLIMIT: 0,
+            },
+        ),
+        (
+            Chorus(waveform=ModulationWaveform.SINUSOID),
+            bindings.AL_EFFECT_CHORUS,
+            {
+                bindings.AL_CHORUS_WAVEFORM: bindings.AL_CHORUS_WAVEFORM_SINUSOID,
+                bindings.AL_CHORUS_PHASE: 90,
+                bindings.AL_CHORUS_RATE: 1.1,
+                bindings.AL_CHORUS_DEPTH: 0.1,
+                bindings.AL_CHORUS_FEEDBACK: 0.25,
+                bindings.AL_CHORUS_DELAY: 0.016,
+            },
+        ),
+        (
+            Distortion(),
+            bindings.AL_EFFECT_DISTORTION,
+            {
+                bindings.AL_DISTORTION_EDGE: 0.2,
+                bindings.AL_DISTORTION_GAIN: 0.05,
+                bindings.AL_DISTORTION_LOWPASS_CUTOFF: 8000.0,
+                bindings.AL_DISTORTION_EQCENTER: 3600.0,
+                bindings.AL_DISTORTION_EQBANDWIDTH: 3600.0,
+            },
+        ),
+        (
+            Echo(),
+            bindings.AL_EFFECT_ECHO,
+            {
+                bindings.AL_ECHO_DELAY: 0.1,
+                bindings.AL_ECHO_LRDELAY: 0.1,
+                bindings.AL_ECHO_DAMPING: 0.5,
+                bindings.AL_ECHO_FEEDBACK: 0.5,
+                bindings.AL_ECHO_SPREAD: -1.0,
+            },
+        ),
+        (
+            Flanger(waveform=ModulationWaveform.SINUSOID),
+            bindings.AL_EFFECT_FLANGER,
+            {
+                bindings.AL_FLANGER_WAVEFORM: bindings.AL_FLANGER_WAVEFORM_SINUSOID,
+                bindings.AL_FLANGER_PHASE: 0,
+                bindings.AL_FLANGER_RATE: 0.27,
+                bindings.AL_FLANGER_DEPTH: 1.0,
+                bindings.AL_FLANGER_FEEDBACK: -0.5,
+                bindings.AL_FLANGER_DELAY: 0.002,
+            },
+        ),
+        (
+            FrequencyShifter(
+                left_direction=FrequencyShiftDirection.UP,
+                right_direction=FrequencyShiftDirection.OFF,
+            ),
+            bindings.AL_EFFECT_FREQUENCY_SHIFTER,
+            {
+                bindings.AL_FREQUENCY_SHIFTER_FREQUENCY: 0.0,
+                bindings.AL_FREQUENCY_SHIFTER_LEFT_DIRECTION: (
+                    bindings.AL_FREQUENCY_SHIFTER_DIRECTION_UP
+                ),
+                bindings.AL_FREQUENCY_SHIFTER_RIGHT_DIRECTION: (
+                    bindings.AL_FREQUENCY_SHIFTER_DIRECTION_OFF
+                ),
+            },
+        ),
+        (
+            VocalMorpher(
+                phoneme_a=VocalMorpherPhoneme.Z,
+                phoneme_b=VocalMorpherPhoneme.AA,
+                waveform=VocalMorpherWaveform.SAWTOOTH,
+            ),
+            bindings.AL_EFFECT_VOCAL_MORPHER,
+            {
+                bindings.AL_VOCAL_MORPHER_PHONEMEA: (
+                    bindings.AL_VOCAL_MORPHER_PHONEME_Z
+                ),
+                bindings.AL_VOCAL_MORPHER_PHONEMEA_COARSE_TUNING: 0,
+                bindings.AL_VOCAL_MORPHER_PHONEMEB: (
+                    bindings.AL_VOCAL_MORPHER_PHONEME_AA
+                ),
+                bindings.AL_VOCAL_MORPHER_PHONEMEB_COARSE_TUNING: 0,
+                bindings.AL_VOCAL_MORPHER_WAVEFORM: (
+                    bindings.AL_VOCAL_MORPHER_WAVEFORM_SAWTOOTH
+                ),
+                bindings.AL_VOCAL_MORPHER_RATE: 1.41,
+            },
+        ),
+        (
+            PitchShifter(),
+            bindings.AL_EFFECT_PITCH_SHIFTER,
+            {
+                bindings.AL_PITCH_SHIFTER_COARSE_TUNE: 12,
+                bindings.AL_PITCH_SHIFTER_FINE_TUNE: 0,
+            },
+        ),
+        (
+            RingModulator(waveform=RingModulatorWaveform.SQUARE),
+            bindings.AL_EFFECT_RING_MODULATOR,
+            {
+                bindings.AL_RING_MODULATOR_FREQUENCY: 440.0,
+                bindings.AL_RING_MODULATOR_HIGHPASS_CUTOFF: 800.0,
+                bindings.AL_RING_MODULATOR_WAVEFORM: (
+                    bindings.AL_RING_MODULATOR_SQUARE
+                ),
+            },
+        ),
+        (
+            AutoWah(),
+            bindings.AL_EFFECT_AUTOWAH,
+            {
+                bindings.AL_AUTOWAH_ATTACK_TIME: 0.06,
+                bindings.AL_AUTOWAH_RELEASE_TIME: 0.06,
+                bindings.AL_AUTOWAH_RESONANCE: 1000.0,
+                bindings.AL_AUTOWAH_PEAK_GAIN: 11.22,
+            },
+        ),
+        (
+            Compressor(enabled=False),
+            bindings.AL_EFFECT_COMPRESSOR,
+            {bindings.AL_COMPRESSOR_ONOFF: 0},
+        ),
+        (
+            Equalizer(),
+            bindings.AL_EFFECT_EQUALIZER,
+            {
+                bindings.AL_EQUALIZER_LOW_GAIN: 1.0,
+                bindings.AL_EQUALIZER_LOW_CUTOFF: 200.0,
+                bindings.AL_EQUALIZER_MID1_GAIN: 1.0,
+                bindings.AL_EQUALIZER_MID1_CENTER: 500.0,
+                bindings.AL_EQUALIZER_MID1_WIDTH: 1.0,
+                bindings.AL_EQUALIZER_MID2_GAIN: 1.0,
+                bindings.AL_EQUALIZER_MID2_CENTER: 3000.0,
+                bindings.AL_EQUALIZER_MID2_WIDTH: 1.0,
+                bindings.AL_EQUALIZER_HIGH_GAIN: 1.0,
+                bindings.AL_EQUALIZER_HIGH_CUTOFF: 6000.0,
+            },
+        ),
+    ],
+    ids=lambda value: type(value).__name__ if not isinstance(value, int) else None,
+)
+def test_all_managed_effects_configure_every_native_parameter(
+    effect: Effect,
+    effect_type: int,
+    properties: dict[int, object],
+) -> None:
+    library = FakeLibrary()
+    with open_playback(library=as_library(library)) as playback:
+        clip = upload(playback, PCM(b"\0\0" * 10, channels=1, sample_rate=10))
+        voice = play(
+            playback,
+            clip,
+            effect_sends=(EffectSend(effect=effect),),
+        )
+
+        assert library.al.effects[200] == {
+            bindings.AL_EFFECT_TYPE: effect_type,
+            **properties,
+        }
+
+        release(playback, voice)
+        release(playback, clip)
+
+    assert library.al.allocated_effects == set()
+    assert library.al.allocated_effect_slots == set()
 
 
 def test_voice_efx_are_created_replaced_and_released_with_the_voice() -> None:
@@ -170,6 +406,42 @@ def test_failed_voice_efx_update_restores_config_and_native_resources(
         assert library.al.allocated_effect_slots == {400}
         assert library.al.allocated_filters == set()
         assert playback._voice_configs[voice._token] == previous
+
+
+@pytest.mark.parametrize(
+    ("effect", "method_name"),
+    [
+        (Chorus(), "effecti"),
+        (Echo(), "effectf"),
+        (EAXReverb(), "effectfv"),
+    ],
+)
+def test_failed_effect_configuration_releases_incomplete_resources(
+    monkeypatch: pytest.MonkeyPatch,
+    effect: Effect,
+    method_name: str,
+) -> None:
+    library = FakeLibrary()
+    original = getattr(library.al, method_name)
+    fail_next_call = True
+
+    def fail_once(*arguments: object) -> None:
+        nonlocal fail_next_call
+        original(*arguments)
+        if fail_next_call:
+            fail_next_call = False
+            library.al.error = bindings.AL_INVALID_VALUE
+
+    monkeypatch.setattr(library.al, method_name, fail_once)
+    with open_playback(library=as_library(library)) as playback:
+        clip = upload(playback, PCM(b"\0\0", channels=1, sample_rate=1))
+        with pytest.raises(AudioBackendError, match="configure"):
+            play(playback, clip, effect_sends=(EffectSend(effect=effect),))
+
+        assert library.al.sources == {}
+        assert library.al.allocated_effects == set()
+        assert library.al.allocated_effect_slots == set()
+        assert library.al.allocated_filters == set()
 
 
 def test_voice_efx_require_device_support_and_available_send_slots() -> None:

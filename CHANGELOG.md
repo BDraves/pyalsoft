@@ -2,6 +2,15 @@
 
 Notable user-facing changes to PyALSoft are documented here.
 
+## Unreleased
+
+## 1.2.0 - 2026.08.14
+
+### Added
+
+- Added managed configurations for every core EFX effect, with declarative
+  validation and native parameter mapping. (@BDraves)
+
 ## 1.1.1 - 2026.08.14
 
 ### Added

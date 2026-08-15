@@ -4,25 +4,25 @@ from __future__ import annotations
 
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import assert_never
+from typing import cast
 
 from pyalsoft import bindings
 from pyalsoft._managed._backend import _check_alc_error, _clear_alc_errors
+from pyalsoft._managed.effects import (
+    EffectSend,
+    Filter,
+    _EffectConfig,
+    _iter_native_parameters,
+    _ParameterKind,
+    _ParameterSpec,
+)
 from pyalsoft._managed.errors import AudioBackendError
 from pyalsoft._managed.playback.session import (
     Playback,
     _check_al_error,
     _clear_al_errors,
 )
-from pyalsoft._managed.spatial import (
-    BandPassFilter,
-    EffectSend,
-    Filter,
-    HighPassFilter,
-    LowPassFilter,
-    Reverb,
-    VoiceConfig,
-)
+from pyalsoft._managed.spatial import VoiceConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,69 +77,37 @@ def _require_efx_support(playback: Playback, send_count: int) -> None:
 
 def _configure_filter(playback: Playback, identifier: int, config: Filter) -> None:
     al = playback._library.al
-    if isinstance(config, LowPassFilter):
-        al.filteri(identifier, bindings.AL_FILTER_TYPE, bindings.AL_FILTER_LOWPASS)
-        al.filterf(identifier, bindings.AL_LOWPASS_GAIN, config.gain)
-        al.filterf(
-            identifier,
-            bindings.AL_LOWPASS_GAINHF,
-            config.high_frequency_gain,
-        )
-    elif isinstance(config, HighPassFilter):
-        al.filteri(identifier, bindings.AL_FILTER_TYPE, bindings.AL_FILTER_HIGHPASS)
-        al.filterf(identifier, bindings.AL_HIGHPASS_GAIN, config.gain)
-        al.filterf(
-            identifier,
-            bindings.AL_HIGHPASS_GAINLF,
-            config.low_frequency_gain,
-        )
-    elif isinstance(config, BandPassFilter):
-        al.filteri(identifier, bindings.AL_FILTER_TYPE, bindings.AL_FILTER_BANDPASS)
-        al.filterf(identifier, bindings.AL_BANDPASS_GAIN, config.gain)
-        al.filterf(
-            identifier,
-            bindings.AL_BANDPASS_GAINLF,
-            config.low_frequency_gain,
-        )
-        al.filterf(
-            identifier,
-            bindings.AL_BANDPASS_GAINHF,
-            config.high_frequency_gain,
-        )
-    else:
-        assert_never(config)
+    al.filteri(identifier, bindings.AL_FILTER_TYPE, config._native_type)
+    for spec, value in _iter_native_parameters(config):
+        if spec.kind is not _ParameterKind.FLOAT:
+            raise AssertionError("managed filters only support float parameters")
+        al.filterf(identifier, spec.parameter, cast(float, value))
 
 
-def _configure_reverb(playback: Playback, identifier: int, config: Reverb) -> None:
+def _native_integer(spec: _ParameterSpec, value: object) -> int:
+    if spec.kind is _ParameterKind.ENUM:
+        assert spec.enum_values is not None
+        return spec.enum_values[value]
+    assert isinstance(value, (bool, int))
+    return int(value)
+
+
+def _configure_effect(
+    playback: Playback, identifier: int, config: _EffectConfig
+) -> None:
     al = playback._library.al
-    al.effecti(identifier, bindings.AL_EFFECT_TYPE, bindings.AL_EFFECT_REVERB)
-    float_properties = (
-        (bindings.AL_REVERB_DENSITY, config.density),
-        (bindings.AL_REVERB_DIFFUSION, config.diffusion),
-        (bindings.AL_REVERB_GAIN, config.gain),
-        (bindings.AL_REVERB_GAINHF, config.high_frequency_gain),
-        (bindings.AL_REVERB_DECAY_TIME, config.decay_time),
-        (
-            bindings.AL_REVERB_DECAY_HFRATIO,
-            config.high_frequency_decay_ratio,
-        ),
-        (bindings.AL_REVERB_REFLECTIONS_GAIN, config.reflections_gain),
-        (bindings.AL_REVERB_REFLECTIONS_DELAY, config.reflections_delay),
-        (bindings.AL_REVERB_LATE_REVERB_GAIN, config.late_reverb_gain),
-        (bindings.AL_REVERB_LATE_REVERB_DELAY, config.late_reverb_delay),
-        (
-            bindings.AL_REVERB_AIR_ABSORPTION_GAINHF,
-            config.air_absorption_high_frequency_gain,
-        ),
-        (bindings.AL_REVERB_ROOM_ROLLOFF_FACTOR, config.room_rolloff_factor),
-    )
-    for parameter, value in float_properties:
-        al.effectf(identifier, parameter, value)
-    al.effecti(
-        identifier,
-        bindings.AL_REVERB_DECAY_HFLIMIT,
-        int(config.high_frequency_decay_limit),
-    )
+    al.effecti(identifier, bindings.AL_EFFECT_TYPE, config._native_type)
+    for spec, value in _iter_native_parameters(config):
+        if spec.kind is _ParameterKind.FLOAT:
+            al.effectf(identifier, spec.parameter, cast(float, value))
+        elif spec.kind is _ParameterKind.VECTOR3:
+            al.effectfv(identifier, spec.parameter, cast(tuple[float, ...], value))
+        else:
+            al.effecti(
+                identifier,
+                spec.parameter,
+                _native_integer(spec, value),
+            )
 
 
 def _delete_efx_resources(
@@ -190,8 +158,8 @@ def _create_efx_resources(
             effect = effect_ids[0]
             effects.append(effect)
             _check_al_error(playback, "create effect")
-            _configure_reverb(playback, effect, send.effect)
-            _check_al_error(playback, "configure reverb")
+            _configure_effect(playback, effect, send.effect)
+            _check_al_error(playback, f"configure {type(send.effect).__name__}")
 
             slot_ids = al.gen_auxiliary_effect_slots()
             if len(slot_ids) != 1:
