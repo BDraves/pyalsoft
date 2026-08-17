@@ -42,7 +42,8 @@ play("notification.wav")
 - [Effects and filters](effects.md) covers EFX configuration and live updates.
 - [Recording](recording.md) covers managed capture and in-memory PCM playback.
 - [Explicit playback sessions](sessions.md) covers generated audio, streaming,
-  device selection, HRTF, and deterministic resource lifetimes.
+  device selection, live reconfiguration, HRTF, and deterministic resource
+  lifetimes.
 - The [API reference](api.md) documents every public class and function in the
   managed API.
 - [Owned backend handles](backend.md), the

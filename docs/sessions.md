@@ -43,10 +43,12 @@ value. Leaving a field as `None` preserves its default.
 from pyalsoft import (
     PlaybackConfig,
     PlaybackOutputMode,
+    get_playback_config,
     get_playback_info,
     list_hrtf_profiles,
     list_playback_devices,
     open_playback,
+    reconfigure_playback,
 )
 
 devices = list_playback_devices()
@@ -67,7 +69,33 @@ with open_playback(selected, config=config) as playback:
     info = get_playback_info(playback)
     print(info.device_name, info.sample_rate, info.output_mode)
     print(info.hrtf_status.value, info.hrtf_name)
+
+    # Change selected settings while clips, voices, and streams remain valid.
+    reconfigure_playback(
+        playback,
+        PlaybackConfig(sample_rate=44_100, hrtf=False),
+    )
+    print(get_playback_config(playback))
+
+    # Replace the complete request, returning omitted fields to backend defaults.
+    reconfigure_playback(
+        playback,
+        PlaybackConfig(output_mode=PlaybackOutputMode.STEREO_BASIC),
+        replace=True,
+    )
 ```
+
+[`reconfigure_playback()`][pyalsoft.reconfigure_playback] resets the live
+device without closing its context or invalidating managed resources. In a
+reconfiguration, each `None` field is an omitted update that preserves the
+session's previous request. Pass `replace=True` to treat the supplied
+configuration as the complete new request; its `None` fields then return to
+backend-selected behavior. [`get_playback_config()`][pyalsoft.get_playback_config]
+reports the retained request, while
+[`get_playback_info()`][pyalsoft.get_playback_info] reports the effective values
+negotiated by the backend. The reset may briefly interrupt output. Live
+reconfiguration requires `ALC_SOFT_HRTF`, which is provided by the bundled
+OpenAL Soft runtime.
 
 The available requests and observations are:
 

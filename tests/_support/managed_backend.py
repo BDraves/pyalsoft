@@ -296,6 +296,9 @@ class FakeALC:
         self.default_device_name = "Speakers"
         self.opened_device_name: str | bytes | None = None
         self.context_attributes: tuple[int, ...] | None = None
+        self.reset_attributes: list[tuple[int, ...] | None] = []
+        self.reset_result = True
+        self.reset_error = bindings.ALC_INVALID_VALUE
         self.extensions = {
             "ALC_ENUMERATE_ALL_EXT",
             "ALC_EXT_EFX",
@@ -303,22 +306,25 @@ class FakeALC:
             "ALC_SOFT_output_limiter",
             "ALC_SOFT_output_mode",
         }
+        self.hrtf_profiles = ("Built-in HRTF", "Studio HRTF", "Gaming HRTF")
+        self._restore_device_defaults()
+        self.string_list_queries: list[int] = []
+        self.error = bindings.ALC_NO_ERROR
+        self.string_list_error = bindings.ALC_NO_ERROR
+        self.hrtf_query_error = bindings.ALC_NO_ERROR
+
+    def _restore_device_defaults(self) -> None:
         self.sample_rate = 48_000
         self.refresh_rate = 94
         self.synchronous = False
         self.mono_sources = 255
         self.stereo_sources = 1
         self.max_auxiliary_sends = 2
-        self.string_list_queries: list[int] = []
         self.hrtf_status = bindings.ALC_HRTF_ENABLED_SOFT
         self.hrtf_name: str | None = "Built-in HRTF"
-        self.hrtf_profiles = ("Built-in HRTF", "Studio HRTF", "Gaming HRTF")
         self.output_limiter = True
         self.output_mode = bindings.ALC_STEREO_SOFT
         self.connected = True
-        self.error = bindings.ALC_NO_ERROR
-        self.string_list_error = bindings.ALC_NO_ERROR
-        self.hrtf_query_error = bindings.ALC_NO_ERROR
 
     def get_current_context(self) -> object | None:
         return self.current_context
@@ -411,6 +417,44 @@ class FakeALC:
 
     def make_context_current(self, context: object | None) -> bool:
         self.current_context = context
+        return True
+
+    def reset_device_soft(
+        self, device: object, attributes: tuple[int, ...] | None
+    ) -> bool:
+        assert device is self.device
+        self.reset_attributes.append(attributes)
+        if not self.reset_result:
+            self.error = self.reset_error
+            return False
+        self._restore_device_defaults()
+        if attributes is None:
+            return True
+        values = dict(zip(attributes[::2], attributes[1::2], strict=True))
+        if bindings.ALC_FREQUENCY in values:
+            self.sample_rate = values[bindings.ALC_FREQUENCY]
+        if bindings.ALC_REFRESH in values:
+            self.refresh_rate = values[bindings.ALC_REFRESH]
+        if bindings.ALC_SYNC in values:
+            self.synchronous = bool(values[bindings.ALC_SYNC])
+        if bindings.ALC_MONO_SOURCES in values:
+            self.mono_sources = values[bindings.ALC_MONO_SOURCES]
+        if bindings.ALC_STEREO_SOURCES in values:
+            self.stereo_sources = values[bindings.ALC_STEREO_SOURCES]
+        if bindings.ALC_MAX_AUXILIARY_SENDS in values:
+            self.max_auxiliary_sends = values[bindings.ALC_MAX_AUXILIARY_SENDS]
+        if bindings.ALC_HRTF_SOFT in values:
+            self.hrtf_status = (
+                bindings.ALC_HRTF_ENABLED_SOFT
+                if values[bindings.ALC_HRTF_SOFT]
+                else bindings.ALC_HRTF_DISABLED_SOFT
+            )
+        if bindings.ALC_HRTF_ID_SOFT in values:
+            self.hrtf_name = self.hrtf_profiles[values[bindings.ALC_HRTF_ID_SOFT]]
+        if bindings.ALC_OUTPUT_LIMITER_SOFT in values:
+            self.output_limiter = bool(values[bindings.ALC_OUTPUT_LIMITER_SOFT])
+        if bindings.ALC_OUTPUT_MODE_SOFT in values:
+            self.output_mode = values[bindings.ALC_OUTPUT_MODE_SOFT]
         return True
 
     def destroy_context(self, context: object) -> None:

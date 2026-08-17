@@ -3,10 +3,12 @@
 from pyalsoft._managed.playback.session import (
     Playback,
     close_playback,
+    get_playback_config,
     get_playback_info,
     list_hrtf_profiles,
     list_playback_devices,
     open_playback,
+    reconfigure_playback,
 )
 from pyalsoft._managed.playback.streams import (
     finish_stream,
@@ -34,6 +36,7 @@ __all__ = [
     "Playback",
     "close_playback",
     "finish_stream",
+    "get_playback_config",
     "get_playback_info",
     "get_voice_status",
     "list_hrtf_profiles",
@@ -43,6 +46,7 @@ __all__ = [
     "pause",
     "release",
     "release_finished",
+    "reconfigure_playback",
     "restart",
     "resume",
     "rewind",

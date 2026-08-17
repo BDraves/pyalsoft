@@ -137,6 +137,11 @@ class PlaybackDevice:
 class PlaybackConfig:
     """Preferences applied while creating an OpenAL playback context.
 
+    ``None`` preserves the backend default when opening a session. When passed
+    to [`reconfigure_playback`][pyalsoft.reconfigure_playback], ``None`` omits
+    that field from a patch and preserves the session's previous request. With
+    ``replace=True``, ``None`` returns the field to backend-selected behavior.
+
     Attributes:
         sample_rate: Requested device sample rate in frames per second. ``None``
             preserves the backend default.

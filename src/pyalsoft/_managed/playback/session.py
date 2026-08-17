@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import fields, replace
 from functools import wraps
 from threading import RLock
 from types import TracebackType
@@ -13,6 +14,7 @@ from pyalsoft import bindings
 from pyalsoft._managed._backend import _check_alc_error, _clear_alc_errors
 from pyalsoft._managed.errors import (
     AudioBackendError,
+    AudioError,
     PlaybackClosedError,
     PlaybackOpenError,
 )
@@ -53,6 +55,7 @@ class Playback:
         "_clips",
         "_clip_infos",
         "_closed",
+        "_config",
         "_context",
         "_device",
         "_library",
@@ -72,6 +75,7 @@ class Playback:
         library: bindings.OpenALLibrary,
         device: object,
         context: object,
+        config: PlaybackConfig,
         previous_context: object | None,
         previous_playback: Playback | None,
     ) -> None:
@@ -79,6 +83,7 @@ class Playback:
         self._lock = RLock()
         self._device = device
         self._context = context
+        self._config = config
         self._previous_context = previous_context
         self._previous_playback = previous_playback
         self._token = object()
@@ -276,6 +281,8 @@ def _playback_context_attributes(
     config: PlaybackConfig,
     library: bindings.OpenALLibrary,
     device: object,
+    *,
+    profile_error: type[AudioError] = PlaybackOpenError,
 ) -> tuple[int, ...] | None:
     """Translate managed requests into an extension-safe ALC attribute list."""
 
@@ -300,7 +307,7 @@ def _playback_context_attributes(
             try:
                 profile_id = profiles.index(config.hrtf_name)
             except ValueError:
-                raise PlaybackOpenError(
+                raise profile_error(
                     f"HRTF profile is unavailable: {config.hrtf_name!r}"
                 ) from None
             append(bindings.ALC_HRTF_ID_SOFT, profile_id)
@@ -494,11 +501,107 @@ def open_playback(
             library,
             device,
             context,
+            config,
             previous_context,
             previous_playback,
         )
         _active_playbacks.add(playback)
         return playback
+
+
+def _merge_playback_config(
+    current: PlaybackConfig,
+    update: PlaybackConfig,
+) -> PlaybackConfig:
+    """Overlay non-None update fields onto the current requested configuration."""
+
+    changes = {
+        field.name: value
+        for field in fields(update)
+        if (value := getattr(update, field.name)) is not None
+    }
+    return replace(current, **changes)
+
+
+@_serialized_playback
+def get_playback_config(playback: Playback) -> PlaybackConfig:
+    """Return the configuration currently requested by a playback session.
+
+    This reports the request retained for future patch-style calls to
+    [`reconfigure_playback`][pyalsoft.reconfigure_playback]. Use
+    [`get_playback_info`][pyalsoft.get_playback_info] to inspect the effective
+    values negotiated by the backend.
+
+    Args:
+        playback: Open session to inspect.
+
+    Returns:
+        The session's immutable requested configuration.
+
+    Raises:
+        PlaybackClosedError: ``playback`` is closed.
+    """
+
+    return playback._config
+
+
+@_serialized_playback
+def reconfigure_playback(
+    playback: Playback,
+    config: PlaybackConfig,
+    *,
+    replace: bool = False,
+) -> None:
+    """Apply playback configuration changes to a live session.
+
+    ``None`` fields are omitted updates and preserve the session's previous
+    request. Pass ``replace=True`` to instead treat ``config`` as the complete
+    request, returning ``None`` fields to backend-selected behavior. The backend
+    may negotiate different effective values, which can be inspected with
+    [`get_playback_info`][pyalsoft.get_playback_info]. Existing clips, voices,
+    and streams remain valid, although output may be interrupted briefly while
+    the device resets.
+
+    Args:
+        playback: Open session to reconfigure.
+        config: Configuration changes to apply.
+        replace: Replace the complete prior request instead of patching it.
+
+    Raises:
+        TypeError: ``config`` is not a [`PlaybackConfig`][pyalsoft.PlaybackConfig]
+            or ``replace`` is not a boolean.
+        PlaybackClosedError: ``playback`` is closed.
+        AudioBackendError: Live reconfiguration is unavailable or OpenAL rejects
+            the requested configuration.
+    """
+
+    if not isinstance(config, PlaybackConfig):
+        raise TypeError("config must be a PlaybackConfig")
+    if not isinstance(replace, bool):
+        raise TypeError("replace must be a boolean")
+
+    merged = config if replace else _merge_playback_config(playback._config, config)
+    if merged == playback._config:
+        return
+
+    library = playback._library
+    device = playback._device
+    if not library.alc.is_extension_present(device, "ALC_SOFT_HRTF"):
+        raise AudioBackendError("playback device does not support live reconfiguration")
+
+    _activate(playback)
+    attributes = _playback_context_attributes(
+        merged,
+        library,
+        device,
+        profile_error=AudioBackendError,
+    )
+    _clear_alc_errors(library, device)
+    reset = library.alc.reset_device_soft(device, attributes)
+    _check_alc_error(library, device, "reconfigure playback")
+    if not reset:
+        raise AudioBackendError("reconfigure playback failed")
+    playback._config = merged
 
 
 @_serialized_playback

@@ -24,9 +24,13 @@ from pyalsoft import (
     get_playback_info,
     list_hrtf_profiles,
     open_playback,
+    open_stream,
     play,
+    reconfigure_playback,
     release,
     set_voice_config,
+    start_stream,
+    try_write_stream,
     upload,
 )
 
@@ -79,6 +83,19 @@ def test_bundled_runtime_supports_managed_efx(
                 ),
             ),
         )
+        stream = open_stream(
+            playback,
+            channels=pcm.channels,
+            sample_rate=pcm.sample_rate,
+            buffer_count=2,
+        )
+        assert try_write_stream(playback, stream, pcm.samples)
+        start_stream(playback, stream)
+
+        reconfigure_playback(playback, PlaybackConfig(sample_rate=44_100))
+
+        assert get_playback_info(playback).sample_rate == 44_100
+        assert try_write_stream(playback, stream, pcm.samples)
         set_voice_config(
             playback,
             voice,
@@ -89,6 +106,7 @@ def test_bundled_runtime_supports_managed_efx(
                 )
             ),
         )
+        release(playback, stream)
         release(playback, voice)
         release(playback, clip)
 
@@ -111,11 +129,18 @@ def test_bundled_runtime_configures_and_reports_playback_device(
     )
 
     with open_playback(config=config, library=library) as playback:
-        info = get_playback_info(playback)
+        initial = get_playback_info(playback)
+        reconfigure_playback(
+            playback,
+            PlaybackConfig(sample_rate=48_000, output_limiter=True),
+        )
+        updated = get_playback_info(playback)
 
-    assert info.sample_rate == 44_100
-    assert info.mono_sources is not None and info.mono_sources >= 32
-    assert info.stereo_sources is not None and info.stereo_sources >= 4
-    assert info.max_auxiliary_sends == 1
-    assert info.output_limiter is False
-    assert info.output_mode is PlaybackOutputMode.STEREO_BASIC
+    assert initial.sample_rate == 44_100
+    assert initial.output_limiter is False
+    assert updated.sample_rate == 48_000
+    assert updated.mono_sources is not None and updated.mono_sources >= 32
+    assert updated.stereo_sources is not None and updated.stereo_sources >= 4
+    assert updated.max_auxiliary_sends == 1
+    assert updated.output_limiter is True
+    assert updated.output_mode is PlaybackOutputMode.STEREO_BASIC
