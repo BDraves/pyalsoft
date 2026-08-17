@@ -154,6 +154,7 @@ test-command = [
   "python {project}/examples/cycle_effects.py",
   "python {project}/examples/filter_sound.py",
   "python {project}/examples/select_device_hrtf.py",
+  "python {project}/examples/advanced_sources.py",
   "python {project}/tools/conformance_test_runtime.py",
   "python {project}/tools/freeze_test.py",
 ]
@@ -169,6 +170,7 @@ test-command = [
   "python {project}/examples/cycle_effects.py",
   "python {project}/examples/filter_sound.py",
   "python {project}/examples/select_device_hrtf.py",
+  "python {project}/examples/advanced_sources.py",
   "python {project}/tools/conformance_test_runtime.py",
 ]
 manylinux-x86_64-image = "manylinux_2_28"

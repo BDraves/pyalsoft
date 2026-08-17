@@ -7,14 +7,20 @@ from pathlib import Path
 import pytest
 
 from pyalsoft import (
+    PCM,
+    DirectChannelsMode,
+    DistanceModel,
     EffectSend,
     HighPassFilter,
     InvalidVoiceStateError,
     LowPassFilter,
     PlayingSound,
+    Resampler,
     Reverb,
     SampleType,
     SoundEndReason,
+    SpatializationMode,
+    StereoMode,
     VoiceConfig,
     VoiceState,
     bindings,
@@ -256,3 +262,70 @@ def test_playing_sound_exposes_live_efx_controls(
     assert default_library.al.allocated_effects == set()
     assert default_library.al.allocated_effect_slots == set()
     sound.stop()
+
+
+def test_playing_sound_exposes_all_advanced_source_controls(
+    default_library: FakeLibrary,
+) -> None:
+    resampler = Resampler(0, "Nearest")
+    sound = play(
+        PCM(bytes(32), channels=2, sample_rate=8),
+        config=VoiceConfig(
+            distance_model=DistanceModel.LINEAR,
+            stereo_angles=(0.5, -0.5),
+            resampler=resampler,
+        ),
+    )
+
+    sound.update(
+        radius=2.0,
+        spatialization=SpatializationMode.DISABLED,
+        air_absorption_factor=1.0,
+        room_rolloff_factor=0.5,
+    )
+    assert sound.radius == 2.0
+    assert sound.spatialization is SpatializationMode.DISABLED
+    assert sound.direct_channels is DirectChannelsMode.OFF
+    assert sound.air_absorption_factor == 1.0
+    assert sound.room_rolloff_factor == 0.5
+
+    sound.distance_model = None
+    sound.stereo_angles = None
+    sound.resampler = None
+    assert sound.distance_model is None
+    assert sound.stereo_angles is None
+    assert sound.resampler is None
+
+    source = default_library.al.sources[100]
+    assert source[bindings.AL_SOURCE_RADIUS] == 2.0
+    assert source[bindings.AL_SOURCE_SPATIALIZE_SOFT] == bindings.AL_FALSE
+    assert source[bindings.AL_AIR_ABSORPTION_FACTOR] == 1.0
+    assert source[bindings.AL_ROOM_ROLLOFF_FACTOR] == 0.5
+    assert source[bindings.AL_STEREO_ANGLES] == pytest.approx(
+        (0.5235987755982988, -0.5235987755982988)
+    )
+    assert source[bindings.AL_SOURCE_RESAMPLER_SOFT] == 1
+
+    sound.stop()
+    sound.stereo_mode = StereoMode.SUPER_STEREO
+    sound.super_stereo_width = 0.6
+    sound.restart()
+    assert sound.stereo_mode is StereoMode.SUPER_STEREO
+    assert sound.super_stereo_width == 0.6
+    assert default_library.al.sources[101][bindings.AL_SUPER_STEREO_WIDTH_SOFT] == 0.6
+    sound.super_stereo_width = None
+    assert sound.super_stereo_width is None
+    assert default_library.al.sources[101][bindings.AL_SUPER_STEREO_WIDTH_SOFT] == 0.46
+
+    with pytest.raises(InvalidVoiceStateError, match="playing or paused"):
+        sound.stereo_mode = StereoMode.NORMAL
+    sound.stop()
+    sound.stereo_mode = StereoMode.NORMAL
+    sound.restart()
+    sound.direct_channels = DirectChannelsMode.DROP_UNMATCHED
+    assert sound.stereo_mode is StereoMode.NORMAL
+    assert sound.direct_channels is DirectChannelsMode.DROP_UNMATCHED
+    assert (
+        default_library.al.sources[102][bindings.AL_DIRECT_CHANNELS_SOFT]
+        == bindings.AL_DROP_UNMATCHED_SOFT
+    )

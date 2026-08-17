@@ -62,6 +62,8 @@ class Playback:
         "_lock",
         "_previous_context",
         "_previous_playback",
+        "_source_distance_model_enabled",
+        "_super_stereo_width_defaults",
         "_streams",
         "_token",
         "_voice_clips",
@@ -86,6 +88,8 @@ class Playback:
         self._config = config
         self._previous_context = previous_context
         self._previous_playback = previous_playback
+        self._source_distance_model_enabled = False
+        self._super_stereo_width_defaults: dict[int, float] = {}
         self._token = object()
         self._clips: dict[object, int] = {}
         self._clip_infos: dict[object, SoundInfo] = {}
@@ -835,6 +839,7 @@ def _close_playback(playback: Playback) -> None:
         playback._streams.clear()
         playback._clips.clear()
         playback._clip_infos.clear()
+        playback._super_stereo_width_defaults.clear()
         playback._closed = True
         _active_playbacks.discard(playback)
 
@@ -888,6 +893,15 @@ def _set_acoustics(playback: Playback, acoustics: Acoustics) -> None:
     _prepare_al(playback)
     al = playback._library.al
     al.distance_model(_DISTANCE_MODEL_TO_AL[acoustics.distance_model])
+    if playback._source_distance_model_enabled:
+        inherited = _DISTANCE_MODEL_TO_AL[acoustics.distance_model]
+        for token, identifier in playback._voices.items():
+            config = playback._voice_configs[token]
+            if config.distance_model is None:
+                al.sourcei(identifier, bindings.AL_DISTANCE_MODEL, inherited)
+        for record in playback._streams.values():
+            if record.config.distance_model is None:
+                al.sourcei(record.identifier, bindings.AL_DISTANCE_MODEL, inherited)
     al.doppler_factor(acoustics.doppler_factor)
     al.speed_of_sound(acoustics.speed_of_sound)
     _check_al_error(playback, "configure acoustics")

@@ -32,6 +32,7 @@ from pyalsoft._managed.playback.session import (
     _require_playback,
     _serialized_playback,
 )
+from pyalsoft._managed.playback.source_controls import _validate_source_layout
 from pyalsoft._managed.resources import (
     Stream,
     StreamState,
@@ -138,6 +139,7 @@ def open_stream(
         raise TypeError("config must be a VoiceConfig")
     if config.looping:
         raise ValueError("streaming voices cannot loop")
+    _validate_source_layout(config, channels)
 
     _prepare_al(playback)
     source_ids: tuple[int, ...] = ()
@@ -166,6 +168,8 @@ def open_stream(
         if source_ids:
             playback._library.al.source_stopv(source_ids)
             playback._library.al.delete_sources(source_ids)
+            for identifier in source_ids:
+                playback._super_stereo_width_defaults.pop(identifier, None)
         with suppress(Exception):
             _delete_efx_resources(
                 playback,

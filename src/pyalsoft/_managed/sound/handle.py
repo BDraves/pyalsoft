@@ -17,6 +17,15 @@ from pyalsoft._managed.resources import (
     VoiceStatus,
 )
 from pyalsoft._managed.spatial import (
+    _OMITTED_DISTANCE_MODEL,
+    _OMITTED_RESAMPLER,
+    _OMITTED_STEREO_ANGLES,
+    _OMITTED_SUPER_STEREO_WIDTH,
+    DirectChannelsMode,
+    DistanceModel,
+    Resampler,
+    SpatializationMode,
+    StereoMode,
     Vector3,
     VoiceConfig,
 )
@@ -34,8 +43,6 @@ class _SoundRecord:
     path: Path | None
     pcm: PCM | None
     config: VoiceConfig
-    spatialize: bool | None = None
-    direct_channels: bool = False
     cache_key: tuple[Path, bool] | None = None
     final_status: VoiceStatus | None = None
     end_reason: SoundEndReason | None = None
@@ -350,6 +357,106 @@ class PlayingSound:
         self.update(cone_outer_gain=value)
 
     @property
+    def distance_model(self) -> DistanceModel | None:
+        """Per-source distance model, or ``None`` to inherit the context."""
+
+        return self.config.distance_model
+
+    @distance_model.setter
+    def distance_model(self, value: DistanceModel | None) -> None:
+        self.update(distance_model=value)
+
+    @property
+    def radius(self) -> float:
+        """Physical source radius in world units."""
+
+        return self.config.radius
+
+    @radius.setter
+    def radius(self, value: float) -> None:
+        self.update(radius=value)
+
+    @property
+    def spatialization(self) -> SpatializationMode:
+        """Automatic, forced, or disabled spatial processing."""
+
+        return self.config.spatialization
+
+    @spatialization.setter
+    def spatialization(self, value: SpatializationMode) -> None:
+        self.update(spatialization=value)
+
+    @property
+    def direct_channels(self) -> DirectChannelsMode:
+        """Direct stereo-channel routing behavior."""
+
+        return self.config.direct_channels
+
+    @direct_channels.setter
+    def direct_channels(self, value: DirectChannelsMode) -> None:
+        self.update(direct_channels=value)
+
+    @property
+    def stereo_angles(self) -> tuple[float, float] | None:
+        """Left and right virtual-speaker angles in radians."""
+
+        return self.config.stereo_angles
+
+    @stereo_angles.setter
+    def stereo_angles(self, value: tuple[float, float] | None) -> None:
+        self.update(stereo_angles=value)
+
+    @property
+    def resampler(self) -> Resampler | None:
+        """Implementation-provided source resampler override."""
+
+        return self.config.resampler
+
+    @resampler.setter
+    def resampler(self, value: Resampler | None) -> None:
+        self.update(resampler=value)
+
+    @property
+    def air_absorption_factor(self) -> float:
+        """Distance-based high-frequency absorption strength."""
+
+        return self.config.air_absorption_factor
+
+    @air_absorption_factor.setter
+    def air_absorption_factor(self, value: float) -> None:
+        self.update(air_absorption_factor=value)
+
+    @property
+    def room_rolloff_factor(self) -> float:
+        """Distance rolloff applied to auxiliary effect paths."""
+
+        return self.config.room_rolloff_factor
+
+    @room_rolloff_factor.setter
+    def room_rolloff_factor(self, value: float) -> None:
+        self.update(room_rolloff_factor=value)
+
+    @property
+    def stereo_mode(self) -> StereoMode:
+        """Normal stereo or UHJ Super Stereo processing."""
+
+        return self.config.stereo_mode
+
+    @stereo_mode.setter
+    def stereo_mode(self, value: StereoMode) -> None:
+        self.update(stereo_mode=value)
+
+    @property
+    def super_stereo_width(self) -> float | None:
+        """Super Stereo soundfield width, or its implementation default."""
+
+        return self.config.super_stereo_width
+
+    @super_stereo_width.setter
+    def super_stereo_width(self, value: float | None) -> None:
+        self.update(super_stereo_width=value)
+
+    @property
     def filter(self) -> Filter | None:
         """Direct EFX filter applied to the sound's dry signal."""
 
@@ -487,6 +594,16 @@ class PlayingSound:
         cone_inner_angle: float | None = None,
         cone_outer_angle: float | None = None,
         cone_outer_gain: float | None = None,
+        distance_model: DistanceModel | None = _OMITTED_DISTANCE_MODEL,
+        radius: float | None = None,
+        spatialization: SpatializationMode | None = None,
+        direct_channels: DirectChannelsMode | bool | None = None,
+        stereo_angles: tuple[float, float] | None = _OMITTED_STEREO_ANGLES,
+        resampler: Resampler | None = _OMITTED_RESAMPLER,
+        air_absorption_factor: float | None = None,
+        room_rolloff_factor: float | None = None,
+        stereo_mode: StereoMode | None = None,
+        super_stereo_width: float | None = _OMITTED_SUPER_STEREO_WIDTH,
         filter: Filter | None = _OMITTED_FILTER,
         effect_sends: tuple[EffectSend, ...] | list[EffectSend] | None = None,
     ) -> None:
@@ -514,6 +631,20 @@ class PlayingSound:
             cone_inner_angle: New full inner cone angle in degrees.
             cone_outer_angle: New full outer cone angle in degrees.
             cone_outer_gain: New gain outside the outer cone.
+            distance_model: New per-source distance model, or ``None`` to
+                inherit the context model.
+            radius: New physical source radius.
+            spatialization: New spatial processing mode.
+            direct_channels: New direct stereo-channel routing mode.
+            stereo_angles: New virtual-speaker angles, or ``None`` to restore
+                the implementation defaults.
+            resampler: New source resampler, or ``None`` for the implementation
+                default.
+            air_absorption_factor: New distance-based air absorption factor.
+            room_rolloff_factor: New auxiliary-path distance rolloff factor.
+            stereo_mode: New normal or UHJ Super Stereo processing mode.
+            super_stereo_width: New Super Stereo width, or ``None`` for the
+                implementation default.
             filter: Replacement direct EFX filter, or ``None`` to remove it.
             effect_sends: Replacement auxiliary routes; an empty sequence removes
                 them all.
@@ -543,6 +674,16 @@ class PlayingSound:
             cone_inner_angle=cone_inner_angle,
             cone_outer_angle=cone_outer_angle,
             cone_outer_gain=cone_outer_gain,
+            distance_model=distance_model,
+            radius=radius,
+            spatialization=spatialization,
+            direct_channels=direct_channels,
+            stereo_angles=stereo_angles,
+            resampler=resampler,
+            air_absorption_factor=air_absorption_factor,
+            room_rolloff_factor=room_rolloff_factor,
+            stereo_mode=stereo_mode,
+            super_stereo_width=super_stereo_width,
             filter=filter,
             effect_sends=effect_sends,
         )

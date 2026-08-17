@@ -44,6 +44,9 @@ class FakeAL:
             bindings.AL_RENDERER: "Fake OpenAL Renderer",
             bindings.AL_VERSION: "1.1 Fake OpenAL",
         }
+        self.enabled: set[int] = set()
+        self.resampler_names = ("Nearest", "Cubic Spline", "23rd order Sinc")
+        self.default_resampler = 1
 
     def get_error(self) -> int:
         error, self.error = self.error, bindings.AL_NO_ERROR
@@ -51,6 +54,19 @@ class FakeAL:
 
     def get_string(self, parameter: int) -> str | None:
         return self.strings.get(parameter)
+
+    def get_stringi_soft(self, parameter: int, index: int) -> str | None:
+        assert parameter == bindings.AL_RESAMPLER_NAME_SOFT
+        return self.resampler_names[index]
+
+    def enable(self, capability: int) -> None:
+        self.enabled.add(capability)
+
+    def disable(self, capability: int) -> None:
+        self.enabled.discard(capability)
+
+    def is_enabled(self, capability: int) -> bool:
+        return capability in self.enabled
 
     def gen_buffers(self, count: int = 1) -> tuple[int, ...]:
         identifiers = tuple(range(self.next_buffer, self.next_buffer + count))
@@ -155,6 +171,12 @@ class FakeAL:
         self.sources[identifier][parameter] = (x, y, z)
         self.source_property_calls.append((identifier, parameter))
 
+    def sourcefv(
+        self, identifier: int, parameter: int, values: tuple[float, ...]
+    ) -> None:
+        self.sources[identifier][parameter] = tuple(values)
+        self.source_property_calls.append((identifier, parameter))
+
     def sourcef(self, identifier: int, parameter: int, value: float) -> None:
         self.sources[identifier][parameter] = value
         self.source_property_calls.append((identifier, parameter))
@@ -228,10 +250,23 @@ class FakeAL:
         raise AssertionError(f"unexpected integer source parameter {parameter}")
 
     def get_sourcef(self, identifier: int, parameter: int) -> float:
+        if parameter == bindings.AL_SUPER_STEREO_WIDTH_SOFT:
+            return cast(float, self.sources[identifier].get(parameter, 0.46))
         assert parameter == bindings.AL_SEC_OFFSET
         if identifier in self.queues:
             return self.offsets.get(identifier, 0.0)
         return self.offsets.get(identifier, 0.25)
+
+    def get_sourcei64v_soft(
+        self, identifier: int, parameter: int, result_size: int = 1
+    ) -> tuple[int, ...]:
+        assert identifier in self.sources
+        assert result_size == 2
+        offset = self._source_sample_rate(identifier) * 5 * (1 << 32) // 4
+        if parameter == bindings.AL_SAMPLE_OFFSET_LATENCY_SOFT:
+            return (offset, 25_000_000)
+        assert parameter == bindings.AL_SAMPLE_OFFSET_CLOCK_SOFT
+        return (offset, 42_500_000_000)
 
     def source_queue_buffers(self, identifier: int, buffers: tuple[int, ...]) -> None:
         self.queues.setdefault(identifier, []).extend(buffers)
@@ -277,8 +312,12 @@ class FakeAL:
         self.context_floats[bindings.AL_SPEED_OF_SOUND] = value
 
     def get_integer(self, parameter: int) -> int:
-        assert parameter == bindings.AL_DISTANCE_MODEL
-        return self.distance_model_value
+        if parameter == bindings.AL_DISTANCE_MODEL:
+            return self.distance_model_value
+        if parameter == bindings.AL_NUM_RESAMPLERS_SOFT:
+            return len(self.resampler_names)
+        assert parameter == bindings.AL_DEFAULT_RESAMPLER_SOFT
+        return self.default_resampler
 
     def get_float(self, parameter: int) -> float:
         return self.context_floats[parameter]
@@ -305,6 +344,7 @@ class FakeALC:
             "ALC_SOFT_HRTF",
             "ALC_SOFT_output_limiter",
             "ALC_SOFT_output_mode",
+            "ALC_SOFT_device_clock",
         }
         self.hrtf_profiles = ("Built-in HRTF", "Studio HRTF", "Gaming HRTF")
         self._restore_device_defaults()
@@ -408,6 +448,14 @@ class FakeALC:
         assert parameter == bindings.ALC_HRTF_SPECIFIER_SOFT
         return self.hrtf_profiles[index]
 
+    def get_integer64v_soft(
+        self, device: object, parameter: int, size: int
+    ) -> tuple[int, ...]:
+        assert device is self.device
+        assert parameter == bindings.ALC_DEVICE_CLOCK_LATENCY_SOFT
+        assert size == 2
+        return (42_500_000_000, 25_000_000)
+
     def create_context(
         self, device: object, attributes: tuple[int, ...] | None
     ) -> object:
@@ -472,8 +520,15 @@ class FakeLibrary:
         self._context_lock = RLock()
         self.invalidated_devices: list[object] = []
         self.al_extensions = {
+            "AL_EXT_source_distance_model",
+            "AL_EXT_SOURCE_RADIUS",
+            "AL_EXT_STEREO_ANGLES",
             "AL_SOFT_direct_channels",
+            "AL_SOFT_direct_channels_remix",
+            "AL_SOFT_source_latency",
+            "AL_SOFT_source_resampler",
             "AL_SOFT_source_spatialize",
+            "AL_SOFT_UHJ",
         }
 
     def _invalidate_device_extensions(self, device: object) -> None:

@@ -22,6 +22,9 @@ from pyalsoft._managed.playback.session import (
     _check_al_error,
     _clear_al_errors,
 )
+from pyalsoft._managed.playback.source_controls import (
+    _apply_advanced_source_config,
+)
 from pyalsoft._managed.spatial import VoiceConfig
 
 
@@ -341,11 +344,13 @@ def _apply_voice_config(
     config: VoiceConfig,
     *,
     previous: VoiceConfig | None = None,
+    changed_only: bool = False,
 ) -> None:
     """Apply every voice property, or only values changed from ``previous``."""
 
     al = playback._library.al
-    apply_all = previous is None
+    advanced_previous = previous
+    apply_all = not changed_only
     if previous is None:
         previous = config
     vector_properties = (
@@ -400,3 +405,10 @@ def _apply_voice_config(
     for parameter, old_boolean, new_boolean in integer_properties:
         if apply_all or new_boolean != old_boolean:
             al.sourcei(identifier, parameter, int(new_boolean))
+
+    _apply_advanced_source_config(
+        playback,
+        identifier,
+        config,
+        previous=advanced_previous,
+    )

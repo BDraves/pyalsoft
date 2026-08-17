@@ -37,6 +37,7 @@ from pyalsoft._managed.playback.voices import (
     upload,
 )
 from pyalsoft._managed.resources import (
+    Clip,
     SoundCacheInfo,
     SoundEndReason,
     Voice,
@@ -52,8 +53,17 @@ from pyalsoft._managed.sound.wave import _read_wave
 from pyalsoft._managed.spatial import (
     _DEFAULT_ACOUSTICS,
     _DEFAULT_LISTENER,
+    _OMITTED_DISTANCE_MODEL,
+    _OMITTED_RESAMPLER,
+    _OMITTED_STEREO_ANGLES,
+    _OMITTED_SUPER_STEREO_WIDTH,
     Acoustics,
+    DirectChannelsMode,
+    DistanceModel,
     Listener,
+    Resampler,
+    SpatializationMode,
+    StereoMode,
     Vector3,
     VoiceConfig,
     _frame_offset,
@@ -62,6 +72,10 @@ from pyalsoft._managed.spatial import (
 )
 
 _DEFAULT_SOUND_CACHE_LIMIT = 64 * 1024 * 1024
+
+
+def _uses_direct_channels(config: VoiceConfig) -> bool:
+    return config.direct_channels is not DirectChannelsMode.OFF
 
 
 class _DefaultRuntime:
@@ -169,6 +183,33 @@ class _DefaultRuntime:
             del self._active[record.token]
             self._trim_cache()
 
+    def _replacement_clip(
+        self,
+        record: _SoundRecord,
+        config: VoiceConfig,
+    ) -> tuple[Clip, tuple[Path, bool] | None, bool]:
+        playback = self._opened_playback()
+        direct_channels = _uses_direct_channels(config)
+        if record.pcm is not None:
+            pcm = _as_stereo(record.pcm) if direct_channels else record.pcm
+            return upload(playback, pcm), None, True
+
+        assert record.path is not None
+        cache_key = (record.path, direct_channels)
+        cached = self._clips.get(cache_key)
+        if cached is None:
+            source_pcm = _read_wave(record.path)
+            pcm = _as_stereo(source_pcm) if direct_channels else source_pcm
+            cached = _CachedSoundClip(
+                clip=upload(playback, pcm),
+                info=source_pcm.info,
+            )
+            self._clips[cache_key] = cached
+            self._cache_bytes += cached.clip.info.byte_count
+        self._clips.move_to_end(cache_key)
+        self._trim_cache(protected=cache_key)
+        return cached.clip, cache_key, False
+
     def _create_replacement_voice(
         self,
         record: _SoundRecord,
@@ -178,12 +219,7 @@ class _DefaultRuntime:
         start: bool,
     ) -> Voice:
         playback = self._opened_playback()
-        clip = record.clip
-        uploaded = False
-        if clip is None:
-            assert record.pcm is not None
-            clip = upload(playback, record.pcm)
-            uploaded = True
+        clip, cache_key, owned = self._replacement_clip(record, record.config)
         try:
             voice = _create_voice(
                 playback,
@@ -192,16 +228,68 @@ class _DefaultRuntime:
                 offset_seconds=offset_seconds,
                 offset_frames=offset_frames,
                 start=start,
-                spatialize=record.spatialize,
-                direct_channels=record.direct_channels,
             )
         except BaseException:
-            if uploaded:
+            if owned:
                 with suppress(Exception):
                     release(playback, clip)
+            else:
+                with suppress(Exception):
+                    self._trim_cache()
             raise
         record.clip = clip
+        record.cache_key = cache_key
         return voice
+
+    def _replace_active_voice_config(
+        self,
+        record: _SoundRecord,
+        status: VoiceStatus,
+        config: VoiceConfig,
+    ) -> None:
+        playback = self._opened_playback()
+        old_voice = record.voice
+        old_clip = record.clip
+        clip, cache_key, owned = self._replacement_clip(record, config)
+        try:
+            voice = _create_voice(
+                playback,
+                clip,
+                config,
+                offset_frames=status.offset_frames,
+                start=status.state in (VoiceState.PLAYING, VoiceState.PAUSED),
+            )
+            if status.state is VoiceState.PAUSED:
+                pause(playback, voice)
+        except BaseException:
+            if owned:
+                with suppress(Exception):
+                    release(playback, clip)
+            else:
+                with suppress(Exception):
+                    self._trim_cache()
+            raise
+
+        try:
+            release(playback, old_voice)
+            if record.pcm is not None and old_clip is not None:
+                release(playback, old_clip)
+        except BaseException:
+            with suppress(Exception):
+                release(playback, voice)
+            if owned:
+                with suppress(Exception):
+                    release(playback, clip)
+            else:
+                with suppress(Exception):
+                    self._trim_cache()
+            raise
+
+        record.voice = voice
+        record.clip = clip
+        record.config = config
+        record.cache_key = cache_key
+        self._trim_cache()
 
     def _replace_terminal_voice(
         self,
@@ -262,13 +350,10 @@ class _DefaultRuntime:
         *,
         offset_seconds: float = 0.0,
         offset_frames: int | None = None,
-        spatialize: bool | None = None,
-        direct_channels: bool = False,
     ) -> PlayingSound:
         if not isinstance(config, VoiceConfig):
             raise TypeError("config must be a VoiceConfig")
-        if not isinstance(direct_channels, bool):
-            raise TypeError("direct_channels must be a boolean")
+        direct_channels = _uses_direct_channels(config)
         normalized = (
             None if isinstance(sound, PCM) else Path(sound).expanduser().resolve()
         )
@@ -315,8 +400,6 @@ class _DefaultRuntime:
                     config,
                     offset_seconds=offset_seconds,
                     offset_frames=offset_frames,
-                    spatialize=spatialize,
-                    direct_channels=direct_channels,
                 )
             except BaseException:
                 if isinstance(sound, PCM):
@@ -333,10 +416,8 @@ class _DefaultRuntime:
                 clip=clip,
                 info=source_info,
                 path=normalized,
-                pcm=pcm if isinstance(sound, PCM) else None,
+                pcm=sound if isinstance(sound, PCM) else None,
                 config=config,
-                spatialize=spatialize,
-                direct_channels=direct_channels,
                 cache_key=cache_key,
             )
             self._active[token] = record
@@ -482,6 +563,12 @@ class _DefaultRuntime:
                     self._require_open()
                 record.config = config
                 return
+            layout_changes = record.info.channels == 1 and _uses_direct_channels(
+                record.config
+            ) != _uses_direct_channels(config)
+            if layout_changes:
+                self._replace_active_voice_config(record, status, config)
+                return
             set_voice_config(self._opened_playback(), record.voice, config)
             record.config = config
 
@@ -504,6 +591,16 @@ class _DefaultRuntime:
         cone_inner_angle: float | None = None,
         cone_outer_angle: float | None = None,
         cone_outer_gain: float | None = None,
+        distance_model: DistanceModel | None = _OMITTED_DISTANCE_MODEL,
+        radius: float | None = None,
+        spatialization: SpatializationMode | None = None,
+        direct_channels: DirectChannelsMode | bool | None = None,
+        stereo_angles: tuple[float, float] | None = _OMITTED_STEREO_ANGLES,
+        resampler: Resampler | None = _OMITTED_RESAMPLER,
+        air_absorption_factor: float | None = None,
+        room_rolloff_factor: float | None = None,
+        stereo_mode: StereoMode | None = None,
+        super_stereo_width: float | None = _OMITTED_SUPER_STEREO_WIDTH,
         filter: Filter | None = _OMITTED_FILTER,
         effect_sends: tuple[EffectSend, ...] | list[EffectSend] | None = None,
     ) -> None:
@@ -526,6 +623,16 @@ class _DefaultRuntime:
                 cone_inner_angle=cone_inner_angle,
                 cone_outer_angle=cone_outer_angle,
                 cone_outer_gain=cone_outer_gain,
+                distance_model=distance_model,
+                radius=radius,
+                spatialization=spatialization,
+                direct_channels=direct_channels,
+                stereo_angles=stereo_angles,
+                resampler=resampler,
+                air_absorption_factor=air_absorption_factor,
+                room_rolloff_factor=room_rolloff_factor,
+                stereo_mode=stereo_mode,
+                super_stereo_width=super_stereo_width,
                 filter=filter,
                 effect_sends=effect_sends,
             )
@@ -534,6 +641,12 @@ class _DefaultRuntime:
                 if record.end_reason is SoundEndReason.SHUTDOWN:
                     self._require_open()
                 record.config = updated
+                return
+            layout_changes = record.info.channels == 1 and _uses_direct_channels(
+                record.config
+            ) != _uses_direct_channels(updated)
+            if layout_changes:
+                self._replace_active_voice_config(record, status, updated)
                 return
             _set_voice_config(
                 self._opened_playback(),

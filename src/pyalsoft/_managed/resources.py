@@ -305,6 +305,89 @@ class VoiceStatus:
 
 
 @dataclass(frozen=True, slots=True)
+class VoiceLatency:
+    """Atomically measured source position and physical-output latency.
+
+    ``offset_frames_fixed`` preserves OpenAL's exact unsigned 32.32
+    fixed-point sample offset. The convenience properties convert it to a
+    floating-point frame count or source-audio seconds only when requested.
+    """
+
+    offset_frames_fixed: int
+    output_latency_ns: int
+    sample_rate: int
+
+    @property
+    def offset_frames(self) -> float:
+        """Source position in sample frames, including the fractional frame."""
+
+        return self.offset_frames_fixed / (1 << 32)
+
+    @property
+    def offset_seconds(self) -> float:
+        """Source position in source-audio seconds."""
+
+        return self.offset_frames / self.sample_rate
+
+    @property
+    def output_latency_seconds(self) -> float:
+        """Physical-output latency in seconds."""
+
+        return self.output_latency_ns / 1_000_000_000
+
+
+@dataclass(frozen=True, slots=True)
+class VoiceClock:
+    """Atomically measured source position and audio-device clock time.
+
+    ``offset_frames_fixed`` preserves OpenAL's exact signed 32.32 fixed-point
+    sample offset. The device time remains an integer nanosecond count.
+    """
+
+    offset_frames_fixed: int
+    device_time_ns: int
+    sample_rate: int
+
+    @property
+    def offset_frames(self) -> float:
+        """Source position in sample frames, including the fractional frame."""
+
+        return self.offset_frames_fixed / (1 << 32)
+
+    @property
+    def offset_seconds(self) -> float:
+        """Source position in source-audio seconds."""
+
+        return self.offset_frames / self.sample_rate
+
+    @property
+    def device_time_seconds(self) -> float:
+        """Audio-device clock time in seconds."""
+
+        return self.device_time_ns / 1_000_000_000
+
+
+@dataclass(frozen=True, slots=True)
+class PlaybackClock:
+    """Atomically measured audio-device clock and output latency."""
+
+    device_time_ns: int
+    output_latency_ns: int
+
+    @property
+    def device_time_seconds(self) -> float:
+        """Audio-device clock time in seconds."""
+
+        return self.device_time_ns / 1_000_000_000
+
+    @property
+    def output_latency_seconds(self) -> float:
+        """Physical-output latency in seconds."""
+
+        return self.output_latency_ns / 1_000_000_000
+
+
+@dataclass(frozen=True, slots=True)
 class StreamStatus:
     """Runtime state and queue accounting for a stream.
 
