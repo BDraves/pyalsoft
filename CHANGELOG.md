@@ -4,6 +4,8 @@ Notable user-facing changes to PyALSoft are documented here.
 
 ## Unreleased
 
+## 1.3.0 - 2026.08.16
+
 ### Added
 
 - Added typed playback device and context configuration for sample and refresh
