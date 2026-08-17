@@ -82,6 +82,28 @@ class HRTFStatus(Enum):
     UNKNOWN = "unknown"
 
 
+class PlaybackOutputMode(Enum):
+    """Requested or observed playback-device output layout.
+
+    ``ANY`` lets the backend select a layout. The stereo variants distinguish
+    ordinary speaker mixing, UHJ surround encoding, and HRTF rendering.
+    ``UNKNOWN`` is reserved for an unrecognized value reported by a newer
+    backend and cannot be requested in [`PlaybackConfig`][pyalsoft.PlaybackConfig].
+    """
+
+    ANY = "any"
+    MONO = "mono"
+    STEREO = "stereo"
+    STEREO_BASIC = "stereo_basic"
+    STEREO_UHJ = "stereo_uhj"
+    STEREO_HRTF = "stereo_hrtf"
+    QUAD = "quad"
+    SURROUND_5_1 = "surround_5_1"
+    SURROUND_6_1 = "surround_6_1"
+    SURROUND_7_1 = "surround_7_1"
+    UNKNOWN = "unknown"
+
+
 @dataclass(frozen=True, slots=True)
 class PlaybackDevice:
     """A named playback device reported by the selected OpenAL runtime.
@@ -115,21 +137,99 @@ class PlaybackDevice:
 class PlaybackConfig:
     """Preferences applied while creating an OpenAL playback context.
 
+    ``None`` preserves the backend default when opening a session. When passed
+    to [`reconfigure_playback`][pyalsoft.reconfigure_playback], ``None`` omits
+    that field from a patch and preserves the session's previous request. With
+    ``replace=True``, ``None`` returns the field to backend-selected behavior.
+
     Attributes:
+        sample_rate: Requested device sample rate in frames per second. ``None``
+            preserves the backend default.
+        refresh_rate: Requested context refresh rate in updates per second.
+            ``None`` preserves the backend default. OpenAL Soft accepts but
+            ignores this core OpenAL attribute.
+        synchronous: Whether to request a synchronous context. ``None``
+            preserves the backend default. OpenAL Soft accepts but ignores this
+            core OpenAL attribute.
+        mono_sources: Requested minimum number of mono, spatial source voices.
+        stereo_sources: Requested minimum number of stereo, non-spatial source
+            voices.
+        max_auxiliary_sends: Requested maximum EFX sends per source. A request
+            is ignored when ``ALC_EXT_EFX`` is unavailable.
         hrtf: Whether to request HRTF rendering. ``None`` leaves the backend's
             default unchanged. A request is ignored when the selected device
             does not expose ``ALC_SOFT_HRTF``; inspect ``PlaybackInfo.hrtf_status``
             for the result.
+        hrtf_name: Preferred HRTF profile from
+            [`list_hrtf_profiles`][pyalsoft.list_hrtf_profiles]. This is a hint
+            independent of ``hrtf`` and is ignored when ``ALC_SOFT_HRTF`` is
+            unavailable.
+        output_limiter: Whether to request the device output limiter. ``None``
+            preserves the backend default. A request is ignored when
+            ``ALC_SOFT_output_limiter`` is unavailable.
+        output_mode: Requested speaker or stereo-rendering layout. ``None``
+            preserves the backend default. A request is ignored when
+            ``ALC_SOFT_output_mode`` is unavailable.
 
     Raises:
-        TypeError: ``hrtf`` is neither a boolean nor ``None``.
+        TypeError: A field has the wrong type.
+        ValueError: A numeric request is outside the ALC integer range or
+            ``PlaybackOutputMode.UNKNOWN`` is requested.
     """
 
+    sample_rate: int | None = None
+    refresh_rate: int | None = None
+    synchronous: bool | None = None
+    mono_sources: int | None = None
+    stereo_sources: int | None = None
+    max_auxiliary_sends: int | None = None
     hrtf: bool | None = None
+    hrtf_name: str | None = None
+    output_limiter: bool | None = None
+    output_mode: PlaybackOutputMode | None = None
 
     def __post_init__(self) -> None:
-        if self.hrtf is not None and not isinstance(self.hrtf, bool):
-            raise TypeError("hrtf must be a boolean or None")
+        for name in ("sample_rate", "refresh_rate"):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            _validate_optional_alc_integer(name, value, minimum=1)
+        for name in (
+            "mono_sources",
+            "stereo_sources",
+            "max_auxiliary_sends",
+        ):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            _validate_optional_alc_integer(name, value, minimum=0)
+        for name in ("synchronous", "hrtf", "output_limiter"):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, bool):
+                raise TypeError(f"{name} must be a boolean or None")
+        if self.hrtf_name is not None:
+            if not isinstance(self.hrtf_name, str):
+                raise TypeError("hrtf_name must be a string or None")
+            if not self.hrtf_name:
+                raise ValueError("hrtf_name cannot be empty")
+        if self.output_mode is not None and not isinstance(
+            self.output_mode, PlaybackOutputMode
+        ):
+            raise TypeError("output_mode must be a PlaybackOutputMode or None")
+        if self.output_mode is PlaybackOutputMode.UNKNOWN:
+            raise ValueError("output_mode cannot be PlaybackOutputMode.UNKNOWN")
+
+
+_ALC_INTEGER_MAX = 2**31 - 1
+
+
+def _validate_optional_alc_integer(name: str, value: object, *, minimum: int) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be an integer or None")
+    if not minimum <= value <= _ALC_INTEGER_MAX:
+        if minimum == 0:
+            raise ValueError(f"{name} must be between 0 and {_ALC_INTEGER_MAX}")
+        raise ValueError(f"{name} must be between {minimum} and {_ALC_INTEGER_MAX}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +242,17 @@ class PlaybackInfo:
         version: Active OpenAL implementation version.
         hrtf_status: Observed HRTF state.
         hrtf_name: Active HRTF specifier, or ``None`` when none is available.
+        sample_rate: Active device sample rate in frames per second.
+        refresh_rate: Active context refresh rate in updates per second.
+        synchronous: Whether the active context is synchronous.
+        mono_sources: Number of mono, spatial source voices available.
+        stereo_sources: Number of stereo, non-spatial source voices available.
+        max_auxiliary_sends: Active EFX send limit per source, or ``None`` when
+            ``ALC_EXT_EFX`` is unavailable.
+        output_limiter: Active output-limiter state, or ``None`` when
+            ``ALC_SOFT_output_limiter`` is unavailable.
+        output_mode: Active device output mode, or ``None`` when
+            ``ALC_SOFT_output_mode`` is unavailable.
     """
 
     device_name: str
@@ -149,6 +260,14 @@ class PlaybackInfo:
     version: str
     hrtf_status: HRTFStatus
     hrtf_name: str | None
+    sample_rate: int | None = None
+    refresh_rate: int | None = None
+    synchronous: bool | None = None
+    mono_sources: int | None = None
+    stereo_sources: int | None = None
+    max_auxiliary_sends: int | None = None
+    output_limiter: bool | None = None
+    output_mode: PlaybackOutputMode | None = None
 
 
 @dataclass(frozen=True, slots=True)

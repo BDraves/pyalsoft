@@ -30,29 +30,93 @@ state; sessions on independent library instances may proceed concurrently.
 progress and makes later operations fail with
 [`PlaybackClosedError`][pyalsoft.PlaybackClosedError].
 
-## Device selection and HRTF
+## Device and context configuration
 
 Playback devices can be enumerated and passed to
-[`open_playback()`][pyalsoft.open_playback]. Context preferences such as HRTF
-are requested with [`PlaybackConfig`][pyalsoft.PlaybackConfig]; query
+[`open_playback()`][pyalsoft.open_playback]. Device and context preferences are
+requested with [`PlaybackConfig`][pyalsoft.PlaybackConfig]; query
 [`PlaybackInfo`][pyalsoft.PlaybackInfo] to see what the audio backend actually
-enabled:
+enabled. Requests are hints, so the backend may select a different effective
+value. Leaving a field as `None` preserves its default.
 
 ```python
 from pyalsoft import (
     PlaybackConfig,
+    PlaybackOutputMode,
+    get_playback_config,
     get_playback_info,
+    list_hrtf_profiles,
     list_playback_devices,
     open_playback,
+    reconfigure_playback,
 )
 
 devices = list_playback_devices()
 selected = next((device for device in devices if device.is_default), None)
+profiles = list_hrtf_profiles(selected)
 
-with open_playback(selected, config=PlaybackConfig(hrtf=True)) as playback:
+config = PlaybackConfig(
+    sample_rate=48_000,
+    mono_sources=128,
+    stereo_sources=8,
+    max_auxiliary_sends=2,
+    hrtf=True,
+    hrtf_name=profiles[0] if profiles else None,
+    output_limiter=True,
+    output_mode=PlaybackOutputMode.STEREO_HRTF,
+)
+with open_playback(selected, config=config) as playback:
     info = get_playback_info(playback)
-    print(info.device_name, info.hrtf_status.value, info.hrtf_name)
+    print(info.device_name, info.sample_rate, info.output_mode)
+    print(info.hrtf_status.value, info.hrtf_name)
+
+    # Change selected settings while clips, voices, and streams remain valid.
+    reconfigure_playback(
+        playback,
+        PlaybackConfig(sample_rate=44_100, hrtf=False),
+    )
+    print(get_playback_config(playback))
+
+    # Replace the complete request, returning omitted fields to backend defaults.
+    reconfigure_playback(
+        playback,
+        PlaybackConfig(output_mode=PlaybackOutputMode.STEREO_BASIC),
+        replace=True,
+    )
 ```
+
+[`reconfigure_playback()`][pyalsoft.reconfigure_playback] resets the live
+device without closing its context or invalidating managed resources. In a
+reconfiguration, each `None` field is an omitted update that preserves the
+session's previous request. Pass `replace=True` to treat the supplied
+configuration as the complete new request; its `None` fields then return to
+backend-selected behavior. [`get_playback_config()`][pyalsoft.get_playback_config]
+reports the retained request, while
+[`get_playback_info()`][pyalsoft.get_playback_info] reports the effective values
+negotiated by the backend. The reset may briefly interrupt output. Live
+reconfiguration requires `ALC_SOFT_HRTF`, which is provided by the bundled
+OpenAL Soft runtime.
+
+The available requests and observations are:
+
+| Configuration | Playback information | Availability |
+| --- | --- | --- |
+| `sample_rate` | `sample_rate` | OpenAL core |
+| `refresh_rate` | `refresh_rate` | OpenAL core; accepted but ignored by OpenAL Soft |
+| `synchronous` | `synchronous` | OpenAL core; accepted but ignored by OpenAL Soft |
+| `mono_sources` | `mono_sources` | OpenAL core |
+| `stereo_sources` | `stereo_sources` | OpenAL core |
+| `max_auxiliary_sends` | `max_auxiliary_sends` | `ALC_EXT_EFX` |
+| `hrtf` and `hrtf_name` | `hrtf_status` and `hrtf_name` | `ALC_SOFT_HRTF` |
+| `output_limiter` | `output_limiter` | `ALC_SOFT_output_limiter` |
+| `output_mode` | `output_mode` | `ALC_SOFT_output_mode` |
+
+Optional-extension requests are omitted when the selected device does not
+support the corresponding extension. Their observed values are `None`, except
+for `hrtf_status`, which is `HRTFStatus.UNAVAILABLE`. HRTF profile names come
+from [`list_hrtf_profiles()`][pyalsoft.list_hrtf_profiles]; names are resolved to
+the backend's transient numeric identifiers on the same device used to create
+the context.
 
 See the runnable
 [`play_sine.py`](https://github.com/BDraves/pyalsoft/blob/development/examples/play_sine.py),

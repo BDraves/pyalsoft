@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import fields, replace
 from functools import wraps
 from threading import RLock
 from types import TracebackType
@@ -13,6 +14,7 @@ from pyalsoft import bindings
 from pyalsoft._managed._backend import _check_alc_error, _clear_alc_errors
 from pyalsoft._managed.errors import (
     AudioBackendError,
+    AudioError,
     PlaybackClosedError,
     PlaybackOpenError,
 )
@@ -21,6 +23,7 @@ from pyalsoft._managed.resources import (
     PlaybackConfig,
     PlaybackDevice,
     PlaybackInfo,
+    PlaybackOutputMode,
     VoiceState,
 )
 from pyalsoft._managed.spatial import Acoustics, DistanceModel, Listener
@@ -52,6 +55,7 @@ class Playback:
         "_clips",
         "_clip_infos",
         "_closed",
+        "_config",
         "_context",
         "_device",
         "_library",
@@ -71,6 +75,7 @@ class Playback:
         library: bindings.OpenALLibrary,
         device: object,
         context: object,
+        config: PlaybackConfig,
         previous_context: object | None,
         previous_playback: Playback | None,
     ) -> None:
@@ -78,6 +83,7 @@ class Playback:
         self._lock = RLock()
         self._device = device
         self._context = context
+        self._config = config
         self._previous_context = previous_context
         self._previous_playback = previous_playback
         self._token = object()
@@ -207,6 +213,22 @@ _HRTF_STATUS_BY_ALC = {
     bindings.ALC_HRTF_UNSUPPORTED_FORMAT_SOFT: HRTFStatus.UNSUPPORTED_FORMAT,
 }
 
+_PLAYBACK_OUTPUT_MODE_TO_ALC = {
+    PlaybackOutputMode.ANY: bindings.ALC_ANY_SOFT,
+    PlaybackOutputMode.MONO: bindings.ALC_MONO_SOFT,
+    PlaybackOutputMode.STEREO: bindings.ALC_STEREO_SOFT,
+    PlaybackOutputMode.STEREO_BASIC: bindings.ALC_STEREO_BASIC_SOFT,
+    PlaybackOutputMode.STEREO_UHJ: bindings.ALC_STEREO_UHJ_SOFT,
+    PlaybackOutputMode.STEREO_HRTF: bindings.ALC_STEREO_HRTF_SOFT,
+    PlaybackOutputMode.QUAD: bindings.ALC_QUAD_SOFT,
+    PlaybackOutputMode.SURROUND_5_1: bindings.ALC_SURROUND_5_1_SOFT,
+    PlaybackOutputMode.SURROUND_6_1: bindings.ALC_SURROUND_6_1_SOFT,
+    PlaybackOutputMode.SURROUND_7_1: bindings.ALC_SURROUND_7_1_SOFT,
+}
+_PLAYBACK_OUTPUT_MODE_BY_ALC = {
+    value: key for key, value in _PLAYBACK_OUTPUT_MODE_TO_ALC.items()
+}
+
 
 def _require_playback(playback: Playback) -> None:
     if not isinstance(playback, Playback):
@@ -253,6 +275,134 @@ def _load_playback_library(
         return bindings.load()
     except bindings.LibraryNotFoundError as error:
         raise PlaybackOpenError("could not load an OpenAL library") from error
+
+
+def _playback_context_attributes(
+    config: PlaybackConfig,
+    library: bindings.OpenALLibrary,
+    device: object,
+    *,
+    profile_error: type[AudioError] = PlaybackOpenError,
+) -> tuple[int, ...] | None:
+    """Translate managed requests into an extension-safe ALC attribute list."""
+
+    attributes: list[int] = []
+
+    def append(parameter: int, value: int | bool | None) -> None:
+        if value is not None:
+            attributes.extend((parameter, int(value)))
+
+    append(bindings.ALC_FREQUENCY, config.sample_rate)
+    append(bindings.ALC_REFRESH, config.refresh_rate)
+    append(bindings.ALC_SYNC, config.synchronous)
+    append(bindings.ALC_MONO_SOURCES, config.mono_sources)
+    append(bindings.ALC_STEREO_SOURCES, config.stereo_sources)
+
+    if library.alc.is_extension_present(device, "ALC_EXT_EFX"):
+        append(bindings.ALC_MAX_AUXILIARY_SENDS, config.max_auxiliary_sends)
+    if library.alc.is_extension_present(device, "ALC_SOFT_HRTF"):
+        append(bindings.ALC_HRTF_SOFT, config.hrtf)
+        if config.hrtf_name is not None:
+            profiles = _get_hrtf_profiles(library, device)
+            try:
+                profile_id = profiles.index(config.hrtf_name)
+            except ValueError:
+                raise profile_error(
+                    f"HRTF profile is unavailable: {config.hrtf_name!r}"
+                ) from None
+            append(bindings.ALC_HRTF_ID_SOFT, profile_id)
+    if library.alc.is_extension_present(device, "ALC_SOFT_output_limiter"):
+        append(bindings.ALC_OUTPUT_LIMITER_SOFT, config.output_limiter)
+    if config.output_mode is not None and library.alc.is_extension_present(
+        device, "ALC_SOFT_output_mode"
+    ):
+        append(
+            bindings.ALC_OUTPUT_MODE_SOFT,
+            _PLAYBACK_OUTPUT_MODE_TO_ALC[config.output_mode],
+        )
+    return tuple(attributes) or None
+
+
+def _get_hrtf_profiles(
+    library: bindings.OpenALLibrary,
+    device: object,
+) -> tuple[str, ...]:
+    """Enumerate HRTF names on an open device after extension validation."""
+
+    _clear_alc_errors(library, device)
+    count = library.alc.get_integerv(device, bindings.ALC_NUM_HRTF_SPECIFIERS_SOFT, 1)[
+        0
+    ]
+    profiles = tuple(
+        library.alc.get_stringi_soft(
+            device,
+            bindings.ALC_HRTF_SPECIFIER_SOFT,
+            index,
+        )
+        for index in range(count)
+    )
+    _check_alc_error(library, device, "enumerate HRTF profiles")
+    if any(profile is None for profile in profiles):
+        raise AudioBackendError("OpenAL returned an incomplete HRTF profile list")
+    return tuple(profile for profile in profiles if profile is not None)
+
+
+def _close_playback_device(
+    library: bindings.OpenALLibrary,
+    device: object,
+) -> bool:
+    """Close a raw playback device and discard its extension entry points."""
+
+    closed = library.alc.close_device(device)
+    if closed:
+        library._invalidate_device_extensions(device)
+    return closed
+
+
+def list_hrtf_profiles(
+    device_name: PlaybackDevice | str | bytes | None = None,
+    *,
+    library: bindings.OpenALLibrary | None = None,
+) -> tuple[str, ...]:
+    """Return HRTF profile names available to a playback device.
+
+    The device is opened only for enumeration and is closed before this
+    function returns. An empty tuple means the selected device does not expose
+    ``ALC_SOFT_HRTF`` or currently reports no profiles.
+
+    Args:
+        device_name: Playback device object or device specifier. ``None`` selects
+            the runtime's default playback device.
+        library: Loaded low-level library to query. By default, discover and load
+            the platform's OpenAL implementation.
+
+    Raises:
+        TypeError: ``device_name`` has the wrong type.
+        PlaybackOpenError: OpenAL could not be loaded or the device could not open.
+        AudioBackendError: Profile enumeration or device cleanup failed.
+    """
+
+    if isinstance(device_name, PlaybackDevice):
+        device_name = device_name.name
+    elif device_name is not None and not isinstance(device_name, (str, bytes)):
+        raise TypeError("device_name must be a PlaybackDevice, str, bytes, or None")
+
+    library = _load_playback_library(library)
+    with library._context_lock:
+        device = library.alc.open_device(device_name)
+        if not device:
+            raise PlaybackOpenError("could not open the requested playback device")
+        try:
+            if not library.alc.is_extension_present(device, "ALC_SOFT_HRTF"):
+                profiles: tuple[str, ...] = ()
+            else:
+                profiles = _get_hrtf_profiles(library, device)
+        except Exception:
+            _close_playback_device(library, device)
+            raise
+        if not _close_playback_device(library, device):
+            raise AudioBackendError("could not close the playback device")
+        return profiles
 
 
 def list_playback_devices(
@@ -336,11 +486,7 @@ def open_playback(
             raise PlaybackOpenError("could not open the requested playback device")
         context: object | None = None
         try:
-            attributes: tuple[int, ...] | None = None
-            if config.hrtf is not None and library.alc.is_extension_present(
-                device, "ALC_SOFT_HRTF"
-            ):
-                attributes = (bindings.ALC_HRTF_SOFT, int(config.hrtf))
+            attributes = _playback_context_attributes(config, library, device)
             context = library.alc.create_context(device, attributes)
             if not context:
                 raise PlaybackOpenError("could not create an OpenAL context")
@@ -349,12 +495,13 @@ def open_playback(
         except Exception:
             if context is not None:
                 library.alc.destroy_context(context)
-            library.alc.close_device(device)
+            _close_playback_device(library, device)
             raise
         playback = Playback(
             library,
             device,
             context,
+            config,
             previous_context,
             previous_playback,
         )
@@ -362,9 +509,104 @@ def open_playback(
         return playback
 
 
+def _merge_playback_config(
+    current: PlaybackConfig,
+    update: PlaybackConfig,
+) -> PlaybackConfig:
+    """Overlay non-None update fields onto the current requested configuration."""
+
+    changes = {
+        field.name: value
+        for field in fields(update)
+        if (value := getattr(update, field.name)) is not None
+    }
+    return replace(current, **changes)
+
+
+@_serialized_playback
+def get_playback_config(playback: Playback) -> PlaybackConfig:
+    """Return the configuration currently requested by a playback session.
+
+    This reports the request retained for future patch-style calls to
+    [`reconfigure_playback`][pyalsoft.reconfigure_playback]. Use
+    [`get_playback_info`][pyalsoft.get_playback_info] to inspect the effective
+    values negotiated by the backend.
+
+    Args:
+        playback: Open session to inspect.
+
+    Returns:
+        The session's immutable requested configuration.
+
+    Raises:
+        PlaybackClosedError: ``playback`` is closed.
+    """
+
+    return playback._config
+
+
+@_serialized_playback
+def reconfigure_playback(
+    playback: Playback,
+    config: PlaybackConfig,
+    *,
+    replace: bool = False,
+) -> None:
+    """Apply playback configuration changes to a live session.
+
+    ``None`` fields are omitted updates and preserve the session's previous
+    request. Pass ``replace=True`` to instead treat ``config`` as the complete
+    request, returning ``None`` fields to backend-selected behavior. The backend
+    may negotiate different effective values, which can be inspected with
+    [`get_playback_info`][pyalsoft.get_playback_info]. Existing clips, voices,
+    and streams remain valid, although output may be interrupted briefly while
+    the device resets.
+
+    Args:
+        playback: Open session to reconfigure.
+        config: Configuration changes to apply.
+        replace: Replace the complete prior request instead of patching it.
+
+    Raises:
+        TypeError: ``config`` is not a [`PlaybackConfig`][pyalsoft.PlaybackConfig]
+            or ``replace`` is not a boolean.
+        PlaybackClosedError: ``playback`` is closed.
+        AudioBackendError: Live reconfiguration is unavailable or OpenAL rejects
+            the requested configuration.
+    """
+
+    if not isinstance(config, PlaybackConfig):
+        raise TypeError("config must be a PlaybackConfig")
+    if not isinstance(replace, bool):
+        raise TypeError("replace must be a boolean")
+
+    merged = config if replace else _merge_playback_config(playback._config, config)
+    if merged == playback._config:
+        return
+
+    library = playback._library
+    device = playback._device
+    if not library.alc.is_extension_present(device, "ALC_SOFT_HRTF"):
+        raise AudioBackendError("playback device does not support live reconfiguration")
+
+    _activate(playback)
+    attributes = _playback_context_attributes(
+        merged,
+        library,
+        device,
+        profile_error=AudioBackendError,
+    )
+    _clear_alc_errors(library, device)
+    reset = library.alc.reset_device_soft(device, attributes)
+    _check_alc_error(library, device, "reconfigure playback")
+    if not reset:
+        raise AudioBackendError("reconfigure playback failed")
+    playback._config = merged
+
+
 @_serialized_playback
 def get_playback_info(playback: Playback) -> PlaybackInfo:
-    """Return observed device, renderer, version, and HRTF information.
+    """Return observed device, context, renderer, and HRTF information.
 
     Args:
         playback: Open session to query.
@@ -383,7 +625,33 @@ def get_playback_info(playback: Playback) -> PlaybackInfo:
     device_name = library.alc.get_string(
         playback._device, bindings.ALC_DEVICE_SPECIFIER
     )
-    if library.alc.is_extension_present(playback._device, "ALC_SOFT_HRTF"):
+    sample_rate = library.alc.get_integerv(playback._device, bindings.ALC_FREQUENCY, 1)[
+        0
+    ]
+    refresh_rate = library.alc.get_integerv(playback._device, bindings.ALC_REFRESH, 1)[
+        0
+    ]
+    synchronous = bool(
+        library.alc.get_integerv(playback._device, bindings.ALC_SYNC, 1)[0]
+    )
+    mono_sources = library.alc.get_integerv(
+        playback._device, bindings.ALC_MONO_SOURCES, 1
+    )[0]
+    stereo_sources = library.alc.get_integerv(
+        playback._device, bindings.ALC_STEREO_SOURCES, 1
+    )[0]
+
+    has_efx = library.alc.is_extension_present(playback._device, "ALC_EXT_EFX")
+    max_auxiliary_sends = (
+        library.alc.get_integerv(playback._device, bindings.ALC_MAX_AUXILIARY_SENDS, 1)[
+            0
+        ]
+        if has_efx
+        else None
+    )
+
+    has_hrtf = library.alc.is_extension_present(playback._device, "ALC_SOFT_HRTF")
+    if has_hrtf:
         native_status = library.alc.get_integerv(
             playback._device, bindings.ALC_HRTF_STATUS_SOFT, 1
         )[0]
@@ -396,6 +664,32 @@ def get_playback_info(playback: Playback) -> PlaybackInfo:
     else:
         hrtf_status = HRTFStatus.UNAVAILABLE
         hrtf_name = None
+
+    has_output_limiter = library.alc.is_extension_present(
+        playback._device, "ALC_SOFT_output_limiter"
+    )
+    output_limiter = (
+        bool(
+            library.alc.get_integerv(
+                playback._device, bindings.ALC_OUTPUT_LIMITER_SOFT, 1
+            )[0]
+        )
+        if has_output_limiter
+        else None
+    )
+
+    has_output_mode = library.alc.is_extension_present(
+        playback._device, "ALC_SOFT_output_mode"
+    )
+    if has_output_mode:
+        native_output_mode = library.alc.get_integerv(
+            playback._device, bindings.ALC_OUTPUT_MODE_SOFT, 1
+        )[0]
+        output_mode = _PLAYBACK_OUTPUT_MODE_BY_ALC.get(
+            native_output_mode, PlaybackOutputMode.UNKNOWN
+        )
+    else:
+        output_mode = None
     _check_alc_error(library, playback._device, "query playback information")
 
     renderer = library.al.get_string(bindings.AL_RENDERER)
@@ -410,6 +704,14 @@ def get_playback_info(playback: Playback) -> PlaybackInfo:
         version=version,
         hrtf_status=hrtf_status,
         hrtf_name=hrtf_name,
+        sample_rate=sample_rate,
+        refresh_rate=refresh_rate,
+        synchronous=synchronous,
+        mono_sources=mono_sources,
+        stereo_sources=stereo_sources,
+        max_auxiliary_sends=max_auxiliary_sends,
+        output_limiter=output_limiter,
+        output_mode=output_mode,
     )
 
 
@@ -519,7 +821,10 @@ def _close_playback(playback: Playback) -> None:
         except Exception as error:
             remember(error)
         try:
-            if not playback._library.alc.close_device(playback._device):
+            if not _close_playback_device(
+                playback._library,
+                playback._device,
+            ):
                 remember(AudioBackendError("could not close the playback device"))
         except Exception as error:
             remember(error)

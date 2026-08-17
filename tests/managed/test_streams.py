@@ -10,6 +10,7 @@ from pyalsoft import (
     HighPassFilter,
     InvalidHandleError,
     InvalidVoiceStateError,
+    PlaybackConfig,
     Reverb,
     SampleType,
     StreamState,
@@ -20,6 +21,7 @@ from pyalsoft import (
     open_playback,
     open_stream,
     pause,
+    reconfigure_playback,
     release,
     release_finished,
     resume,
@@ -30,6 +32,28 @@ from pyalsoft import (
     update_stream,
 )
 from tests._support.managed_backend import FakeLibrary, as_library
+
+
+def test_stream_remains_usable_across_playback_reconfiguration() -> None:
+    library = FakeLibrary()
+
+    with open_playback(library=as_library(library)) as playback:
+        stream = open_stream(
+            playback,
+            channels=1,
+            sample_rate=10,
+            buffer_count=2,
+        )
+        assert try_write_stream(playback, stream, b"\0\0" * 10)
+        start_stream(playback, stream)
+
+        reconfigure_playback(playback, PlaybackConfig(sample_rate=44_100))
+
+        assert try_write_stream(playback, stream, b"\0\0" * 5)
+        status = update_stream(playback, stream)
+        assert status.state is StreamState.PLAYING
+        assert status.queued_chunks == 2
+        release(playback, stream)
 
 
 def test_stream_uses_bounded_reusable_buffers_and_drains_finished_input(

@@ -4,6 +4,18 @@ Notable user-facing changes to PyALSoft are documented here.
 
 ## Unreleased
 
+## 1.3.0 - 2026.08.16
+
+### Added
+
+- Added typed playback device and context configuration for sample and refresh
+  rates, synchronous processing, source and EFX send budgets, named HRTF
+  profiles, output limiting, and output layouts, together with effective-state
+  reporting through `PlaybackInfo`. (@BDraves)
+- Added live playback reconfiguration with patch and full-replacement semantics,
+  requested-state inspection, and preservation of existing clips, voices, and
+  streams while resetting device settings. (@BDraves)
+
 ## 1.2.0 - 2026.08.14
 
 ### Added
