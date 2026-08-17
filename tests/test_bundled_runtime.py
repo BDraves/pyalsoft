@@ -16,9 +16,13 @@ from pyalsoft import (
     EffectSend,
     HighPassFilter,
     LowPassFilter,
+    PlaybackConfig,
+    PlaybackOutputMode,
     Reverb,
     VoiceConfig,
     bindings,
+    get_playback_info,
+    list_hrtf_profiles,
     open_playback,
     play,
     release,
@@ -87,3 +91,31 @@ def test_bundled_runtime_supports_managed_efx(
         )
         release(playback, voice)
         release(playback, clip)
+
+
+def test_bundled_runtime_configures_and_reports_playback_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ALSOFT_DRIVERS", "null")
+    library = bindings.load(WINDOWS_RUNTIME)
+    profiles = list_hrtf_profiles(library=library)
+    config = PlaybackConfig(
+        sample_rate=44_100,
+        mono_sources=32,
+        stereo_sources=4,
+        max_auxiliary_sends=1,
+        hrtf=False,
+        hrtf_name=profiles[0] if profiles else None,
+        output_limiter=False,
+        output_mode=PlaybackOutputMode.STEREO_BASIC,
+    )
+
+    with open_playback(config=config, library=library) as playback:
+        info = get_playback_info(playback)
+
+    assert info.sample_rate == 44_100
+    assert info.mono_sources is not None and info.mono_sources >= 32
+    assert info.stereo_sources is not None and info.stereo_sources >= 4
+    assert info.max_auxiliary_sends == 1
+    assert info.output_limiter is False
+    assert info.output_mode is PlaybackOutputMode.STEREO_BASIC

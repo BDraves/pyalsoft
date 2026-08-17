@@ -4,6 +4,13 @@ Notable user-facing changes to PyALSoft are documented here.
 
 ## Unreleased
 
+### Added
+
+- Added typed playback device and context configuration for sample and refresh
+  rates, synchronous processing, source and EFX send budgets, named HRTF
+  profiles, output limiting, and output layouts, together with effective-state
+  reporting through `PlaybackInfo`. (@BDraves)
+
 ## 1.2.0 - 2026.08.14
 
 ### Added

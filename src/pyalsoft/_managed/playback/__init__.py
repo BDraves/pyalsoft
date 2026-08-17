@@ -4,6 +4,7 @@ from pyalsoft._managed.playback.session import (
     Playback,
     close_playback,
     get_playback_info,
+    list_hrtf_profiles,
     list_playback_devices,
     open_playback,
 )
@@ -35,6 +36,7 @@ __all__ = [
     "finish_stream",
     "get_playback_info",
     "get_voice_status",
+    "list_hrtf_profiles",
     "list_playback_devices",
     "open_playback",
     "open_stream",

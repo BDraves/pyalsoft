@@ -11,6 +11,7 @@ from pyalsoft import (
     Listener,
     PlaybackConfig,
     PlaybackDevice,
+    PlaybackOutputMode,
     SampleType,
     SoundInfo,
     VoiceConfig,
@@ -57,6 +58,44 @@ def test_pcm_and_configuration_are_immutable_data() -> None:
     assert pcm.info.duration_seconds == 1.0
     assert pcm.info.bit_depth == 16
     assert pcm.info.byte_count == 4
+
+
+@pytest.mark.parametrize(
+    ("arguments", "error", "message"),
+    [
+        ({"sample_rate": True}, TypeError, "sample_rate must be an integer"),
+        ({"sample_rate": 0}, ValueError, "sample_rate must be between 1"),
+        ({"refresh_rate": 2**31}, ValueError, "refresh_rate must be between 1"),
+        ({"mono_sources": -1}, ValueError, "mono_sources must be between 0"),
+        ({"stereo_sources": 1.0}, TypeError, "stereo_sources must be an integer"),
+        (
+            {"max_auxiliary_sends": -1},
+            ValueError,
+            "max_auxiliary_sends must be between 0",
+        ),
+        ({"hrtf_name": 1}, TypeError, "hrtf_name must be a string"),
+        ({"hrtf_name": ""}, ValueError, "hrtf_name cannot be empty"),
+        ({"synchronous": 1}, TypeError, "synchronous must be a boolean"),
+        ({"output_limiter": 1}, TypeError, "output_limiter must be a boolean"),
+        (
+            {"output_mode": "stereo"},
+            TypeError,
+            "output_mode must be a PlaybackOutputMode",
+        ),
+        (
+            {"output_mode": PlaybackOutputMode.UNKNOWN},
+            ValueError,
+            "output_mode cannot be",
+        ),
+    ],
+)
+def test_playback_config_rejects_invalid_requests(
+    arguments: dict[str, object],
+    error: type[Exception],
+    message: str,
+) -> None:
+    with pytest.raises(error, match=message):
+        PlaybackConfig(**arguments)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(

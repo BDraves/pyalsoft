@@ -8,10 +8,12 @@ from pyalsoft import (
     PCM,
     PlaybackConfig,
     PlaybackDevice,
+    PlaybackOutputMode,
     VoiceConfig,
     VoiceState,
     get_playback_info,
     get_voice_status,
+    list_hrtf_profiles,
     list_playback_devices,
     open_playback,
     play,
@@ -63,13 +65,28 @@ def main() -> None:
     selected_device = _select_device(devices, requested_name)
 
     # PlaybackConfig describes preferences requested when creating the OpenAL
-    # context. The resulting PlaybackInfo reports what the backend actually did.
-    config = PlaybackConfig(hrtf=True)
+    # context. Optional extension requests are ignored when unsupported. The
+    # resulting PlaybackInfo reports what the backend actually did.
+    hrtf_profiles = list_hrtf_profiles(selected_device)
+    config = PlaybackConfig(
+        sample_rate=48_000,
+        max_auxiliary_sends=2,
+        hrtf=True,
+        hrtf_name=hrtf_profiles[0] if hrtf_profiles else None,
+        output_limiter=True,
+        output_mode=PlaybackOutputMode.STEREO_HRTF,
+    )
     with open_playback(selected_device, config=config) as playback:
         info = get_playback_info(playback)
         print(f"Opened: {info.device_name}")
         print(f"Renderer: {info.renderer}")
         print(f"OpenAL: {info.version}")
+        print(f"Sample rate: {info.sample_rate} Hz")
+        print(
+            f"Output mode: {info.output_mode.value if info.output_mode else 'unknown'}"
+        )
+        print(f"Output limiter: {info.output_limiter}")
+        print(f"Auxiliary sends per source: {info.max_auxiliary_sends}")
         print(f"HRTF: {info.hrtf_status.value}")
         if info.hrtf_name is not None:
             print(f"HRTF profile: {info.hrtf_name}")

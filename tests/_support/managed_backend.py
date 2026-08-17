@@ -300,11 +300,21 @@ class FakeALC:
             "ALC_ENUMERATE_ALL_EXT",
             "ALC_EXT_EFX",
             "ALC_SOFT_HRTF",
+            "ALC_SOFT_output_limiter",
+            "ALC_SOFT_output_mode",
         }
+        self.sample_rate = 48_000
+        self.refresh_rate = 94
+        self.synchronous = False
+        self.mono_sources = 255
+        self.stereo_sources = 1
         self.max_auxiliary_sends = 2
         self.string_list_queries: list[int] = []
         self.hrtf_status = bindings.ALC_HRTF_ENABLED_SOFT
         self.hrtf_name: str | None = "Built-in HRTF"
+        self.hrtf_profiles = ("Built-in HRTF", "Studio HRTF", "Gaming HRTF")
+        self.output_limiter = True
+        self.output_mode = bindings.ALC_STEREO_SOFT
         self.connected = True
         self.error = bindings.ALC_NO_ERROR
         self.string_list_error = bindings.ALC_NO_ERROR
@@ -361,13 +371,36 @@ class FakeALC:
     ) -> tuple[int, ...]:
         assert device is self.device
         assert size == 1
+        if parameter == bindings.ALC_FREQUENCY:
+            return (self.sample_rate,)
+        if parameter == bindings.ALC_REFRESH:
+            return (self.refresh_rate,)
+        if parameter == bindings.ALC_SYNC:
+            return (int(self.synchronous),)
+        if parameter == bindings.ALC_MONO_SOURCES:
+            return (self.mono_sources,)
+        if parameter == bindings.ALC_STEREO_SOURCES:
+            return (self.stereo_sources,)
         if parameter == bindings.ALC_CONNECTED:
             return (int(self.connected),)
         if parameter == bindings.ALC_MAX_AUXILIARY_SENDS:
             return (self.max_auxiliary_sends,)
+        if parameter == bindings.ALC_OUTPUT_LIMITER_SOFT:
+            return (int(self.output_limiter),)
+        if parameter == bindings.ALC_OUTPUT_MODE_SOFT:
+            return (self.output_mode,)
+        if parameter == bindings.ALC_NUM_HRTF_SPECIFIERS_SOFT:
+            return (len(self.hrtf_profiles),)
         assert parameter == bindings.ALC_HRTF_STATUS_SOFT
         self.error = self.hrtf_query_error
         return (self.hrtf_status,)
+
+    def get_stringi_soft(
+        self, device: object, parameter: int, index: int
+    ) -> str | None:
+        assert device is self.device
+        assert parameter == bindings.ALC_HRTF_SPECIFIER_SOFT
+        return self.hrtf_profiles[index]
 
     def create_context(
         self, device: object, attributes: tuple[int, ...] | None
@@ -393,10 +426,14 @@ class FakeLibrary:
         self.al = FakeAL()
         self.alc = FakeALC()
         self._context_lock = RLock()
+        self.invalidated_devices: list[object] = []
         self.al_extensions = {
             "AL_SOFT_direct_channels",
             "AL_SOFT_source_spatialize",
         }
+
+    def _invalidate_device_extensions(self, device: object) -> None:
+        self.invalidated_devices.append(device)
 
     def is_al_extension_present(self, extension: str) -> bool:
         return extension in self.al_extensions
