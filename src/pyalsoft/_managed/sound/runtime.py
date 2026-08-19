@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from contextlib import suppress
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from threading import RLock
 
@@ -17,8 +18,10 @@ from pyalsoft._managed.playback.session import (
     _set_acoustics,
     _set_listener,
     close_playback,
+    defer_updates,
     open_playback,
 )
+from pyalsoft._managed.playback.source_controls import _validate_playback_timing
 from pyalsoft._managed.playback.voices import (
     _create_voice,
     _play_voice,
@@ -216,6 +219,9 @@ class _DefaultRuntime:
         *,
         offset_seconds: float = 0.0,
         offset_frames: int | None = None,
+        delay_seconds: float = 0.0,
+        delay_frames: int | None = None,
+        start_time_ns: int | None = None,
         start: bool,
     ) -> Voice:
         playback = self._opened_playback()
@@ -227,6 +233,9 @@ class _DefaultRuntime:
                 record.config,
                 offset_seconds=offset_seconds,
                 offset_frames=offset_frames,
+                delay_seconds=delay_seconds,
+                delay_frames=delay_frames,
+                start_time_ns=start_time_ns,
                 start=start,
             )
         except BaseException:
@@ -297,12 +306,18 @@ class _DefaultRuntime:
         *,
         offset_seconds: float = 0.0,
         offset_frames: int | None = None,
+        delay_seconds: float = 0.0,
+        delay_frames: int | None = None,
+        start_time_ns: int | None = None,
         start: bool,
     ) -> None:
         record.voice = self._create_replacement_voice(
             record,
             offset_seconds=offset_seconds,
             offset_frames=offset_frames,
+            delay_seconds=delay_seconds,
+            delay_frames=delay_frames,
+            start_time_ns=start_time_ns,
             start=start,
         )
         record.final_status = None
@@ -350,9 +365,15 @@ class _DefaultRuntime:
         *,
         offset_seconds: float = 0.0,
         offset_frames: int | None = None,
+        delay_seconds: float = 0.0,
+        delay_frames: int | None = None,
+        start_time_ns: int | None = None,
     ) -> PlayingSound:
         if not isinstance(config, VoiceConfig):
             raise TypeError("config must be a VoiceConfig")
+        delay_seconds, delay_frames, start_time_ns = _validate_playback_timing(
+            delay_seconds, delay_frames, start_time_ns
+        )
         direct_channels = _uses_direct_channels(config)
         normalized = (
             None if isinstance(sound, PCM) else Path(sound).expanduser().resolve()
@@ -400,6 +421,9 @@ class _DefaultRuntime:
                     config,
                     offset_seconds=offset_seconds,
                     offset_frames=offset_frames,
+                    delay_seconds=delay_seconds,
+                    delay_frames=delay_frames,
+                    start_time_ns=start_time_ns,
                 )
             except BaseException:
                 if isinstance(sound, PCM):
@@ -543,14 +567,36 @@ class _DefaultRuntime:
             rewind(self._opened_playback(), record.voice)
             record.end_reason = None
 
-    def restart(self, record: _SoundRecord) -> None:
+    def restart(
+        self,
+        record: _SoundRecord,
+        *,
+        delay_seconds: float = 0.0,
+        delay_frames: int | None = None,
+        start_time_ns: int | None = None,
+    ) -> None:
         with self._lock:
             self._require_open()
+            delay_seconds, delay_frames, start_time_ns = _validate_playback_timing(
+                delay_seconds, delay_frames, start_time_ns
+            )
             status = self._status(record)
             if status.state is VoiceState.STOPPED:
-                self._replace_terminal_voice(record, start=True)
+                self._replace_terminal_voice(
+                    record,
+                    delay_seconds=delay_seconds,
+                    delay_frames=delay_frames,
+                    start_time_ns=start_time_ns,
+                    start=True,
+                )
                 return
-            restart(self._opened_playback(), record.voice)
+            restart(
+                self._opened_playback(),
+                record.voice,
+                delay_seconds=delay_seconds,
+                delay_frames=delay_frames,
+                start_time_ns=start_time_ns,
+            )
             record.end_reason = None
 
     def set_config(self, record: _SoundRecord, config: VoiceConfig) -> None:
@@ -673,6 +719,15 @@ class _DefaultRuntime:
         with self._lock:
             _set_acoustics(self._ensure_playback(), acoustics)
             self._acoustics = acoustics
+
+    @contextmanager
+    def defer_updates(self) -> Iterator[None]:
+        """Defer OpenAL updates for the runtime's current playback."""
+
+        with self._lock:
+            playback = self._ensure_playback()
+        with defer_updates(playback):
+            yield
 
     def close(self) -> None:
         with self._lock:

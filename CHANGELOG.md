@@ -2,6 +2,17 @@
 
 Notable user-facing changes to PyALSoft are documented here.
 
+## Unreleased
+
+### Added
+
+- Added managed delayed and device-clock-scheduled voice and stream starts
+  through `play()`, `restart()`, and `start_stream()`, including convenience
+  `PlayingSound` support. (@BDraves)
+- Added nested `defer_updates()` transactions for applying listener, source,
+  effect, play, and pause changes together across explicit sessions and the
+  convenience runtime. (@BDraves)
+
 ## 1.4.0 - 2026.08.16
 
 ### Added

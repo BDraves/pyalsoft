@@ -5,6 +5,7 @@ from __future__ import annotations
 from math import pi
 
 from pyalsoft import bindings
+from pyalsoft._managed._values import _finite_float
 from pyalsoft._managed.errors import AudioBackendError
 from pyalsoft._managed.playback.session import (
     _DISTANCE_MODEL_TO_AL,
@@ -36,6 +37,8 @@ _STEREO_MODE_TO_AL = {
     StereoMode.SUPER_STEREO: bindings.AL_SUPER_STEREO_SOFT,
 }
 _DEFAULT_STEREO_ANGLES = (pi / 6.0, -pi / 6.0)
+_MAX_DELAY_FRAMES = 1 << 31
+_AL_INT64_MAX = (1 << 63) - 1
 
 
 def _require_al_extension(playback: Playback, extension: str, feature: str) -> None:
@@ -46,6 +49,62 @@ def _require_al_extension(playback: Playback, extension: str, feature: str) -> N
 def _require_alc_extension(playback: Playback, extension: str, feature: str) -> None:
     if not playback._library.alc.is_extension_present(playback._device, extension):
         raise AudioBackendError(f"{feature} requires the {extension} extension")
+
+
+def _validate_playback_timing(
+    delay_seconds: float,
+    delay_frames: int | None,
+    start_time_ns: int | None,
+) -> tuple[float, int | None, int | None]:
+    delay_seconds = _finite_float("delay_seconds", delay_seconds)
+    if delay_seconds < 0.0:
+        raise ValueError("delay_seconds cannot be negative")
+    if delay_frames is not None:
+        if isinstance(delay_frames, bool) or not isinstance(delay_frames, int):
+            raise TypeError("delay_frames must be an integer or None")
+        if delay_frames < 0:
+            raise ValueError("delay_frames cannot be negative")
+        if delay_frames > _MAX_DELAY_FRAMES:
+            raise ValueError(f"delay_frames cannot exceed {_MAX_DELAY_FRAMES}")
+        if delay_seconds != 0.0:
+            raise ValueError("delay_seconds and delay_frames cannot both be set")
+    if start_time_ns is not None:
+        if isinstance(start_time_ns, bool) or not isinstance(start_time_ns, int):
+            raise TypeError("start_time_ns must be an integer or None")
+        if not 0 <= start_time_ns <= _AL_INT64_MAX:
+            raise ValueError(f"start_time_ns must be between 0 and {_AL_INT64_MAX}")
+    return delay_seconds, delay_frames, start_time_ns
+
+
+def _require_source_start_delay(playback: Playback, feature: str) -> None:
+    _require_al_extension(playback, "AL_SOFT_source_start_delay", feature)
+
+
+def _apply_start_delay(
+    playback: Playback,
+    identifier: int,
+    delay_seconds: float,
+    delay_frames: int | None,
+) -> None:
+    if delay_seconds == 0.0 and not delay_frames:
+        return
+    _require_source_start_delay(playback, "delayed playback")
+    if delay_frames is not None:
+        playback._library.al.sourcei(
+            identifier, bindings.AL_SAMPLE_OFFSET, -delay_frames
+        )
+    else:
+        playback._library.al.sourcef(identifier, bindings.AL_SEC_OFFSET, -delay_seconds)
+
+
+def _start_source(
+    playback: Playback, identifier: int, start_time_ns: int | None
+) -> None:
+    if start_time_ns is None:
+        playback._library.al.source_play(identifier)
+        return
+    _require_source_start_delay(playback, "scheduled playback")
+    playback._library.al.source_play_at_time_soft(identifier, start_time_ns)
 
 
 def _resamplers(playback: Playback) -> tuple[Resampler, ...]:

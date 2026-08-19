@@ -57,6 +57,7 @@ class Playback:
         "_closed",
         "_config",
         "_context",
+        "_deferred_update_depth",
         "_device",
         "_library",
         "_lock",
@@ -86,6 +87,7 @@ class Playback:
         self._device = device
         self._context = context
         self._config = config
+        self._deferred_update_depth = 0
         self._previous_context = previous_context
         self._previous_playback = previous_playback
         self._source_distance_model_enabled = False
@@ -144,6 +146,60 @@ def _playback_operation(playback: Playback) -> Iterator[None]:
     with playback._library._context_lock, playback._lock:
         _require_playback(playback)
         yield
+
+
+@contextmanager
+def defer_updates(playback: Playback) -> Iterator[None]:
+    """Batch audible playback changes and apply them together.
+
+    Audio continues rendering while the context is active. Listener, source,
+    effect-slot, play, and pause changes made inside the block remain pending
+    until the outermost block exits. Nested blocks are supported and commit only
+    when the outermost block exits.
+
+    Args:
+        playback: Explicit playback session whose updates should be batched.
+
+    Raises:
+        TypeError: ``playback`` is not a [`Playback`][pyalsoft.Playback].
+        PlaybackClosedError: ``playback`` is closed.
+        AudioBackendError: The backend lacks ``AL_SOFT_deferred_updates`` or
+            cannot begin or commit the update batch.
+    """
+
+    with _playback_operation(playback):
+        if playback._deferred_update_depth == 0:
+            _prepare_al(playback)
+            if not playback._library.is_al_extension_present(
+                "AL_SOFT_deferred_updates"
+            ):
+                raise AudioBackendError(
+                    "deferred updates require the AL_SOFT_deferred_updates extension"
+                )
+            playback._library.al.defer_updates_soft()
+            _check_al_error(playback, "defer playback updates")
+        playback._deferred_update_depth += 1
+
+    body_error: BaseException | None = None
+    try:
+        yield
+    except BaseException as error:
+        body_error = error
+        raise
+    finally:
+        try:
+            with _playback_operation(playback):
+                playback._deferred_update_depth -= 1
+                if playback._deferred_update_depth == 0:
+                    _prepare_al(playback)
+                    playback._library.al.process_updates_soft()
+                    _check_al_error(playback, "process deferred playback updates")
+        except Exception as error:
+            if body_error is None:
+                raise
+            body_error.add_note(
+                f"processing deferred playback updates also failed: {error}"
+            )
 
 
 def _same_context(left: object | None, right: object | None) -> bool:

@@ -31,6 +31,10 @@ class FakeAL:
         self.offsets: dict[int, float] = {}
         self.frame_offsets: dict[int, int] = {}
         self.play_calls: list[int] = []
+        self.scheduled_play_calls: list[tuple[int, int]] = []
+        self.defer_update_calls = 0
+        self.process_update_calls = 0
+        self.updates_deferred = False
         self.sample_offset_calls: list[tuple[int, int]] = []
         self.source_property_calls: list[tuple[int, int]] = []
         self.listener: dict[int, object] = {}
@@ -216,6 +220,18 @@ class FakeAL:
         if self.states[identifier] == bindings.AL_STOPPED:
             self.processed[identifier] = 0
         self.states[identifier] = bindings.AL_PLAYING
+
+    def source_play_at_time_soft(self, identifier: int, start_time: int) -> None:
+        self.scheduled_play_calls.append((identifier, start_time))
+        self.source_play(identifier)
+
+    def defer_updates_soft(self) -> None:
+        self.defer_update_calls += 1
+        self.updates_deferred = True
+
+    def process_updates_soft(self) -> None:
+        self.process_update_calls += 1
+        self.updates_deferred = False
 
     def source_pause(self, identifier: int) -> None:
         self.states[identifier] = bindings.AL_PAUSED
@@ -526,6 +542,8 @@ class FakeLibrary:
             "AL_SOFT_direct_channels",
             "AL_SOFT_direct_channels_remix",
             "AL_SOFT_source_latency",
+            "AL_SOFT_source_start_delay",
+            "AL_SOFT_deferred_updates",
             "AL_SOFT_source_resampler",
             "AL_SOFT_source_spatialize",
             "AL_SOFT_UHJ",

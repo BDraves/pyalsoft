@@ -13,7 +13,7 @@ class VoiceState(Enum):
 
     Attributes:
         INITIAL: Ready to play from the beginning.
-        PLAYING: Currently advancing through the clip.
+        PLAYING: Playing, including while waiting for a scheduled start time.
         PAUSED: Paused at the current playhead position.
         STOPPED: Finished naturally or explicitly stopped.
     """
@@ -295,8 +295,10 @@ class VoiceStatus:
 
     Attributes:
         state: Current OpenAL playback state.
-        offset_seconds: Current playhead position in source-audio seconds.
+        offset_seconds: Current playhead position in source-audio seconds. This
+            is negative while consuming an initial playback delay.
         offset_frames: Current playhead position as an exact sample-frame index.
+            This is negative while consuming an initial playback delay.
     """
 
     state: VoiceState

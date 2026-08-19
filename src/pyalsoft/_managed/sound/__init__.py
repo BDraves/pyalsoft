@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import atexit
-from contextlib import nullcontext, suppress
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext, suppress
 from os import PathLike
 from pathlib import Path
 from threading import RLock
@@ -19,6 +20,7 @@ from pyalsoft._managed.playback.session import (
     _set_acoustics,
     _set_listener,
 )
+from pyalsoft._managed.playback.session import defer_updates as _defer_updates
 from pyalsoft._managed.playback.voices import (
     _play_voice,
     _voice_config_with_overrides,
@@ -46,6 +48,7 @@ from pyalsoft._managed.spatial import (
 __all__ = [
     "PlayingSound",
     "clear_sound_cache",
+    "defer_updates",
     "get_acoustics",
     "get_listener",
     "get_sound_cache_info",
@@ -69,6 +72,36 @@ def _get_default_runtime() -> _DefaultRuntime:
         if _default_runtime is None:
             _default_runtime = _DefaultRuntime()
         return _default_runtime
+
+
+@contextmanager
+def defer_updates(playback: Playback | None = None) -> Iterator[None]:
+    """Batch playback changes and make them audible together.
+
+    Pass an explicit session, or omit ``playback`` to use the convenience
+    runtime. Audio continues rendering with its previous state inside the block;
+    pending listener, source, effect, play, and pause changes are committed when
+    the outermost block exits. Nested blocks are supported.
+
+    Args:
+        playback: Explicit session to update. ``None`` selects the convenience
+            runtime and opens it if necessary.
+
+    Raises:
+        TypeError: ``playback`` is neither a [`Playback`][pyalsoft.Playback] nor
+            ``None``.
+        PlaybackClosedError: The explicit session is closed.
+        PlaybackOpenError: The convenience runtime cannot open an audio session.
+        AudioBackendError: The backend lacks ``AL_SOFT_deferred_updates`` or
+            cannot begin or commit the update batch.
+    """
+
+    if playback is None:
+        with _get_default_runtime().defer_updates():
+            yield
+        return
+    with _defer_updates(playback):
+        yield
 
 
 def set_sound_cache_limit(max_bytes: int | None) -> None:
@@ -385,6 +418,9 @@ def play(
     effect_sends: tuple[EffectSend, ...] | list[EffectSend] | None = None,
     offset_seconds: float = 0.0,
     offset_frames: int | None = None,
+    delay_seconds: float = 0.0,
+    delay_frames: int | None = None,
+    start_time_ns: int | None = None,
     spatialize: bool | None = None,
     direct_channels: DirectChannelsMode | bool | None = None,
 ) -> Voice: ...
@@ -424,6 +460,9 @@ def play(
     effect_sends: tuple[EffectSend, ...] | list[EffectSend] | None = None,
     offset_seconds: float = 0.0,
     offset_frames: int | None = None,
+    delay_seconds: float = 0.0,
+    delay_frames: int | None = None,
+    start_time_ns: int | None = None,
     spatialize: bool | None = None,
     direct_channels: DirectChannelsMode | bool | None = None,
 ) -> PlayingSound: ...
@@ -462,6 +501,9 @@ def play(
     effect_sends: tuple[EffectSend, ...] | list[EffectSend] | None = None,
     offset_seconds: float = 0.0,
     offset_frames: int | None = None,
+    delay_seconds: float = 0.0,
+    delay_frames: int | None = None,
+    start_time_ns: int | None = None,
     spatialize: bool | None = None,
     direct_channels: DirectChannelsMode | bool | None = None,
 ) -> Voice | PlayingSound:
@@ -522,6 +564,13 @@ def play(
             non-negative and less than the source duration.
         offset_frames: Exact initial sample-frame index. When provided,
             ``offset_seconds`` must remain 0.0.
+        delay_seconds: Initial silence in source-audio seconds. Pitch and Doppler
+            affect its real-time duration. Cannot be combined with an initial
+            offset.
+        delay_frames: Exact number of silent sample frames. When provided,
+            ``delay_seconds`` must remain 0.0 and no initial offset may be set.
+        start_time_ns: Absolute audio-device clock time in nanoseconds. ``None``
+            starts as soon as possible. A past time also starts immediately.
         spatialize: ``True`` forces spatial rendering, ``False`` disables it,
             and ``None`` leaves the decision to OpenAL based on the source
             format.
@@ -536,7 +585,7 @@ def play(
 
     Raises:
         TypeError: The call form or an argument has the wrong type.
-        ValueError: A configuration or initial offset is invalid.
+        ValueError: A configuration, initial offset, or playback timing is invalid.
         AudioFileError: A WAV file cannot be read or has an unsupported format.
         PlaybackOpenError: The convenience runtime cannot open an audio session.
         PlaybackClosedError: The explicit session is closed.
@@ -593,6 +642,9 @@ def play(
             resolved_config,
             offset_seconds=offset_seconds,
             offset_frames=offset_frames,
+            delay_seconds=delay_seconds,
+            delay_frames=delay_frames,
+            start_time_ns=start_time_ns,
         )
     if clip is not None:
         raise TypeError("clip is only valid with an explicit Playback")
@@ -603,6 +655,9 @@ def play(
         resolved_config,
         offset_seconds=offset_seconds,
         offset_frames=offset_frames,
+        delay_seconds=delay_seconds,
+        delay_frames=delay_frames,
+        start_time_ns=start_time_ns,
     )
 
 

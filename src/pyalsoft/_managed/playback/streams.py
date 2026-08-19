@@ -32,7 +32,12 @@ from pyalsoft._managed.playback.session import (
     _require_playback,
     _serialized_playback,
 )
-from pyalsoft._managed.playback.source_controls import _validate_source_layout
+from pyalsoft._managed.playback.source_controls import (
+    _apply_start_delay,
+    _start_source,
+    _validate_playback_timing,
+    _validate_source_layout,
+)
 from pyalsoft._managed.resources import (
     Stream,
     StreamState,
@@ -298,19 +303,35 @@ def try_write_stream(
 
 
 @_serialized_playback
-def start_stream(playback: Playback, stream: Stream) -> None:
-    """Start a primed stream for the first and only time.
+def start_stream(
+    playback: Playback,
+    stream: Stream,
+    *,
+    delay_seconds: float = 0.0,
+    delay_frames: int | None = None,
+    start_time_ns: int | None = None,
+) -> None:
+    """Start a primed stream immediately, after silence, or at a device time.
 
     Args:
         playback: Session that owns ``stream``.
         stream: Initial stream with at least one queued chunk.
+        delay_seconds: Initial silence in source-audio seconds. Pitch and Doppler
+            affect its real-time duration.
+        delay_frames: Exact number of silent sample frames. When provided,
+            ``delay_seconds`` must remain 0.0.
+        start_time_ns: Absolute audio-device clock time in nanoseconds. ``None``
+            starts as soon as possible.
 
     Raises:
+        TypeError: A timing argument has the wrong type.
+        ValueError: A delay or device-clock time is invalid.
         InvalidHandleError: ``stream`` is released or belongs to another session.
         InvalidVoiceStateError: The stream was already started or has no queued
             audio.
         PlaybackClosedError: ``playback`` is closed.
-        AudioBackendError: OpenAL cannot start playback.
+        AudioBackendError: OpenAL cannot start playback or the requested timing
+            feature is unavailable.
     """
 
     record = _stream_record(playback, stream)
@@ -320,8 +341,12 @@ def start_stream(playback: Playback, stream: Stream) -> None:
         )
     if not record.queued_chunks:
         raise InvalidVoiceStateError("cannot start a stream without a queued chunk")
+    delay_seconds, delay_frames, start_time_ns = _validate_playback_timing(
+        delay_seconds, delay_frames, start_time_ns
+    )
     _prepare_al(playback)
-    playback._library.al.source_play(record.identifier)
+    _apply_start_delay(playback, record.identifier, delay_seconds, delay_frames)
+    _start_source(playback, record.identifier, start_time_ns)
     _check_al_error(playback, "start stream")
     record.state = StreamState.PLAYING
 

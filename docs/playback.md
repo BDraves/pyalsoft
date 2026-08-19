@@ -243,6 +243,51 @@ fixed-point value as `offset_frames_fixed`; clock and latency values remain
 integer nanoseconds. The `offset_frames`, `offset_seconds`, and corresponding
 `*_seconds` properties provide convenient floating-point conversions.
 
+Use `delay_seconds` or `delay_frames` to prepend source-timeline silence:
+
+```python
+delayed = play(playback, clip, delay_seconds=0.25)
+```
+
+This delay is processed as silent source samples, so pitch and Doppler change
+its real-time duration. While the silence is consumed, the voice is `PLAYING`
+and its offset is negative. A delay cannot be combined with `offset_seconds` or
+`offset_frames`. Both delay values must be non-negative, and `delay_frames`
+cannot exceed `2**31`.
+
+For a precise wall-clock start, schedule against the audio-device clock:
+
+```python
+clock = get_playback_clock(playback)
+start_time_ns = clock.device_time_ns + 500_000_000
+scheduled = play(playback, clip, start_time_ns=start_time_ns)
+```
+
+`start_time_ns` is an absolute device-clock value. A timestamp that has already
+passed starts immediately. `restart()`, `PlayingSound.restart()`, and
+`start_stream()` accept the same delay and scheduling keywords. These operations
+require `AL_SOFT_source_start_delay`; clock queries additionally require
+`ALC_SOFT_device_clock`.
+
+## Apply playback changes together
+
+Use `defer_updates()` when several listener, source, effect, play, or pause
+changes must become audible together:
+
+```python
+from pyalsoft import Listener, VoiceConfig, defer_updates, set_listener
+from pyalsoft import set_voice_config
+
+with defer_updates(playback):
+    set_listener(playback, Listener(position=(1.0, 0.0, 0.0)))
+    set_voice_config(playback, voice, VoiceConfig(gain=0.5))
+```
+
+Audio continues rendering with the previous state inside the block, then all
+pending changes are processed when the outermost block exits. Nested blocks are
+safe. Omit `playback` to batch changes made through the convenience runtime.
+This feature requires `AL_SOFT_deferred_updates`.
+
 ## Configure the listener
 
 The default runtime's listener and global distance and Doppler behavior can be

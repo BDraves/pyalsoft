@@ -100,6 +100,7 @@ from pyalsoft._managed.resources import (
 from pyalsoft._managed.sound import (
     PlayingSound,
     clear_sound_cache,
+    defer_updates,
     get_acoustics,
     get_listener,
     get_sound_cache_info,
@@ -194,6 +195,7 @@ __all__ = [
     "bindings",
     "clear_sound_cache",
     "close_playback",
+    "defer_updates",
     "finish_stream",
     "get_acoustics",
     "get_listener",

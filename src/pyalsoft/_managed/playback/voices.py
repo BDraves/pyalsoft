@@ -42,7 +42,13 @@ from pyalsoft._managed.playback.session import (
     _require_playback,
     _serialized_playback,
 )
-from pyalsoft._managed.playback.source_controls import _validate_source_layout
+from pyalsoft._managed.playback.source_controls import (
+    _apply_start_delay,
+    _require_source_start_delay,
+    _start_source,
+    _validate_playback_timing,
+    _validate_source_layout,
+)
 from pyalsoft._managed.playback.streams import _stream_record
 from pyalsoft._managed.resources import (
     Clip,
@@ -276,6 +282,9 @@ def _create_voice(
     *,
     offset_seconds: float = 0.0,
     offset_frames: int | None = None,
+    delay_seconds: float = 0.0,
+    delay_frames: int | None = None,
+    start_time_ns: int | None = None,
     start: bool = True,
 ) -> Voice:
     """Create one configured static voice and optionally start it."""
@@ -284,11 +293,20 @@ def _create_voice(
         raise TypeError("config must be a VoiceConfig")
     if not isinstance(start, bool):
         raise TypeError("start must be a boolean")
+    delay_seconds, delay_frames, start_time_ns = _validate_playback_timing(
+        delay_seconds, delay_frames, start_time_ns
+    )
+    if not start and start_time_ns is not None:
+        raise ValueError("start_time_ns requires start=True")
     _validate_source_layout(config, clip.info.channels)
     clip_identifier = _clip_identifier(playback, clip)
     offset_seconds, offset_frames = _validate_offsets(
         clip.info, offset_seconds, offset_frames
     )
+    if (delay_seconds != 0.0 or delay_frames is not None) and (
+        offset_seconds != 0.0 or offset_frames is not None
+    ):
+        raise ValueError("initial offset and playback delay cannot both be set")
     _prepare_al(playback)
     identifiers = playback._library.al.gen_sources()
     if len(identifiers) != 1:
@@ -307,13 +325,14 @@ def _create_voice(
             playback._library.al.sourcef(
                 identifier, bindings.AL_SEC_OFFSET, offset_seconds
             )
+        _apply_start_delay(playback, identifier, delay_seconds, delay_frames)
         efx = _install_efx_resources(
             playback,
             identifier,
             config,
         )
         if start:
-            playback._library.al.source_play(identifier)
+            _start_source(playback, identifier, start_time_ns)
         _check_al_error(playback, "play voice" if start else "create voice")
     except Exception:
         _clear_al_errors(playback)
@@ -343,6 +362,9 @@ def _play_voice(
     *,
     offset_seconds: float = 0.0,
     offset_frames: int | None = None,
+    delay_seconds: float = 0.0,
+    delay_frames: int | None = None,
+    start_time_ns: int | None = None,
 ) -> Voice:
     """Create and immediately play one voice using a clip."""
 
@@ -352,6 +374,9 @@ def _play_voice(
         config,
         offset_seconds=offset_seconds,
         offset_frames=offset_frames,
+        delay_seconds=delay_seconds,
+        delay_frames=delay_frames,
+        start_time_ns=start_time_ns,
         start=True,
     )
 
@@ -554,23 +579,45 @@ def rewind(playback: Playback, voice: Voice) -> None:
 
 
 @_serialized_playback
-def restart(playback: Playback, voice: Voice) -> None:
-    """Rewind a static voice and immediately start it playing.
+def restart(
+    playback: Playback,
+    voice: Voice,
+    *,
+    delay_seconds: float = 0.0,
+    delay_frames: int | None = None,
+    start_time_ns: int | None = None,
+) -> None:
+    """Rewind a static voice and start it immediately or at a future time.
 
     Args:
         playback: Session that owns ``voice``.
         voice: Live static voice to restart.
+        delay_seconds: Initial silence in source-audio seconds. Pitch and Doppler
+            affect its real-time duration.
+        delay_frames: Exact number of silent sample frames. When provided,
+            ``delay_seconds`` must remain 0.0.
+        start_time_ns: Absolute audio-device clock time in nanoseconds. ``None``
+            starts as soon as possible.
 
     Raises:
+        TypeError: A timing argument has the wrong type.
+        ValueError: A delay or device-clock time is invalid.
         InvalidHandleError: ``voice`` is released or belongs to another session.
         PlaybackClosedError: ``playback`` is closed.
-        AudioBackendError: OpenAL cannot rewind or play the voice.
+        AudioBackendError: OpenAL cannot rewind or play the voice, or the requested
+            timing feature is unavailable.
     """
 
     identifier = _voice_identifier(playback, voice)
+    delay_seconds, delay_frames, start_time_ns = _validate_playback_timing(
+        delay_seconds, delay_frames, start_time_ns
+    )
     _prepare_al(playback)
+    if delay_seconds != 0.0 or delay_frames or start_time_ns is not None:
+        _require_source_start_delay(playback, "timed playback")
     playback._library.al.source_rewind(identifier)
-    playback._library.al.source_play(identifier)
+    _apply_start_delay(playback, identifier, delay_seconds, delay_frames)
+    _start_source(playback, identifier, start_time_ns)
     _check_al_error(playback, "restart voice")
 
 

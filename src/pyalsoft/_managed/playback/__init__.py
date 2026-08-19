@@ -3,6 +3,7 @@
 from pyalsoft._managed.playback.session import (
     Playback,
     close_playback,
+    defer_updates,
     get_playback_config,
     get_playback_info,
     list_hrtf_profiles,
@@ -39,6 +40,7 @@ from pyalsoft._managed.playback.voices import (
 __all__ = [
     "Playback",
     "close_playback",
+    "defer_updates",
     "finish_stream",
     "get_playback_config",
     "get_playback_info",

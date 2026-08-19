@@ -84,7 +84,7 @@ class PlayingSound:
 
     @property
     def playing(self) -> bool:
-        """Whether the sound is currently playing."""
+        """Whether the sound is playing or waiting for a scheduled start."""
 
         return self.state is VoiceState.PLAYING
 
@@ -120,13 +120,13 @@ class PlayingSound:
 
     @property
     def offset_seconds(self) -> float:
-        """Current playhead position in seconds of source audio."""
+        """Source-audio position, negative while consuming an initial delay."""
 
         return self.status.offset_seconds
 
     @property
     def offset_frames(self) -> int:
-        """Current playhead position as an exact sample-frame offset."""
+        """Sample-frame position, negative while consuming an initial delay."""
 
         return self.status.offset_frames
 
@@ -548,16 +548,39 @@ class PlayingSound:
 
         self._runtime.rewind(self._record)
 
-    def restart(self) -> None:
-        """Start the sound again from its beginning.
+    def restart(
+        self,
+        *,
+        delay_seconds: float = 0.0,
+        delay_frames: int | None = None,
+        start_time_ns: int | None = None,
+    ) -> None:
+        """Start the sound again from its beginning, optionally with timing.
 
         A terminal sound receives a new voice and becomes active again.
 
+        Args:
+            delay_seconds: Initial silence in source-audio seconds. Pitch and
+                Doppler affect its real-time duration.
+            delay_frames: Exact number of silent sample frames. When provided,
+                ``delay_seconds`` must remain 0.0.
+            start_time_ns: Absolute audio-device clock time in nanoseconds.
+                ``None`` starts as soon as possible.
+
         Raises:
+            TypeError: A timing argument has the wrong type.
+            ValueError: A delay or device-clock time is invalid.
             InvalidVoiceStateError: The convenience runtime has been shut down.
+            AudioBackendError: OpenAL cannot restart the sound or the requested
+                timing feature is unavailable.
         """
 
-        self._runtime.restart(self._record)
+        self._runtime.restart(
+            self._record,
+            delay_seconds=delay_seconds,
+            delay_frames=delay_frames,
+            start_time_ns=start_time_ns,
+        )
 
     def set_config(self, config: VoiceConfig) -> None:
         """Apply a complete immutable voice configuration.
