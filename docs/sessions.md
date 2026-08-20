@@ -30,6 +30,30 @@ state; sessions on independent library instances may proceed concurrently.
 progress and makes later operations fail with
 [`PlaybackClosedError`][pyalsoft.PlaybackClosedError].
 
+## Loop regions
+
+Pass a frame range to [`upload()`][pyalsoft.upload] to repeat only part of a
+static clip. The start frame is inclusive and the end frame is exclusive:
+
+```python
+from pyalsoft import PCM, open_playback, play, upload
+
+pcm = PCM(samples, channels=1, sample_rate=44_100)
+
+with open_playback() as playback:
+    clip = upload(
+        playback,
+        pcm,
+        loop_points=(44_100, 88_200),
+    )
+    voice = play(playback, clip, looping=True)
+```
+
+Here the first second plays once, then frames 44,100 through 88,199 repeat.
+Loop points affect only voices with looping enabled. Omitting them loops the
+complete clip as before. A requested range must satisfy
+`0 <= start < end <= pcm.frame_count` and requires `AL_SOFT_loop_points`.
+
 ## Extension buffer formats
 
 [`PCM`][pyalsoft.PCM] supports unsigned 8-bit, signed 16-bit, float32, and
@@ -182,6 +206,7 @@ the context.
 
 See the runnable
 [`play_sine.py`](https://github.com/BDraves/pyalsoft/blob/development/examples/play_sine.py),
+[`loop_points.py`](https://github.com/BDraves/pyalsoft/blob/development/examples/loop_points.py),
 [`stream_sine.py`](https://github.com/BDraves/pyalsoft/blob/development/examples/stream_sine.py),
 and
 [`select_device_hrtf.py`](https://github.com/BDraves/pyalsoft/blob/development/examples/select_device_hrtf.py)

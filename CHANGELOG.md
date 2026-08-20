@@ -2,6 +2,13 @@
 
 Notable user-facing changes to PyALSoft are documented here.
 
+## Unreleased
+
+### Added
+
+- Added managed static-clip loop regions through `upload(loop_points=...)`,
+  backed by `AL_SOFT_loop_points`. (@BDraves)
+
 ## 1.5.0 - 2026.08.19
 
 ### Added

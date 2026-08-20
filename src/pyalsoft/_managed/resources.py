@@ -422,6 +422,7 @@ class Clip:
     _token: object = field(repr=False)
     _identifier: int = field(repr=False)
     _info: SoundInfo | BufferInfo = field(repr=False)
+    _loop_points: tuple[int, int] | None = field(repr=False)
 
     @property
     def info(self) -> SoundInfo | BufferInfo:
@@ -440,6 +441,16 @@ class Clip:
         """Number of sample frames in this clip."""
 
         return self.info.frame_count
+
+    @property
+    def loop_points(self) -> tuple[int, int] | None:
+        """Configured ``(start, end)`` loop-frame range, or ``None``.
+
+        The start frame is inclusive and the end frame is exclusive. When this
+        is ``None``, a looping voice repeats the complete clip.
+        """
+
+        return self._loop_points
 
     def __repr__(self) -> str:
         return "Clip(<opaque>)"

@@ -11,6 +11,7 @@ from pyalsoft._managed._backend import (
     _check_alc_error,
     _clear_alc_errors,
     _prepare_buffer_data,
+    _require_al_extension,
     _require_pcm_layout,
 )
 from pyalsoft._managed.audio import PCM, BufferData, BufferFormat, BufferInfo, SoundInfo
@@ -80,6 +81,8 @@ from pyalsoft._managed.spatial import (
     _sound_offset,
     _validate_offsets,
 )
+
+_ALINT_MAX = (1 << 31) - 1
 
 
 def _voice_config_with_overrides(
@@ -228,36 +231,75 @@ def _voice_clip_info(playback: Playback, voice: Voice) -> SoundInfo | BufferInfo
     return playback._clip_infos[clip_token]
 
 
+def _validate_loop_points(
+    loop_points: tuple[int, int] | None, frame_count: int
+) -> tuple[int, int] | None:
+    if loop_points is None:
+        return None
+    if not isinstance(loop_points, (tuple, list)):
+        raise TypeError("loop_points must be a two-item tuple or list, or None")
+    if len(loop_points) != 2:
+        raise ValueError("loop_points must contain exactly two frame indices")
+    start, end = loop_points
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) for value in (start, end)
+    ):
+        raise TypeError("loop point frame indices must be integers")
+    if not 0 <= start < end <= frame_count:
+        raise ValueError(f"loop points must satisfy 0 <= start < end <= {frame_count}")
+    if end > _ALINT_MAX:
+        raise ValueError(f"loop point frame indices must not exceed {_ALINT_MAX}")
+    return start, end
+
+
 @_serialized_playback
-def upload(playback: Playback, pcm: PCM | BufferData) -> Clip:
+def upload(
+    playback: Playback,
+    pcm: PCM | BufferData,
+    *,
+    loop_points: tuple[int, int] | None = None,
+) -> Clip:
     """Upload immutable audio data to a playback session.
 
     OpenAL copies the samples into a native buffer. The returned clip may be
     played more than once and remains owned by ``playback`` until it is released
-    explicitly or the session closes.
+    explicitly or the session closes. Optional loop points select the sample-frame
+    range repeated by voices that enable looping; the start frame is inclusive
+    and the end frame is exclusive.
 
     Args:
         playback: Open session that will own the clip.
         pcm: Complete PCM or exact-format buffer data to copy.
+        loop_points: Optional ``(start, end)`` loop-frame range. ``None`` makes
+            looping voices repeat the complete clip.
 
     Returns:
         An opaque clip identity for the uploaded audio.
 
     Raises:
         TypeError: ``pcm`` is not [`PCM`][pyalsoft.PCM] or
-            [`BufferData`][pyalsoft.BufferData].
+            [`BufferData`][pyalsoft.BufferData], or loop points are not integers.
+        ValueError: The loop-point range is empty or outside the clip.
         PlaybackClosedError: ``playback`` is closed.
-        AudioBackendError: OpenAL cannot allocate or populate the buffer.
+        AudioBackendError: OpenAL cannot allocate or populate the buffer, or
+            loop points were requested without ``AL_SOFT_loop_points`` support.
     """
 
     if not isinstance(pcm, (PCM, BufferData)):
         raise TypeError("pcm must be a PCM or BufferData value")
+    resolved_loop_points = _validate_loop_points(loop_points, pcm.frame_count)
     _prepare_al(playback)
     if isinstance(pcm, PCM):
         _require_pcm_layout(playback._library, pcm.channels, pcm.sample_type)
         native_format = _FORMAT_BY_LAYOUT[(pcm.channels, pcm.sample_type)]
     else:
         native_format = pcm.format.native_format
+    if resolved_loop_points is not None:
+        _require_al_extension(
+            playback._library,
+            "AL_SOFT_loop_points",
+            "clip loop points",
+        )
     identifiers = playback._library.al.gen_buffers()
     if len(identifiers) != 1:
         raise AudioBackendError("OpenAL did not create exactly one buffer")
@@ -272,6 +314,12 @@ def upload(playback: Playback, pcm: PCM | BufferData) -> Clip:
             pcm.samples,
             pcm.sample_rate,
         )
+        if resolved_loop_points is not None:
+            playback._library.al.bufferiv(
+                identifier,
+                bindings.AL_LOOP_POINTS_SOFT,
+                resolved_loop_points,
+            )
         _check_al_error(playback, "upload clip")
     except Exception:
         _clear_al_errors(playback)
@@ -281,7 +329,7 @@ def upload(playback: Playback, pcm: PCM | BufferData) -> Clip:
     token = object()
     playback._clips[token] = identifier
     playback._clip_infos[token] = pcm.info
-    return Clip(playback._token, token, identifier, pcm.info)
+    return Clip(playback._token, token, identifier, pcm.info, resolved_loop_points)
 
 
 @_serialized_playback

@@ -76,6 +76,7 @@ def test_managed_playback_applies_data_and_controls_lifecycle() -> None:
         assert clip.info == pcm.info
         assert clip.duration_seconds == 1.0
         assert clip.frame_count == 10
+        assert clip.loop_points is None
         assert get_listener(playback) == listener
         assert get_acoustics(playback) == acoustics
         assert library.al.listener[bindings.AL_ORIENTATION] == (
@@ -142,6 +143,71 @@ def test_failed_clip_upload_releases_the_native_buffer(
         assert caught.value is failure
         assert library.al.allocated_buffers == set()
         assert playback._clips == {}
+
+
+def test_upload_applies_loop_points_and_exposes_them_on_the_clip() -> None:
+    library = FakeLibrary()
+    pcm = PCM(b"\0\0" * 10, channels=1, sample_rate=10)
+
+    with open_playback(library=as_library(library)) as playback:
+        clip = upload(playback, pcm, loop_points=(2, 8))
+
+        assert clip.loop_points == (2, 8)
+        assert library.al.buffer_properties[1] == {bindings.AL_LOOP_POINTS_SOFT: (2, 8)}
+
+
+@pytest.mark.parametrize(
+    ("loop_points", "error", "message"),
+    [
+        ((1,), ValueError, "exactly two"),
+        ((1, 2, 3), ValueError, "exactly two"),
+        ((True, 2), TypeError, "must be integers"),
+        ((1.0, 2), TypeError, "must be integers"),
+        ((-1, 2), ValueError, "0 <= start < end <= 10"),
+        ((2, 2), ValueError, "0 <= start < end <= 10"),
+        ((8, 11), ValueError, "0 <= start < end <= 10"),
+    ],
+)
+def test_upload_validates_loop_points(
+    loop_points: object, error: type[Exception], message: str
+) -> None:
+    library = FakeLibrary()
+    pcm = PCM(b"\0\0" * 10, channels=1, sample_rate=10)
+
+    with open_playback(library=as_library(library)) as playback:
+        with pytest.raises(error, match=message):
+            upload(playback, pcm, loop_points=loop_points)  # type: ignore[arg-type]
+
+        assert library.al.allocated_buffers == set()
+
+
+def test_upload_rejects_loop_points_outside_native_integer_range() -> None:
+    library = FakeLibrary()
+    data = BufferData(
+        samples=b"encoded",
+        format=BufferFormat.VORBIS,
+        sample_rate=10,
+        frame_count=1 << 31,
+        channels=1,
+    )
+
+    with open_playback(library=as_library(library)) as playback:
+        with pytest.raises(ValueError, match="must not exceed 2147483647"):
+            upload(playback, data, loop_points=(0, 1 << 31))
+
+        assert library.al.allocated_buffers == set()
+
+
+def test_upload_requires_loop_point_extension_before_allocating() -> None:
+    library = FakeLibrary()
+    library.al_extensions.remove("AL_SOFT_loop_points")
+    pcm = PCM(b"\0\0" * 10, channels=1, sample_rate=10)
+
+    with open_playback(library=as_library(library)) as playback:
+        with pytest.raises(AudioBackendError, match="AL_SOFT_loop_points"):
+            upload(playback, pcm, loop_points=(2, 8))
+
+        assert library.al.allocated_buffers == set()
 
 
 def test_upload_supports_extension_formats_and_buffer_properties() -> None:

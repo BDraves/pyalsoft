@@ -20,7 +20,7 @@ class FakeAL:
         self.allocated_filters: set[int] = set()
         self.allocated_effect_slots: set[int] = set()
         self.buffers: dict[int, tuple[int, bytes, int]] = {}
-        self.buffer_properties: dict[int, dict[int, int]] = {}
+        self.buffer_properties: dict[int, dict[int, object]] = {}
         self.effects: dict[int, dict[int, object]] = {}
         self.filters: dict[int, dict[int, object]] = {}
         self.effect_slots: dict[int, dict[int, object]] = {}
@@ -87,6 +87,11 @@ class FakeAL:
 
     def bufferi(self, identifier: int, parameter: int, value: int) -> None:
         self.buffer_properties.setdefault(identifier, {})[parameter] = value
+
+    def bufferiv(
+        self, identifier: int, parameter: int, values: tuple[int, ...]
+    ) -> None:
+        self.buffer_properties.setdefault(identifier, {})[parameter] = tuple(values)
 
     def buffer_data(
         self, identifier: int, format_name: int, data: bytes, sample_rate: int
@@ -568,6 +573,7 @@ class FakeLibrary:
             "AL_SOFT_MSADPCM",
             "AL_SOFT_UHJ_ex",
             "AL_SOFT_block_alignment",
+            "AL_SOFT_loop_points",
             "AL_SOFT_bformat_ex",
             "AL_SOFT_bformat_hoa",
         }
