@@ -30,6 +30,68 @@ state; sessions on independent library instances may proceed concurrently.
 progress and makes later operations fail with
 [`PlaybackClosedError`][pyalsoft.PlaybackClosedError].
 
+## Extension buffer formats
+
+[`PCM`][pyalsoft.PCM] supports unsigned 8-bit, signed 16-bit, float32, and
+float64 samples. Standard interleaved mono, stereo, quad, 5.1, 6.1, and 7.1
+layouts are accepted where OpenAL defines the combination. The managed upload
+checks the required float or multichannel extension before allocating a clip:
+
+```python
+import array
+
+from pyalsoft import PCM, SampleType, open_playback, upload
+
+samples = array.array("f", [0.0] * (48_000 * 6)).tobytes()
+pcm = PCM(samples, channels=6, sample_rate=48_000, sample_type=SampleType.FLOAT32)
+
+with open_playback() as playback:
+    clip = upload(playback, pcm)
+```
+
+Use [`BufferData`][pyalsoft.BufferData] when a payload needs an exact extension
+format rather than a plain PCM layout. [`BufferFormat`][pyalsoft.BufferFormat]
+covers the generated binding formats for float and double PCM, LOKI and EXT
+IMA ADPCM, Microsoft ADPCM, mu-law and A-law, multichannel audio, Vorbis,
+native WAVE, B-format ambisonics, and UHJ. Encoded data includes its decoded
+`frame_count`, so managed duration, seeking, and stream queue timing do not
+depend on the compressed byte length:
+
+```python
+from pyalsoft import BufferData, BufferFormat, open_playback, upload
+
+data = BufferData(
+    samples=ima_adpcm_bytes,
+    format=BufferFormat.MONO_IMA4,
+    sample_rate=48_000,
+    frame_count=decoded_frame_count,
+    block_alignment=samples_per_block,
+)
+
+with open_playback() as playback:
+    clip = upload(playback, data)
+```
+
+The bundled OpenAL Soft runtime supports the EXT IMA4 format used above. The
+legacy Vorbis, native WAVE, and LOKI formats are available through this API only
+when a separately installed OpenAL implementation advertises their corresponding
+extensions; the bundled runtime does not advertise them.
+
+`block_alignment` configures `AL_SOFT_block_alignment`. B-format data also
+accepts `ambisonic_order`, [`AmbisonicLayout`][pyalsoft.AmbisonicLayout], and
+[`AmbisonicScaling`][pyalsoft.AmbisonicScaling]; PyALSoft applies the associated
+buffer properties before upload. Orders above 3 require explicit ACN layout
+and either SN3D or N3D scaling; FuMa layout and scaling remain valid through
+order 3. `open_stream()` accepts the same `format` and property options. Pass
+`frame_count=` to `try_write_stream()` for each encoded chunk; fixed-width
+chunks infer their frame count from their byte length.
+
+These are input-buffer capabilities. `ALC_SOFT_loopback_bformat` instead
+configures an offline loopback rendering device, for which the managed API does
+not currently provide a session type. `ALC_LOKI_audio_channel` contributes
+legacy channel constants but declares no callable selection function in the
+OpenAL registry; those constants remain available through `pyalsoft.bindings`.
+
 ## Device and context configuration
 
 Playback devices can be enumerated and passed to

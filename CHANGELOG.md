@@ -2,7 +2,23 @@
 
 Notable user-facing changes to PyALSoft are documented here.
 
-## Unreleased
+## 1.5.0 - 2026.08.19
+
+### Added
+
+- Added managed static and streaming buffer support for float, double,
+  multichannel, ADPCM, mu-law, A-law, ambisonic B-format, and UHJ extension
+  formats, including compressed block alignment and ambisonic buffer metadata.
+  Vorbis, native WAVE, and LOKI formats are also available with OpenAL
+  implementations that advertise those legacy extensions. Managed capture now
+  also accepts OpenAL Soft's float32 and multichannel capture formats.
+  (@BDraves)
+
+### Changed
+
+- `Clip.info` now returns `BufferInfo` for clips uploaded from `BufferData`, and
+  continues to return `SoundInfo` for clips uploaded from `PCM`. Its annotated
+  return type is therefore `SoundInfo | BufferInfo`. (@BDraves)
 
 ## 1.4.0 - 2026.08.19
 

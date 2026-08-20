@@ -20,6 +20,7 @@ class FakeAL:
         self.allocated_filters: set[int] = set()
         self.allocated_effect_slots: set[int] = set()
         self.buffers: dict[int, tuple[int, bytes, int]] = {}
+        self.buffer_properties: dict[int, dict[int, int]] = {}
         self.effects: dict[int, dict[int, object]] = {}
         self.filters: dict[int, dict[int, object]] = {}
         self.effect_slots: dict[int, dict[int, object]] = {}
@@ -82,6 +83,10 @@ class FakeAL:
         for identifier in buffers:
             self.allocated_buffers.discard(identifier)
             self.buffers.pop(identifier, None)
+            self.buffer_properties.pop(identifier, None)
+
+    def bufferi(self, identifier: int, parameter: int, value: int) -> None:
+        self.buffer_properties.setdefault(identifier, {})[parameter] = value
 
     def buffer_data(
         self, identifier: int, format_name: int, data: bytes, sample_rate: int
@@ -547,6 +552,24 @@ class FakeLibrary:
             "AL_SOFT_source_resampler",
             "AL_SOFT_source_spatialize",
             "AL_SOFT_UHJ",
+            "AL_EXT_MCFORMATS",
+            "AL_EXT_float32",
+            "AL_EXT_double",
+            "AL_EXT_MULAW",
+            "AL_EXT_ALAW",
+            "AL_EXT_MULAW_MCFORMATS",
+            "AL_EXT_IMA4",
+            "AL_EXT_BFORMAT",
+            "AL_EXT_MULAW_BFORMAT",
+            "AL_EXT_vorbis",
+            "AL_LOKI_IMA_ADPCM_format",
+            "AL_LOKI_WAVE_format",
+            "AL_LOKI_quadriphonic",
+            "AL_SOFT_MSADPCM",
+            "AL_SOFT_UHJ_ex",
+            "AL_SOFT_block_alignment",
+            "AL_SOFT_bformat_ex",
+            "AL_SOFT_bformat_hoa",
         }
 
     def _invalidate_device_extensions(self, device: object) -> None:

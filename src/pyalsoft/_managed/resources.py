@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
-from pyalsoft._managed.audio import SoundInfo
+from pyalsoft._managed.audio import BufferInfo, SoundInfo
 
 
 class VoiceState(Enum):
@@ -411,7 +411,7 @@ class StreamStatus:
 
 @dataclass(frozen=True, slots=True)
 class Clip:
-    """Opaque identity for PCM uploaded to a playback session.
+    """Opaque identity for audio data uploaded to a playback session.
 
     Do not construct instances directly. A clip belongs to the
     [`Playback`][pyalsoft.Playback] that returned it and remains valid until it
@@ -421,10 +421,10 @@ class Clip:
     _owner: object = field(repr=False)
     _token: object = field(repr=False)
     _identifier: int = field(repr=False)
-    _info: SoundInfo = field(repr=False)
+    _info: SoundInfo | BufferInfo = field(repr=False)
 
     @property
-    def info(self) -> SoundInfo:
+    def info(self) -> SoundInfo | BufferInfo:
         """Format and length information for this clip."""
 
         return self._info

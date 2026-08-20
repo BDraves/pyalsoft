@@ -8,6 +8,10 @@ import pytest
 
 from pyalsoft import (
     PCM,
+    AmbisonicLayout,
+    AmbisonicScaling,
+    BufferData,
+    BufferFormat,
     Listener,
     PlaybackConfig,
     PlaybackDevice,
@@ -16,6 +20,108 @@ from pyalsoft import (
     SoundInfo,
     VoiceConfig,
 )
+
+
+def test_buffer_data_describes_fixed_and_encoded_formats() -> None:
+    surround = BufferData(
+        samples=bytes(2 * 6 * 4),
+        format=BufferFormat.SURROUND_5_1_FLOAT32,
+        sample_rate=48_000,
+        frame_count=2,
+    )
+    vorbis = BufferData(
+        samples=b"OggSencoded",
+        format=BufferFormat.VORBIS,
+        channels=2,
+        sample_rate=44_100,
+        frame_count=44_100,
+    )
+
+    assert surround.channels == 6
+    assert surround.info.sample_type is SampleType.FLOAT32
+    assert surround.info.byte_count == 48
+    assert vorbis.duration == 1.0
+    assert vorbis.info.sample_type is None
+
+
+def test_every_managed_buffer_format_maps_to_a_native_format() -> None:
+    assert len(BufferFormat) == 67
+    assert all(format.native_format for format in BufferFormat)
+    assert BufferFormat.MONO_INT16.required_extensions == ()
+    assert BufferFormat.MONO_MULAW.required_extensions == (
+        "AL_EXT_MULAW",
+        "AL_EXT_MULAW_MCFORMATS",
+    )
+
+
+def test_buffer_data_validates_ambisonic_metadata_and_byte_size() -> None:
+    data = BufferData(
+        samples=bytes(16 * 4 * 4),
+        format=BufferFormat.BFORMAT_3D_FLOAT32,
+        sample_rate=48_000,
+        frame_count=4,
+        ambisonic_order=3,
+        ambisonic_layout=AmbisonicLayout.ACN,
+        ambisonic_scaling=AmbisonicScaling.SN3D,
+    )
+
+    assert data.channels == 16
+    with pytest.raises(ValueError, match="exactly 2 complete frames"):
+        BufferData(
+            samples=b"too short",
+            format=BufferFormat.STEREO_INT16,
+            sample_rate=1,
+            frame_count=2,
+        )
+    with pytest.raises(ValueError, match="channels is required"):
+        BufferData(
+            samples=b"OggS",
+            format=BufferFormat.VORBIS,
+            sample_rate=1,
+            frame_count=1,
+        )
+    with pytest.raises(ValueError, match="multiple of 8 plus 1"):
+        BufferData(
+            samples=bytes(36),
+            format=BufferFormat.MONO_IMA4,
+            sample_rate=1,
+            frame_count=64,
+            block_alignment=64,
+        )
+
+
+def test_higher_order_ambisonics_require_explicit_non_fuma_metadata() -> None:
+    third_order = BufferData(
+        samples=bytes(16 * 2),
+        format=BufferFormat.BFORMAT_3D_INT16,
+        sample_rate=48_000,
+        frame_count=1,
+        ambisonic_order=3,
+    )
+
+    assert third_order.channels == 16
+    for layout in (None, AmbisonicLayout.FUMA):
+        with pytest.raises(ValueError, match="orders above 3 require ACN layout"):
+            BufferData(
+                samples=bytes(9 * 2),
+                format=BufferFormat.BFORMAT_2D_INT16,
+                sample_rate=48_000,
+                frame_count=1,
+                ambisonic_order=4,
+                ambisonic_layout=layout,
+                ambisonic_scaling=AmbisonicScaling.SN3D,
+            )
+    for scaling in (None, AmbisonicScaling.FUMA):
+        with pytest.raises(ValueError, match="orders above 3 require SN3D or N3D"):
+            BufferData(
+                samples=bytes(9 * 2),
+                format=BufferFormat.BFORMAT_2D_INT16,
+                sample_rate=48_000,
+                frame_count=1,
+                ambisonic_order=4,
+                ambisonic_layout=AmbisonicLayout.ACN,
+                ambisonic_scaling=scaling,
+            )
 
 
 def test_pcm_and_configuration_are_immutable_data() -> None:
@@ -58,6 +164,30 @@ def test_pcm_and_configuration_are_immutable_data() -> None:
     assert pcm.info.duration_seconds == 1.0
     assert pcm.info.bit_depth == 16
     assert pcm.info.byte_count == 4
+
+
+@pytest.mark.parametrize(
+    ("channels", "sample_type", "byte_width"),
+    [
+        (1, SampleType.FLOAT32, 4),
+        (2, SampleType.FLOAT64, 8),
+        (4, SampleType.INT16, 2),
+        (6, SampleType.FLOAT32, 4),
+        (7, SampleType.UINT8, 1),
+        (8, SampleType.INT16, 2),
+    ],
+)
+def test_pcm_supports_float_and_surround_layouts(
+    channels: int, sample_type: SampleType, byte_width: int
+) -> None:
+    pcm = PCM(
+        bytes(channels * byte_width),
+        channels=channels,
+        sample_rate=48_000,
+        sample_type=sample_type,
+    )
+
+    assert pcm.frame_count == 1
 
 
 @pytest.mark.parametrize(

@@ -30,7 +30,7 @@ from pyalsoft._managed.spatial import Acoustics, DistanceModel, Listener
 from pyalsoft.bindings._library import _pointer_address
 
 if TYPE_CHECKING:
-    from pyalsoft._managed.audio import SoundInfo
+    from pyalsoft._managed.audio import BufferInfo, SoundInfo
     from pyalsoft._managed.playback.effects import _EfxResources
     from pyalsoft._managed.playback.streams import _StreamRecord
     from pyalsoft._managed.spatial import VoiceConfig
@@ -94,7 +94,7 @@ class Playback:
         self._super_stereo_width_defaults: dict[int, float] = {}
         self._token = object()
         self._clips: dict[object, int] = {}
-        self._clip_infos: dict[object, SoundInfo] = {}
+        self._clip_infos: dict[object, SoundInfo | BufferInfo] = {}
         self._voices: dict[object, int] = {}
         self._voice_clips: dict[object, object] = {}
         self._voice_configs: dict[object, VoiceConfig] = {}

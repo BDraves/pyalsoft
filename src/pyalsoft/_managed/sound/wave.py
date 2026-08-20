@@ -65,8 +65,9 @@ def _read_wave(path: Path) -> PCM:
 def get_sound_info(path: AudioPath) -> SoundInfo:
     """Read WAV format and length information without opening an audio device.
 
-    The managed file API accepts uncompressed mono or stereo WAV files containing
-    unsigned 8-bit or signed 16-bit PCM and at least one complete frame.
+    The managed file API accepts uncompressed WAV files in a standard mono,
+    stereo, quad, 5.1, 6.1, or 7.1 layout containing unsigned 8-bit or signed
+    16-bit PCM and at least one complete frame.
 
     Args:
         path: Path to the WAV file. User-directory markers are expanded and the
