@@ -10,8 +10,10 @@ from pyalsoft._managed._backend import (
     _FORMAT_BY_LAYOUT,
     _check_alc_error,
     _clear_alc_errors,
+    _prepare_buffer_data,
+    _require_pcm_layout,
 )
-from pyalsoft._managed.audio import PCM, SoundInfo
+from pyalsoft._managed.audio import PCM, BufferData, BufferFormat, BufferInfo, SoundInfo
 from pyalsoft._managed.effects import (
     _OMITTED_FILTER,
     EffectSend,
@@ -218,7 +220,7 @@ def _voice_identifier(playback: Playback, voice: Voice) -> int:
     return identifier
 
 
-def _voice_clip_info(playback: Playback, voice: Voice) -> SoundInfo:
+def _voice_clip_info(playback: Playback, voice: Voice) -> SoundInfo | BufferInfo:
     """Return metadata for the clip attached to a validated static voice."""
 
     _voice_identifier(playback, voice)
@@ -227,8 +229,8 @@ def _voice_clip_info(playback: Playback, voice: Voice) -> SoundInfo:
 
 
 @_serialized_playback
-def upload(playback: Playback, pcm: PCM) -> Clip:
-    """Upload immutable PCM data to a playback session.
+def upload(playback: Playback, pcm: PCM | BufferData) -> Clip:
+    """Upload immutable audio data to a playback session.
 
     OpenAL copies the samples into a native buffer. The returned clip may be
     played more than once and remains owned by ``playback`` until it is released
@@ -236,29 +238,37 @@ def upload(playback: Playback, pcm: PCM) -> Clip:
 
     Args:
         playback: Open session that will own the clip.
-        pcm: Complete PCM sample data to copy.
+        pcm: Complete PCM or exact-format buffer data to copy.
 
     Returns:
         An opaque clip identity for the uploaded audio.
 
     Raises:
-        TypeError: ``pcm`` is not a [`PCM`][pyalsoft.PCM].
+        TypeError: ``pcm`` is not [`PCM`][pyalsoft.PCM] or
+            [`BufferData`][pyalsoft.BufferData].
         PlaybackClosedError: ``playback`` is closed.
         AudioBackendError: OpenAL cannot allocate or populate the buffer.
     """
 
-    if not isinstance(pcm, PCM):
-        raise TypeError("pcm must be a PCM value")
+    if not isinstance(pcm, (PCM, BufferData)):
+        raise TypeError("pcm must be a PCM or BufferData value")
     _prepare_al(playback)
+    if isinstance(pcm, PCM):
+        _require_pcm_layout(playback._library, pcm.channels, pcm.sample_type)
+        native_format = _FORMAT_BY_LAYOUT[(pcm.channels, pcm.sample_type)]
+    else:
+        native_format = pcm.format.native_format
     identifiers = playback._library.al.gen_buffers()
     if len(identifiers) != 1:
         raise AudioBackendError("OpenAL did not create exactly one buffer")
     identifier = identifiers[0]
     try:
         _check_al_error(playback, "create clip")
+        if isinstance(pcm, BufferData):
+            _prepare_buffer_data(playback._library, identifier, pcm)
         playback._library.al.buffer_data(
             identifier,
-            _FORMAT_BY_LAYOUT[(pcm.channels, pcm.sample_type)],
+            native_format,
             pcm.samples,
             pcm.sample_rate,
         )
@@ -298,7 +308,9 @@ def _create_voice(
     )
     if not start and start_time_ns is not None:
         raise ValueError("start_time_ns requires start=True")
-    _validate_source_layout(config, clip.info.channels)
+    clip_info = clip.info
+    clip_format = clip_info.format if isinstance(clip_info, BufferInfo) else None
+    _validate_source_layout(config, clip_info.channels, clip_format)
     clip_identifier = _clip_identifier(playback, clip)
     offset_seconds, offset_frames = _validate_offsets(
         clip.info, offset_seconds, offset_frames
@@ -391,6 +403,7 @@ def _set_voice_config(
 ) -> None:
     if not isinstance(config, VoiceConfig):
         raise TypeError("config must be a VoiceConfig")
+    source_format: BufferFormat | None
     if isinstance(voice, Stream):
         record = _stream_record(playback, voice)
         identifier = record.identifier
@@ -399,12 +412,15 @@ def _set_voice_config(
         previous = record.config
         previous_efx = record.efx
         channels = record.channels
+        source_format = record.format
     else:
         identifier = _voice_identifier(playback, voice)
         previous = playback._voice_configs[voice._token]
         previous_efx = playback._voice_efx[voice._token]
-        channels = _voice_clip_info(playback, voice).channels
-    _validate_source_layout(config, channels)
+        info = _voice_clip_info(playback, voice)
+        channels = info.channels
+        source_format = info.format if isinstance(info, BufferInfo) else None
+    _validate_source_layout(config, channels, source_format)
     _prepare_al(playback)
     if config.stereo_mode is not previous.stereo_mode:
         state = _get_voice_state(playback, identifier, "query voice stereo mode")

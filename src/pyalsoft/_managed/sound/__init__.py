@@ -523,6 +523,7 @@ def play(
     should ignore position, distance, Doppler, and directional cones. Pass
     ``direct_channels=True`` when the source must additionally bypass HRTF
     virtualization. Convenience playback duplicates mono frames into stereo;
+    surround sources are rejected rather than implicitly downmixed, and
     explicit-session clips must already be stereo.
 
     Args:
@@ -576,8 +577,8 @@ def play(
             format.
         direct_channels: Direct stereo-channel routing mode. ``True`` selects
             ``DROP_UNMATCHED`` and ``False`` selects ``OFF``. Mono WAV and PCM
-            values are duplicated to stereo by convenience playback. Explicit
-            clips must already be stereo.
+            values are duplicated to stereo by convenience playback. Surround
+            sources are rejected, and explicit clips must already be stereo.
 
     Returns:
         A [`Voice`][pyalsoft.Voice] owned by the explicit session, or a

@@ -73,8 +73,22 @@ class FakeCaptureALC:
         self.frame_width = {
             int(bindings.AL_FORMAT_MONO8): 1,
             int(bindings.AL_FORMAT_MONO16): 2,
+            int(bindings.AL_FORMAT_MONO_FLOAT32): 4,
             int(bindings.AL_FORMAT_STEREO8): 2,
             int(bindings.AL_FORMAT_STEREO16): 4,
+            int(bindings.AL_FORMAT_STEREO_FLOAT32): 8,
+            int(bindings.AL_FORMAT_QUAD8): 4,
+            int(bindings.AL_FORMAT_QUAD16): 8,
+            int(bindings.AL_FORMAT_QUAD32): 16,
+            int(bindings.AL_FORMAT_51CHN8): 6,
+            int(bindings.AL_FORMAT_51CHN16): 12,
+            int(bindings.AL_FORMAT_51CHN32): 24,
+            int(bindings.AL_FORMAT_61CHN8): 7,
+            int(bindings.AL_FORMAT_61CHN16): 14,
+            int(bindings.AL_FORMAT_61CHN32): 28,
+            int(bindings.AL_FORMAT_71CHN8): 8,
+            int(bindings.AL_FORMAT_71CHN16): 16,
+            int(bindings.AL_FORMAT_71CHN32): 32,
         }[self.opened_format]
         return self.device if self.open_succeeds else None
 
@@ -347,10 +361,32 @@ def test_fixed_duration_recording_cleans_up_when_interrupted(
     assert not capture._active_recordings
 
 
-@pytest.mark.parametrize("channels", [0, 3])
+@pytest.mark.parametrize("channels", [0, 3, 5, 9])
 def test_recording_rejects_unsupported_channel_counts(channels: int) -> None:
-    with pytest.raises(ValueError, match="channels must be 1 or 2"):
+    with pytest.raises(ValueError, match="channels must be 1, 2, 4, 6, 7, or 8"):
         start_recording(channels=channels)
+
+
+def test_capture_layout_supports_surround_float32() -> None:
+    library = FakeCaptureLibrary(bytes(6 * 4 * 2))
+
+    captured = stop_recording(
+        start_recording(
+            channels=6,
+            sample_type=SampleType.FLOAT32,
+            library=as_library(library),
+        )
+    )
+
+    assert captured.channels == 6
+    assert captured.sample_type is SampleType.FLOAT32
+    assert captured.frame_count == 2
+    assert library.alc.opened_format == bindings.AL_FORMAT_51CHN32
+
+
+def test_recording_rejects_float64() -> None:
+    with pytest.raises(ValueError, match="float32 PCM"):
+        start_recording(sample_type=SampleType.FLOAT64)
 
 
 @pytest.mark.parametrize("duration", [0.0, -1.0, float("inf")])

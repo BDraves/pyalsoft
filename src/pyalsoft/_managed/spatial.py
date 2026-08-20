@@ -8,7 +8,7 @@ from typing import cast
 
 from pyalsoft._managed._values import Vector3 as Vector3
 from pyalsoft._managed._values import _finite_float, _vector3
-from pyalsoft._managed.audio import SoundInfo
+from pyalsoft._managed.audio import BufferInfo, SoundInfo
 from pyalsoft._managed.effects import (
     _OMITTED_VALUE,
     EffectSend,
@@ -125,7 +125,7 @@ def _frame_offset(value: int, frame_count: int) -> int:
 
 
 def _validate_offsets(
-    info: SoundInfo,
+    info: SoundInfo | BufferInfo,
     offset_seconds: float,
     offset_frames: int | None,
 ) -> tuple[float, int | None]:

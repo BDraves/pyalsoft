@@ -9,8 +9,21 @@ from contextlib import suppress
 from dataclasses import dataclass
 
 from pyalsoft import bindings
-from pyalsoft._managed._backend import _FORMAT_BY_LAYOUT
-from pyalsoft._managed.audio import SampleType
+from pyalsoft._managed._backend import (
+    _buffer_format_for_pcm,
+    _prepare_buffer_data,
+)
+from pyalsoft._managed.audio import (
+    _BLOCK_FORMATS,
+    _BUFFER_FORMAT_SPECS,
+    _IMA4_FORMATS,
+    AmbisonicLayout,
+    AmbisonicScaling,
+    BufferData,
+    BufferFormat,
+    SampleType,
+    _validate_pcm_layout,
+)
 from pyalsoft._managed.errors import (
     AudioBackendError,
     InvalidHandleError,
@@ -62,7 +75,12 @@ class _StreamRecord:
     queued_chunks: deque[_StreamChunk]
     channels: int
     sample_rate: int
-    sample_type: SampleType
+    sample_type: SampleType | None
+    format: BufferFormat
+    block_alignment: int | None
+    ambisonic_order: int
+    ambisonic_layout: AmbisonicLayout | None
+    ambisonic_scaling: AmbisonicScaling | None
     config: VoiceConfig
     efx: _EfxResources = _EMPTY_EFX_RESOURCES
     state: StreamState = StreamState.INITIAL
@@ -82,35 +100,85 @@ def _stream_record(playback: Playback, stream: Stream) -> _StreamRecord:
 
 
 def _validate_stream_layout(
-    channels: int,
+    channels: int | None,
     sample_rate: int,
-    sample_type: SampleType,
+    sample_type: SampleType | None,
+    format: BufferFormat | None,
     buffer_count: int,
-) -> None:
-    if isinstance(channels, bool) or not isinstance(channels, int):
-        raise TypeError("channels must be an integer")
-    if channels not in (1, 2):
-        raise ValueError("channels must be 1 or 2")
-    if isinstance(sample_rate, bool) or not isinstance(sample_rate, int):
-        raise TypeError("sample_rate must be an integer")
-    if sample_rate <= 0:
-        raise ValueError("sample_rate must be positive")
-    if not isinstance(sample_type, SampleType):
-        raise TypeError("sample_type must be a SampleType")
+    block_alignment: int | None,
+    ambisonic_order: int,
+    ambisonic_layout: AmbisonicLayout | None,
+    ambisonic_scaling: AmbisonicScaling | None,
+) -> tuple[int, SampleType | None, BufferFormat, BufferData]:
     if isinstance(buffer_count, bool) or not isinstance(buffer_count, int):
         raise TypeError("buffer_count must be an integer")
     if buffer_count <= 0:
         raise ValueError("buffer_count must be positive")
+    resolved_sample_type: SampleType | None
+    if format is None:
+        if channels is None:
+            raise TypeError("channels is required when format is not provided")
+        resolved_sample_type = sample_type or SampleType.INT16
+        _validate_pcm_layout(channels, sample_rate, resolved_sample_type)
+        resolved_format = _buffer_format_for_pcm(channels, resolved_sample_type)
+    else:
+        if not isinstance(format, BufferFormat):
+            raise TypeError("format must be a BufferFormat or None")
+        if sample_type is not None:
+            raise ValueError("sample_type and format cannot both be provided")
+        resolved_format = format
+        resolved_sample_type = format.sample_type
+
+    spec = _BUFFER_FORMAT_SPECS[resolved_format]
+    inferred_channels = spec.channels
+    if spec.ambisonic_dimensions == 2:
+        inferred_channels = ambisonic_order * 2 + 1
+    elif spec.ambisonic_dimensions == 3:
+        inferred_channels = (ambisonic_order + 1) ** 2
+    template_channels = channels if channels is not None else inferred_channels
+    template_frame_count = 1
+    if resolved_format in _BLOCK_FORMATS:
+        assert template_channels is not None
+        alignment = block_alignment or (65 if resolved_format in _IMA4_FORMATS else 64)
+        template_frame_count = alignment
+        bytes_per_channel = (
+            (alignment - 1) // 2 + 4
+            if resolved_format in _IMA4_FORMATS
+            else (alignment - 2) // 2 + 7
+        )
+        sample_bytes = bytes(template_channels * bytes_per_channel)
+    elif resolved_format.sample_width_bytes is None or template_channels is None:
+        sample_bytes = b"\0"
+    else:
+        sample_bytes = bytes(template_channels * resolved_format.sample_width_bytes)
+    template = BufferData(
+        samples=sample_bytes,
+        format=resolved_format,
+        sample_rate=sample_rate,
+        frame_count=template_frame_count,
+        channels=channels,
+        block_alignment=block_alignment,
+        ambisonic_order=ambisonic_order,
+        ambisonic_layout=ambisonic_layout,
+        ambisonic_scaling=ambisonic_scaling,
+    )
+    assert template.channels is not None
+    return template.channels, resolved_sample_type, resolved_format, template
 
 
 @_serialized_playback
 def open_stream(
     playback: Playback,
     *,
-    channels: int,
+    channels: int | None = None,
     sample_rate: int,
-    sample_type: SampleType = SampleType.INT16,
+    sample_type: SampleType | None = None,
+    format: BufferFormat | None = None,
     buffer_count: int = 4,
+    block_alignment: int | None = None,
+    ambisonic_order: int = 1,
+    ambisonic_layout: AmbisonicLayout | None = None,
+    ambisonic_scaling: AmbisonicScaling | None = None,
     config: VoiceConfig = _DEFAULT_VOICE_CONFIG,
 ) -> Stream:
     """Create an unstarted source with a bounded pool of streaming buffers.
@@ -122,11 +190,18 @@ def open_stream(
 
     Args:
         playback: Open session that will own the stream.
-        channels: Number of interleaved channels, either 1 or 2.
+        channels: Interleaved channel count. Required for ordinary PCM and for
+            WAVE or Vorbis data; otherwise inferred from ``format``.
         sample_rate: Positive number of sample frames per second.
-        sample_type: Representation used by each channel sample.
+        sample_type: PCM representation. Defaults to signed 16-bit when
+            ``format`` is omitted and cannot be combined with ``format``.
+        format: Exact extension format, or ``None`` for ordinary PCM.
         buffer_count: Positive maximum number of chunks that may be queued before
             backpressure is reported.
+        block_alignment: Optional compressed-format alignment in sample frames.
+        ambisonic_order: B-format ambisonic order from 1 through 14.
+        ambisonic_layout: Optional B-format channel ordering.
+        ambisonic_scaling: Optional B-format coefficient normalization.
         config: Initial voice configuration. ``looping`` must be false.
 
     Returns:
@@ -139,12 +214,22 @@ def open_stream(
         AudioBackendError: OpenAL cannot allocate or configure stream resources.
     """
 
-    _validate_stream_layout(channels, sample_rate, sample_type, buffer_count)
+    channels, sample_type, format, template = _validate_stream_layout(
+        channels,
+        sample_rate,
+        sample_type,
+        format,
+        buffer_count,
+        block_alignment,
+        ambisonic_order,
+        ambisonic_layout,
+        ambisonic_scaling,
+    )
     if not isinstance(config, VoiceConfig):
         raise TypeError("config must be a VoiceConfig")
     if config.looping:
         raise ValueError("streaming voices cannot loop")
-    _validate_source_layout(config, channels)
+    _validate_source_layout(config, channels, format)
 
     _prepare_al(playback)
     source_ids: tuple[int, ...] = ()
@@ -161,6 +246,9 @@ def open_stream(
                 f"OpenAL did not create exactly {buffer_count} stream buffers"
             )
         _check_al_error(playback, "create stream buffers")
+        for buffer_id in buffer_ids:
+            _prepare_buffer_data(playback._library, buffer_id, template)
+        _check_al_error(playback, "configure stream buffers")
         _apply_voice_config(playback, source_ids[0], config)
         efx = _install_efx_resources(
             playback,
@@ -196,6 +284,11 @@ def open_stream(
         channels=channels,
         sample_rate=sample_rate,
         sample_type=sample_type,
+        format=format,
+        block_alignment=block_alignment,
+        ambisonic_order=ambisonic_order,
+        ambisonic_layout=ambisonic_layout,
+        ambisonic_scaling=ambisonic_scaling,
         config=config,
         efx=efx,
     )
@@ -218,6 +311,8 @@ def try_write_stream(
     playback: Playback,
     stream: Stream,
     samples: Buffer,
+    *,
+    frame_count: int | None = None,
 ) -> bool:
     """Queue one complete PCM chunk, or report bounded-buffer backpressure.
 
@@ -228,8 +323,10 @@ def try_write_stream(
     Args:
         playback: Session that owns ``stream``.
         stream: Live stream that has not reached end-of-input.
-        samples: Non-empty bytes-like object containing a whole number of frames
-            in the format declared by [`open_stream`][pyalsoft.open_stream].
+        samples: Non-empty bytes-like object in the format declared by
+            [`open_stream`][pyalsoft.open_stream].
+        frame_count: Decoded frame count for an encoded chunk. Fixed-width
+            formats infer it and only accept a matching explicit value.
 
     Returns:
         ``True`` when the chunk was queued, or ``False`` when every stream buffer
@@ -237,7 +334,7 @@ def try_write_stream(
 
     Raises:
         TypeError: ``samples`` is not bytes-like or a handle has the wrong type.
-        ValueError: ``samples`` is empty or ends with a partial frame.
+        ValueError: The sample bytes or decoded frame count are invalid.
         InvalidHandleError: ``stream`` is released or belongs to another session.
         InvalidVoiceStateError: The stream is terminal or input is already finished.
         PlaybackClosedError: ``playback`` is closed.
@@ -257,16 +354,37 @@ def try_write_stream(
     data = _copy_stream_samples(samples)
     if not data:
         raise ValueError("samples cannot be empty")
-    frame_width = record.channels * record.sample_type.byte_width
-    if len(data) % frame_width:
-        raise ValueError("samples must contain a whole number of frames")
+    sample_width = record.format.sample_width_bytes
+    if sample_width is None:
+        if frame_count is None:
+            raise ValueError("frame_count is required for encoded stream chunks")
+        resolved_frame_count = frame_count
+    else:
+        frame_width = record.channels * sample_width
+        if len(data) % frame_width:
+            raise ValueError("samples must contain a whole number of frames")
+        resolved_frame_count = len(data) // frame_width
+        if frame_count is not None and frame_count != resolved_frame_count:
+            raise ValueError("frame_count does not match the fixed-width sample data")
+
+    chunk = BufferData(
+        samples=data,
+        format=record.format,
+        sample_rate=record.sample_rate,
+        frame_count=resolved_frame_count,
+        channels=record.channels,
+        block_alignment=record.block_alignment,
+        ambisonic_order=record.ambisonic_order,
+        ambisonic_layout=record.ambisonic_layout,
+        ambisonic_scaling=record.ambisonic_scaling,
+    )
 
     _prepare_al(playback)
     buffer = record.free_buffers[0]
     playback._library.al.buffer_data(
         buffer,
-        _FORMAT_BY_LAYOUT[(record.channels, record.sample_type)],
-        data,
+        record.format.native_format,
+        chunk.samples,
         record.sample_rate,
     )
     _check_al_error(playback, "upload stream chunk")
@@ -274,12 +392,11 @@ def try_write_stream(
     _check_al_error(playback, "queue stream chunk")
 
     record.free_buffers.popleft()
-    frame_count = len(data) // frame_width
     record.queued_chunks.append(
         _StreamChunk(
             buffer=buffer,
-            frame_count=frame_count,
-            duration=frame_count / record.sample_rate,
+            frame_count=resolved_frame_count,
+            duration=resolved_frame_count / record.sample_rate,
         )
     )
     record.underrun_active = False

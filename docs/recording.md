@@ -15,8 +15,10 @@ captured = stop_recording(recording)
 [`start_recording()`][pyalsoft.start_recording] uses the default input device
 and records 48 kHz, mono, 16-bit PCM unless told otherwise. Use
 [`list_capture_devices()`][pyalsoft.list_capture_devices] to select a specific
-input. For a known duration, [`record()`][pyalsoft.record] is the blocking
-equivalent.
+input. The bundled OpenAL Soft runtime accepts unsigned 8-bit, signed 16-bit,
+and float32 capture in mono, stereo, quad, 5.1, 6.1, and 7.1 layouts; the
+selected capture backend or hardware can still reject a requested combination.
+For a known duration, [`record()`][pyalsoft.record] is the blocking equivalent.
 
 Captured and generated `PCM` values can be passed directly to
 [`play()`][pyalsoft.play]:

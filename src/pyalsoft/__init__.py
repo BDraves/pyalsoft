@@ -1,7 +1,16 @@
 """Function-oriented managed audio and low-level OpenAL Soft bindings."""
 
 from pyalsoft import bindings
-from pyalsoft._managed.audio import PCM, SampleType, SoundInfo
+from pyalsoft._managed.audio import (
+    PCM,
+    AmbisonicLayout,
+    AmbisonicScaling,
+    BufferData,
+    BufferFormat,
+    BufferInfo,
+    SampleType,
+    SoundInfo,
+)
 from pyalsoft._managed.capture import (
     CaptureDevice,
     CaptureOpenError,
@@ -127,11 +136,16 @@ from pyalsoft._managed.spatial import (
 
 __all__ = [
     "Acoustics",
+    "AmbisonicLayout",
+    "AmbisonicScaling",
     "AutoWah",
     "AudioBackendError",
     "AudioError",
     "AudioFileError",
     "BandPassFilter",
+    "BufferData",
+    "BufferFormat",
+    "BufferInfo",
     "CaptureDevice",
     "CaptureOpenError",
     "Clip",

@@ -6,6 +6,7 @@ from math import pi
 
 from pyalsoft import bindings
 from pyalsoft._managed._values import _finite_float
+from pyalsoft._managed.audio import BufferFormat
 from pyalsoft._managed.errors import AudioBackendError
 from pyalsoft._managed.playback.session import (
     _DISTANCE_MODEL_TO_AL,
@@ -39,6 +40,19 @@ _STEREO_MODE_TO_AL = {
 _DEFAULT_STEREO_ANGLES = (pi / 6.0, -pi / 6.0)
 _MAX_DELAY_FRAMES = 1 << 31
 _AL_INT64_MAX = (1 << 63) - 1
+_STEREO_BUFFER_FORMATS = {
+    BufferFormat.STEREO_UINT8,
+    BufferFormat.STEREO_INT16,
+    BufferFormat.IMA_ADPCM_STEREO16_LOKI,
+    BufferFormat.STEREO_FLOAT32,
+    BufferFormat.STEREO_FLOAT64,
+    BufferFormat.STEREO_MULAW,
+    BufferFormat.STEREO_ALAW,
+    BufferFormat.STEREO_IMA4,
+    BufferFormat.STEREO_MSADPCM,
+    BufferFormat.WAVE,
+    BufferFormat.VORBIS,
+}
 
 
 def _require_al_extension(playback: Playback, extension: str, feature: str) -> None:
@@ -165,12 +179,17 @@ def _enable_source_distance_models(playback: Playback) -> None:
     playback._source_distance_model_enabled = True
 
 
-def _validate_source_layout(config: VoiceConfig, channels: int) -> None:
-    if config.direct_channels is not DirectChannelsMode.OFF and channels != 2:
+def _validate_source_layout(
+    config: VoiceConfig,
+    channels: int,
+    format: BufferFormat | None = None,
+) -> None:
+    is_stereo = channels == 2 and (format is None or format in _STEREO_BUFFER_FORMATS)
+    if config.direct_channels is not DirectChannelsMode.OFF and not is_stereo:
         raise ValueError("direct_channels requires a stereo clip or stream source")
-    if config.stereo_angles is not None and channels != 2:
+    if config.stereo_angles is not None and not is_stereo:
         raise ValueError("stereo_angles requires a stereo source")
-    if config.stereo_mode is StereoMode.SUPER_STEREO and channels != 2:
+    if config.stereo_mode is StereoMode.SUPER_STEREO and not is_stereo:
         raise ValueError("Super Stereo processing requires a stereo source")
 
 

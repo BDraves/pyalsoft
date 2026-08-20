@@ -9,12 +9,18 @@ import pytest
 from pyalsoft import (
     PCM,
     Acoustics,
+    AmbisonicLayout,
+    AmbisonicScaling,
+    AudioBackendError,
+    BufferData,
+    BufferFormat,
     DistanceModel,
     InvalidHandleError,
     InvalidVoiceStateError,
     Listener,
     LowPassFilter,
     ResourceInUseError,
+    StereoMode,
     VoiceConfig,
     VoiceState,
     VoiceStatus,
@@ -136,6 +142,125 @@ def test_failed_clip_upload_releases_the_native_buffer(
         assert caught.value is failure
         assert library.al.allocated_buffers == set()
         assert playback._clips == {}
+
+
+def test_upload_supports_extension_formats_and_buffer_properties() -> None:
+    library = FakeLibrary()
+    data = BufferData(
+        samples=bytes(9 * 2),
+        format=BufferFormat.BFORMAT_2D_INT16,
+        sample_rate=48_000,
+        frame_count=1,
+        ambisonic_order=4,
+        ambisonic_layout=AmbisonicLayout.ACN,
+        ambisonic_scaling=AmbisonicScaling.N3D,
+    )
+
+    with open_playback(library=as_library(library)) as playback:
+        clip = upload(playback, data)
+
+        assert library.al.buffers[1] == (
+            bindings.AL_FORMAT_BFORMAT2D_16,
+            data.samples,
+            48_000,
+        )
+        assert library.al.buffer_properties[1] == {
+            bindings.AL_AMBISONIC_LAYOUT_SOFT: bindings.AL_ACN_SOFT,
+            bindings.AL_AMBISONIC_SCALING_SOFT: bindings.AL_N3D_SOFT,
+            bindings.AL_UNPACK_AMBISONIC_ORDER_SOFT: 4,
+        }
+        assert clip.info == data.info
+
+
+def test_upload_applies_and_validates_compressed_block_alignment() -> None:
+    library = FakeLibrary()
+    data = BufferData(
+        samples=bytes(72),
+        format=BufferFormat.UHJ_2_IMA4,
+        sample_rate=48_000,
+        frame_count=65,
+        block_alignment=65,
+    )
+
+    with open_playback(library=as_library(library)) as playback:
+        upload(playback, data)
+
+        assert library.al.buffer_properties[1] == {
+            bindings.AL_UNPACK_BLOCK_ALIGNMENT_SOFT: 65
+        }
+
+
+def test_uhj_extended_format_requires_its_codec_extension() -> None:
+    library = FakeLibrary()
+    library.al_extensions.remove("AL_EXT_IMA4")
+    data = BufferData(
+        samples=bytes(72),
+        format=BufferFormat.UHJ_2_IMA4,
+        sample_rate=48_000,
+        frame_count=65,
+    )
+
+    with open_playback(library=as_library(library)) as playback:
+        with pytest.raises(AudioBackendError, match="AL_EXT_IMA4"):
+            upload(playback, data)
+
+        assert library.al.allocated_buffers == set()
+
+
+def test_uhj_two_channel_clip_is_not_treated_as_stereo() -> None:
+    library = FakeLibrary()
+    data = BufferData(
+        samples=bytes(4),
+        format=BufferFormat.UHJ_2_INT16,
+        sample_rate=48_000,
+        frame_count=1,
+    )
+
+    with open_playback(library=as_library(library)) as playback:
+        clip = upload(playback, data)
+
+        with pytest.raises(ValueError, match="Super Stereo processing"):
+            play(
+                playback,
+                clip,
+                VoiceConfig(stereo_mode=StereoMode.SUPER_STEREO),
+            )
+
+        assert library.al.sources == {}
+
+
+def test_upload_reports_missing_format_extension_before_allocating() -> None:
+    library = FakeLibrary()
+    library.al_extensions.remove("AL_EXT_vorbis")
+    data = BufferData(
+        samples=b"OggSencoded",
+        format=BufferFormat.VORBIS,
+        channels=2,
+        sample_rate=48_000,
+        frame_count=1,
+    )
+
+    with open_playback(library=as_library(library)) as playback:
+        with pytest.raises(AudioBackendError, match="AL_EXT_vorbis"):
+            upload(playback, data)
+
+        assert library.al.allocated_buffers == set()
+
+
+def test_mulaw_upload_accepts_either_historical_extension() -> None:
+    library = FakeLibrary()
+    library.al_extensions.remove("AL_EXT_MULAW")
+    data = BufferData(
+        samples=b"\xff",
+        format=BufferFormat.MONO_MULAW,
+        sample_rate=8_000,
+        frame_count=1,
+    )
+
+    with open_playback(library=as_library(library)) as playback:
+        upload(playback, data)
+
+        assert library.al.buffers[1][0] == bindings.AL_FORMAT_MONO_MULAW
 
 
 def test_static_voice_can_seek_rewind_and_restart() -> None:

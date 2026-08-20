@@ -74,6 +74,17 @@ def test_default_runtime_plays_in_memory_pcm(
     assert default_library.al.allocated_buffers == set()
 
 
+def test_direct_channels_rejects_surround_pcm(
+    default_library: FakeLibrary,
+) -> None:
+    pcm = PCM(samples=bytes(4 * 2), channels=4, sample_rate=8_000)
+
+    with pytest.raises(ValueError, match="direct_channels requires mono or stereo"):
+        play(pcm, direct_channels=True)
+
+    assert default_library.al.allocated_buffers == set()
+
+
 def test_default_runtime_releases_pcm_when_voice_creation_fails(
     default_library: FakeLibrary,
     monkeypatch: pytest.MonkeyPatch,

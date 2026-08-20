@@ -98,7 +98,8 @@ virtual-speaker rendering. For convenience playback, mono WAV and
 [`PCM`][pyalsoft.PCM] sample frames are duplicated into identical left and
 right channels before upload; the returned sound continues to report the
 original source format. The normal and stereo-expanded forms of a cached WAV
-occupy separate cache entries. With an explicit playback session, the
+occupy separate cache entries. Surround sources are rejected rather than
+implicitly downmixed. With an explicit playback session, the
 [`Clip`][pyalsoft.Clip] passed to `play()` must already be stereo. A separately
 installed OpenAL implementation must expose `AL_SOFT_direct_channels`.
 
@@ -114,10 +115,13 @@ print(info.duration_seconds, info.frame_count)
 print(info.channels, info.sample_rate, info.bit_depth)
 ```
 
-The same immutable [`SoundInfo`][pyalsoft.SoundInfo] is available as `clip.info`
-and `sound.info`. When a sound ends, `end_reason` distinguishes natural
-completion, an explicit `stop()`, runtime shutdown, and a disconnected device
-when the backend supports connection reporting.
+The same immutable [`SoundInfo`][pyalsoft.SoundInfo] is available as `sound.info`
+and for clips uploaded from [`PCM`][pyalsoft.PCM]. Clips uploaded from
+[`BufferData`][pyalsoft.BufferData] instead expose
+[`BufferInfo`][pyalsoft.BufferInfo] as `clip.info`. When a sound ends,
+`end_reason` distinguishes natural completion, an explicit `stop()`, runtime
+shutdown, and a disconnected device when the backend supports connection
+reporting.
 
 ## Spatial controls
 

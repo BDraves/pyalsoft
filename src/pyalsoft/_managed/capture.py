@@ -119,6 +119,10 @@ def _capture_layout(
     sample_type: SampleType,
 ) -> tuple[bindings.enums.ALFormat, int]:
     frame_width = _validate_pcm_layout(channels, sample_rate, sample_type)
+    if sample_type is SampleType.FLOAT64:
+        raise ValueError(
+            "capture supports unsigned 8-bit, signed 16-bit, or float32 PCM"
+        )
     return (
         _FORMAT_BY_LAYOUT[(channels, sample_type)],
         frame_width,
@@ -198,7 +202,8 @@ def start_recording(
         device_name: Capture device object or device specifier. ``None`` selects
             the runtime's default capture device. A ``bytes`` value is passed
             to OpenAL unchanged.
-        channels: Number of interleaved channels, either 1 or 2.
+        channels: Number of interleaved channels in a standard mono, stereo,
+            quad, 5.1, 6.1, or 7.1 layout.
         sample_rate: Positive number of sample frames to capture per second.
         sample_type: Representation used by each channel sample.
         library: Loaded low-level library to use. By default, discover and load
@@ -348,7 +353,8 @@ def record(
         duration_seconds: Positive, finite wall-clock duration to record.
         device_name: Capture device object or device specifier. ``None`` selects
             the runtime's default capture device.
-        channels: Number of interleaved channels, either 1 or 2.
+        channels: Number of interleaved channels in a standard mono, stereo,
+            quad, 5.1, 6.1, or 7.1 layout.
         sample_rate: Positive number of sample frames to capture per second.
         sample_type: Representation used by each channel sample.
         library: Loaded low-level library to use. By default, discover and load

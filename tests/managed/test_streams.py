@@ -6,6 +6,8 @@ import pytest
 
 import pyalsoft._managed.playback.streams as streams_module
 from pyalsoft import (
+    AmbisonicLayout,
+    BufferFormat,
     EffectSend,
     HighPassFilter,
     InvalidHandleError,
@@ -13,6 +15,7 @@ from pyalsoft import (
     PlaybackConfig,
     Reverb,
     SampleType,
+    StereoMode,
     StreamState,
     VoiceConfig,
     bindings,
@@ -270,6 +273,84 @@ def test_stream_rejects_invalid_chunks_and_invalid_start_transitions() -> None:
         finish_stream(playback, stream)
         with pytest.raises(InvalidVoiceStateError, match="end-of-input"):
             try_write_stream(playback, stream, b"\0" * 4)
+        release(playback, stream)
+
+
+def test_stream_supports_fixed_width_extension_formats() -> None:
+    library = FakeLibrary()
+    with open_playback(library=as_library(library)) as playback:
+        stream = open_stream(
+            playback,
+            sample_rate=48_000,
+            format=BufferFormat.SURROUND_7_1_FLOAT32,
+            buffer_count=1,
+        )
+
+        assert try_write_stream(playback, stream, bytes(8 * 4 * 2))
+        assert library.al.buffers[1][0] == bindings.AL_FORMAT_71CHN32
+        assert update_stream(playback, stream).queued_seconds == pytest.approx(
+            2 / 48_000
+        )
+        release(playback, stream)
+
+
+def test_two_channel_uhj_stream_is_not_treated_as_stereo() -> None:
+    library = FakeLibrary()
+
+    with open_playback(library=as_library(library)) as playback:
+        with pytest.raises(ValueError, match="Super Stereo processing"):
+            open_stream(
+                playback,
+                sample_rate=48_000,
+                format=BufferFormat.UHJ_2_INT16,
+                config=VoiceConfig(stereo_mode=StereoMode.SUPER_STEREO),
+            )
+
+        assert library.al.sources == {}
+        assert library.al.allocated_buffers == set()
+
+
+def test_encoded_stream_chunks_require_decoded_frame_count() -> None:
+    library = FakeLibrary()
+    with open_playback(library=as_library(library)) as playback:
+        stream = open_stream(
+            playback,
+            channels=2,
+            sample_rate=48_000,
+            format=BufferFormat.VORBIS,
+            buffer_count=1,
+        )
+
+        with pytest.raises(ValueError, match="frame_count is required"):
+            try_write_stream(playback, stream, b"OggSencoded")
+        assert try_write_stream(
+            playback,
+            stream,
+            b"OggSencoded",
+            frame_count=48_000,
+        )
+        assert update_stream(playback, stream).queued_seconds == 1.0
+        release(playback, stream)
+
+
+def test_stream_configures_ambisonic_properties_on_every_buffer() -> None:
+    library = FakeLibrary()
+    with open_playback(library=as_library(library)) as playback:
+        stream = open_stream(
+            playback,
+            sample_rate=48_000,
+            format=BufferFormat.BFORMAT_3D_INT16,
+            ambisonic_order=2,
+            ambisonic_layout=AmbisonicLayout.ACN,
+            buffer_count=2,
+        )
+
+        expected = {
+            bindings.AL_AMBISONIC_LAYOUT_SOFT: bindings.AL_ACN_SOFT,
+            bindings.AL_UNPACK_AMBISONIC_ORDER_SOFT: 2,
+        }
+        assert library.al.buffer_properties == {1: expected, 2: expected}
+        assert try_write_stream(playback, stream, bytes(9 * 2), frame_count=1)
         release(playback, stream)
 
 
