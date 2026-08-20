@@ -4,6 +4,8 @@ Notable user-facing changes to PyALSoft are documented here.
 
 ## Unreleased
 
+## 1.4.0 - 2026.08.19
+
 ### Added
 
 - Added managed delayed and device-clock-scheduled voice and stream starts
@@ -12,11 +14,6 @@ Notable user-facing changes to PyALSoft are documented here.
 - Added nested `defer_updates()` transactions for applying listener, source,
   effect, play, and pause changes together across explicit sessions and the
   convenience runtime. (@BDraves)
-
-## 1.4.0 - 2026.08.16
-
-### Added
-
 - Added managed per-source distance models, physical radius, explicit
   spatialization, direct-channel routing and remixing, stereo angles, runtime
   resampler selection, air absorption, room rolloff, UHJ Super Stereo controls,
