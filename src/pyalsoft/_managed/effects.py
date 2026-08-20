@@ -751,7 +751,8 @@ class _UnsetType:
         return "<omitted>"
 
 
-_OMITTED_FILTER = cast(Filter | None, _UnsetType())
+_OMITTED_VALUE = _UnsetType()
+_OMITTED_FILTER = cast(Filter | None, _OMITTED_VALUE)
 
 
 def _validate_filter(name: str, value: object) -> None:

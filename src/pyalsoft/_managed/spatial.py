@@ -4,11 +4,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import cast
 
 from pyalsoft._managed._values import Vector3 as Vector3
 from pyalsoft._managed._values import _finite_float, _vector3
 from pyalsoft._managed.audio import SoundInfo
-from pyalsoft._managed.effects import EffectSend, Filter, _validate_filter
+from pyalsoft._managed.effects import (
+    _OMITTED_VALUE,
+    EffectSend,
+    Filter,
+    _validate_filter,
+)
 
 _FLOAT32_MAX = float.fromhex("0x1.fffffep+127")
 
@@ -37,6 +43,64 @@ class DistanceModel(Enum):
     LINEAR_CLAMPED = "linear_clamped"
     EXPONENT = "exponent"
     EXPONENT_CLAMPED = "exponent_clamped"
+
+
+class SpatializationMode(Enum):
+    """Per-source spatialization behavior.
+
+    ``AUTO`` follows the source format, ``ENABLED`` forces positional processing,
+    and ``DISABLED`` bypasses position, distance, cone, and Doppler processing.
+    """
+
+    AUTO = "auto"
+    ENABLED = "enabled"
+    DISABLED = "disabled"
+
+
+class DirectChannelsMode(Enum):
+    """Routing behavior for non-spatial stereo sources."""
+
+    OFF = "off"
+    DROP_UNMATCHED = "drop_unmatched"
+    REMIX_UNMATCHED = "remix_unmatched"
+
+
+class StereoMode(Enum):
+    """Processing mode for ordinary stereo source data."""
+
+    NORMAL = "normal"
+    SUPER_STEREO = "super_stereo"
+
+
+@dataclass(frozen=True, slots=True)
+class Resampler:
+    """One implementation-provided source resampler.
+
+    Values are returned by [`list_resamplers`][pyalsoft.list_resamplers].
+    Applications should select from that result rather than constructing values.
+    """
+
+    index: int
+    name: str
+    is_default: bool = False
+
+    def __post_init__(self) -> None:
+        if isinstance(self.index, bool) or not isinstance(self.index, int):
+            raise TypeError("index must be an integer")
+        if self.index < 0:
+            raise ValueError("index cannot be negative")
+        if not isinstance(self.name, str):
+            raise TypeError("name must be a string")
+        if not self.name:
+            raise ValueError("name cannot be empty")
+        if not isinstance(self.is_default, bool):
+            raise TypeError("is_default must be a boolean")
+
+
+_OMITTED_DISTANCE_MODEL = cast(DistanceModel | None, _OMITTED_VALUE)
+_OMITTED_STEREO_ANGLES = cast(tuple[float, float] | None, _OMITTED_VALUE)
+_OMITTED_RESAMPLER = cast(Resampler | None, _OMITTED_VALUE)
+_OMITTED_SUPER_STEREO_WIDTH = cast(float | None, _OMITTED_VALUE)
 
 
 def _sound_offset(value: float, duration_seconds: float) -> float:
@@ -99,6 +163,17 @@ class VoiceConfig:
         cone_inner_angle: Full unattenuated cone angle in degrees, from 0 to 360.
         cone_outer_angle: Full outer cone angle in degrees, from 0 to 360.
         cone_outer_gain: Linear gain outside the outer cone, from 0.0 through 1.0.
+        distance_model: Optional per-source distance model. ``None`` inherits the
+            playback context's model.
+        radius: Non-negative physical source radius in world units.
+        spatialization: Whether spatial processing is automatic, forced, or off.
+        direct_channels: Direct stereo channel routing behavior.
+        stereo_angles: Optional left and right virtual-speaker angles in radians.
+        resampler: Optional implementation-provided source resampler.
+        air_absorption_factor: Distance-based high-frequency absorption strength.
+        room_rolloff_factor: Distance rolloff applied to auxiliary effect paths.
+        stereo_mode: Normal stereo or UHJ Super Stereo processing.
+        super_stereo_width: Optional Super Stereo soundfield width.
         filter: Optional EFX filter applied directly to the dry signal.
         effect_sends: Ordered auxiliary EFX routes applied to the wet signal.
 
@@ -122,6 +197,16 @@ class VoiceConfig:
     cone_inner_angle: float = 360.0
     cone_outer_angle: float = 360.0
     cone_outer_gain: float = 0.0
+    distance_model: DistanceModel | None = None
+    radius: float = 0.0
+    spatialization: SpatializationMode = SpatializationMode.AUTO
+    direct_channels: DirectChannelsMode = DirectChannelsMode.OFF
+    stereo_angles: tuple[float, float] | None = None
+    resampler: Resampler | None = None
+    air_absorption_factor: float = 0.0
+    room_rolloff_factor: float = 0.0
+    stereo_mode: StereoMode = StereoMode.NORMAL
+    super_stereo_width: float | None = None
     filter: Filter | None = None
     effect_sends: tuple[EffectSend, ...] = ()
 
@@ -167,6 +252,67 @@ class VoiceConfig:
         cone_outer_gain = _finite_float("cone_outer_gain", self.cone_outer_gain)
         if not 0.0 <= cone_outer_gain <= 1.0:
             raise ValueError("cone_outer_gain must be between 0.0 and 1.0")
+        if self.distance_model is not None and not isinstance(
+            self.distance_model, DistanceModel
+        ):
+            raise TypeError("distance_model must be a DistanceModel or None")
+        radius = _finite_float("radius", self.radius)
+        if radius < 0.0:
+            raise ValueError("radius cannot be negative")
+        if not isinstance(self.spatialization, SpatializationMode):
+            raise TypeError("spatialization must be a SpatializationMode")
+        if not isinstance(self.direct_channels, DirectChannelsMode):
+            raise TypeError("direct_channels must be a DirectChannelsMode")
+        if self.stereo_angles is None:
+            stereo_angles = None
+        else:
+            if not isinstance(self.stereo_angles, (tuple, list)):
+                raise TypeError("stereo_angles must be a tuple or list")
+            if len(self.stereo_angles) != 2:
+                raise ValueError("stereo_angles must contain exactly two values")
+            stereo_angles = (
+                _finite_float("stereo_angles[0]", self.stereo_angles[0]),
+                _finite_float("stereo_angles[1]", self.stereo_angles[1]),
+            )
+        if self.resampler is not None and not isinstance(self.resampler, Resampler):
+            raise TypeError("resampler must be a Resampler or None")
+        air_absorption_factor = _finite_float(
+            "air_absorption_factor", self.air_absorption_factor
+        )
+        if not 0.0 <= air_absorption_factor <= 10.0:
+            raise ValueError("air_absorption_factor must be between 0.0 and 10.0")
+        room_rolloff_factor = _finite_float(
+            "room_rolloff_factor", self.room_rolloff_factor
+        )
+        if not 0.0 <= room_rolloff_factor <= 10.0:
+            raise ValueError("room_rolloff_factor must be between 0.0 and 10.0")
+        if not isinstance(self.stereo_mode, StereoMode):
+            raise TypeError("stereo_mode must be a StereoMode")
+        if self.super_stereo_width is None:
+            super_stereo_width = None
+        else:
+            super_stereo_width = _finite_float(
+                "super_stereo_width", self.super_stereo_width
+            )
+            if not 0.0 <= super_stereo_width <= 1.0:
+                raise ValueError("super_stereo_width must be between 0.0 and 1.0")
+            if self.stereo_mode is not StereoMode.SUPER_STEREO:
+                raise ValueError(
+                    "super_stereo_width requires stereo_mode=StereoMode.SUPER_STEREO"
+                )
+        if self.direct_channels is not DirectChannelsMode.OFF:
+            if self.spatialization is SpatializationMode.ENABLED:
+                raise ValueError(
+                    "direct_channels cannot be combined with enabled spatialization"
+                )
+            if stereo_angles is not None or self.stereo_mode is not StereoMode.NORMAL:
+                raise ValueError(
+                    "direct_channels cannot be combined with virtualized stereo controls"
+                )
+        if stereo_angles is not None and self.stereo_mode is not StereoMode.NORMAL:
+            raise ValueError(
+                "stereo_angles cannot be combined with Super Stereo processing"
+            )
         _validate_filter("filter", self.filter)
         if not isinstance(self.effect_sends, (tuple, list)):
             raise TypeError("effect_sends must be a tuple or list")
@@ -183,6 +329,11 @@ class VoiceConfig:
         object.__setattr__(self, "cone_inner_angle", cone_inner_angle)
         object.__setattr__(self, "cone_outer_angle", cone_outer_angle)
         object.__setattr__(self, "cone_outer_gain", cone_outer_gain)
+        object.__setattr__(self, "radius", radius)
+        object.__setattr__(self, "stereo_angles", stereo_angles)
+        object.__setattr__(self, "air_absorption_factor", air_absorption_factor)
+        object.__setattr__(self, "room_rolloff_factor", room_rolloff_factor)
+        object.__setattr__(self, "super_stereo_width", super_stereo_width)
         object.__setattr__(self, "effect_sends", effect_sends)
 
 

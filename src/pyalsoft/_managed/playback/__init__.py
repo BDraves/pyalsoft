@@ -3,6 +3,7 @@
 from pyalsoft._managed.playback.session import (
     Playback,
     close_playback,
+    defer_updates,
     get_playback_config,
     get_playback_info,
     list_hrtf_profiles,
@@ -10,6 +11,7 @@ from pyalsoft._managed.playback.session import (
     open_playback,
     reconfigure_playback,
 )
+from pyalsoft._managed.playback.source_controls import list_resamplers
 from pyalsoft._managed.playback.streams import (
     finish_stream,
     open_stream,
@@ -18,6 +20,9 @@ from pyalsoft._managed.playback.streams import (
     update_stream,
 )
 from pyalsoft._managed.playback.voices import (
+    get_playback_clock,
+    get_voice_clock,
+    get_voice_latency,
     get_voice_status,
     pause,
     release,
@@ -35,12 +40,17 @@ from pyalsoft._managed.playback.voices import (
 __all__ = [
     "Playback",
     "close_playback",
+    "defer_updates",
     "finish_stream",
     "get_playback_config",
     "get_playback_info",
+    "get_playback_clock",
+    "get_voice_clock",
+    "get_voice_latency",
     "get_voice_status",
     "list_hrtf_profiles",
     "list_playback_devices",
+    "list_resamplers",
     "open_playback",
     "open_stream",
     "pause",

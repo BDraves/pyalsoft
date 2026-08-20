@@ -27,9 +27,9 @@ Clearing an active clip marks it for eviction after its final sound stops.
 
 ## Control one sound
 
-Every [`VoiceConfig`][pyalsoft.VoiceConfig] field can also be passed directly to
-[`play()`][pyalsoft.play]. Direct keywords override the corresponding field when
-both forms are used:
+Every [`VoiceConfig`][pyalsoft.VoiceConfig] field can also be passed
+directly to [`play()`][pyalsoft.play]. Direct keywords override the
+corresponding field when both forms are used:
 
 ```python
 from pyalsoft import play
@@ -141,6 +141,152 @@ Gain is a linear amplitude multiplier: `1.0` is unchanged, `0.5` is about
 together; OpenAL does not perform independent time stretching. Prefer mono
 sounds for positional audio because OpenAL normally plays stereo sources
 without applying 3D position or direction.
+
+## Advanced source controls
+
+Extension-backed controls live on [`VoiceConfig`][pyalsoft.VoiceConfig] so they
+work with explicit voices, streams, and convenience sounds. Defaults do not
+require optional extensions; PyALSoft checks a capability only when its control
+is requested.
+
+They are also accepted directly by [`play()`][pyalsoft.play] and exposed as
+properties and [`PlayingSound.update()`][pyalsoft.PlayingSound.update]
+keywords. For nullable controls such as `distance_model`, `stereo_angles`,
+`resampler`, and `super_stereo_width`, omission preserves the base or current
+configuration while an explicit `None` clears the override.
+
+```python
+from pyalsoft import (
+    DistanceModel,
+    SpatializationMode,
+    VoiceConfig,
+    list_resamplers,
+    open_playback,
+    play,
+    upload,
+)
+
+with open_playback() as playback:
+    clip = upload(playback, mono_pcm)
+    resampler = next(value for value in list_resamplers(playback) if value.is_default)
+    voice = play(
+        playback,
+        clip,
+        VoiceConfig(
+            position=(8.0, 0.0, -12.0),
+            distance_model=DistanceModel.EXPONENT_CLAMPED,
+            radius=2.5,
+            spatialization=SpatializationMode.ENABLED,
+            resampler=resampler,
+            air_absorption_factor=1.0,
+            room_rolloff_factor=0.7,
+        ),
+    )
+```
+
+`distance_model=None` inherits the context model and follows later
+[`set_acoustics()`][pyalsoft.set_acoustics] changes. `radius` describes the
+emitter's apparent physical size; it does not replace `reference_distance` or
+`max_distance`. Stereo angles are ordered left then right and expressed in
+radians.
+
+[`DirectChannelsMode`][pyalsoft.DirectChannelsMode] provides three routing
+choices: normal virtualization, direct routing that drops unmatched channels,
+and direct routing that remixes unmatched channels to available outputs. Direct
+routing requires stereo managed audio and cannot be combined with forced
+spatialization, stereo angles, or Super Stereo processing. The legacy
+`direct_channels=True` keyword selects `DROP_UNMATCHED`.
+
+Convenience playback transparently rebuilds mono audio as stereo when direct
+routing is enabled, and restores the mono form when it is disabled. This works
+for active sounds and for configuration changes stored until a later restart.
+
+[`StereoMode.SUPER_STEREO`][pyalsoft.StereoMode] converts an ordinary stereo
+signal to an orientable UHJ-derived soundfield. `super_stereo_width` ranges from
+`0.0` for a focused front image through `1.0` for the widest supported image.
+The stereo mode cannot be changed while its source is playing or paused.
+
+Resamplers are implementation-provided values. Obtain them from
+[`list_resamplers()`][pyalsoft.list_resamplers] for the active playback session
+instead of constructing a [`Resampler`][pyalsoft.Resampler] directly. Air
+absorption adds distance-dependent high-frequency attenuation. Room rolloff
+attenuates auxiliary effect paths, so it is normally paired with a reverb
+[`EffectSend`][pyalsoft.EffectSend]. Both factors range from `0.0` through
+`10.0` and require EFX when nonzero.
+
+The complete runnable example is
+[`advanced_sources.py`](https://github.com/BDraves/pyalsoft/blob/development/examples/advanced_sources.py).
+
+## Precise playback timing
+
+Three managed queries expose atomic timing pairs for synchronization work:
+
+```python
+from pyalsoft import get_playback_clock, get_voice_clock, get_voice_latency
+
+latency = get_voice_latency(playback, voice)
+print(latency.offset_seconds, latency.output_latency_ns)
+
+source_clock = get_voice_clock(playback, voice)
+print(source_clock.offset_seconds, source_clock.device_time_ns)
+
+device_clock = get_playback_clock(playback)
+print(device_clock.device_time_ns, device_clock.output_latency_ns)
+```
+
+The ordinary `VoiceStatus` offset reports where OpenAL is processing source
+audio. `VoiceLatency` additionally reports how long audio at that offset will
+take to reach the physical output. `VoiceClock` relates a source offset to the
+audio device's clock, while `PlaybackClock` atomically measures that clock and
+the device's current output latency. Source offsets retain OpenAL's exact 32.32
+fixed-point value as `offset_frames_fixed`; clock and latency values remain
+integer nanoseconds. The `offset_frames`, `offset_seconds`, and corresponding
+`*_seconds` properties provide convenient floating-point conversions.
+
+Use `delay_seconds` or `delay_frames` to prepend source-timeline silence:
+
+```python
+delayed = play(playback, clip, delay_seconds=0.25)
+```
+
+This delay is processed as silent source samples, so pitch and Doppler change
+its real-time duration. While the silence is consumed, the voice is `PLAYING`
+and its offset is negative. A delay cannot be combined with `offset_seconds` or
+`offset_frames`. Both delay values must be non-negative, and `delay_frames`
+cannot exceed `2**31`.
+
+For a precise wall-clock start, schedule against the audio-device clock:
+
+```python
+clock = get_playback_clock(playback)
+start_time_ns = clock.device_time_ns + 500_000_000
+scheduled = play(playback, clip, start_time_ns=start_time_ns)
+```
+
+`start_time_ns` is an absolute device-clock value. A timestamp that has already
+passed starts immediately. `restart()`, `PlayingSound.restart()`, and
+`start_stream()` accept the same delay and scheduling keywords. These operations
+require `AL_SOFT_source_start_delay`; clock queries additionally require
+`ALC_SOFT_device_clock`.
+
+## Apply playback changes together
+
+Use `defer_updates()` when several listener, source, effect, play, or pause
+changes must become audible together:
+
+```python
+from pyalsoft import Listener, VoiceConfig, defer_updates, set_listener
+from pyalsoft import set_voice_config
+
+with defer_updates(playback):
+    set_listener(playback, Listener(position=(1.0, 0.0, 0.0)))
+    set_voice_config(playback, voice, VoiceConfig(gain=0.5))
+```
+
+Audio continues rendering with the previous state inside the block, then all
+pending changes are processed when the outermost block exits. Nested blocks are
+safe. Omit `playback` to batch changes made through the convenience runtime.
+This feature requires `AL_SOFT_deferred_updates`.
 
 ## Configure the listener
 

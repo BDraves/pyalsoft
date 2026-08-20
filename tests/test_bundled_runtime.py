@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from examples.advanced_sources import advanced_sources
 from examples.move_sine import move_sine
 from examples.play_sine import SAMPLE_RATE, play_sine, sine_pcm
 from examples.stream_sine import stream_sine
@@ -19,6 +20,7 @@ from pyalsoft import (
     PlaybackConfig,
     PlaybackOutputMode,
     Reverb,
+    StereoMode,
     VoiceConfig,
     bindings,
     get_playback_info,
@@ -30,6 +32,7 @@ from pyalsoft import (
     release,
     set_voice_config,
     start_stream,
+    stop,
     try_write_stream,
     upload,
 )
@@ -57,6 +60,9 @@ def test_bundled_runtime_runs_playback_examples(
     play_sine(library, duration=0.05)
     move_sine(library, duration=0.05)
     stream_sine(library, duration=0.05)
+    report = advanced_sources(library)
+    assert report.resamplers
+    assert report.voice_latency.output_latency_seconds >= 0.0
 
 
 def test_bundled_runtime_supports_managed_efx(
@@ -144,3 +150,23 @@ def test_bundled_runtime_configures_and_reports_playback_device(
     assert updated.max_auxiliary_sends == 1
     assert updated.output_limiter is True
     assert updated.output_mode is PlaybackOutputMode.STEREO_BASIC
+
+
+def test_bundled_runtime_updates_a_stopped_voice_with_another_context_current(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ALSOFT_DRIVERS", "null")
+    library = bindings.load(WINDOWS_RUNTIME)
+    stereo = PCM(bytes(32), channels=2, sample_rate=8_000)
+
+    with open_playback(library=library) as first:
+        clip = upload(first, stereo)
+        voice = play(first, clip)
+        stop(first, voice)
+
+        with open_playback(library=library):
+            set_voice_config(
+                first,
+                voice,
+                VoiceConfig(stereo_mode=StereoMode.SUPER_STEREO),
+            )

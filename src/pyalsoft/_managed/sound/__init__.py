@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import atexit
-from contextlib import nullcontext, suppress
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext, suppress
 from os import PathLike
 from pathlib import Path
 from threading import RLock
@@ -19,6 +20,7 @@ from pyalsoft._managed.playback.session import (
     _set_acoustics,
     _set_listener,
 )
+from pyalsoft._managed.playback.session import defer_updates as _defer_updates
 from pyalsoft._managed.playback.voices import (
     _play_voice,
     _voice_config_with_overrides,
@@ -28,9 +30,17 @@ from pyalsoft._managed.sound.handle import PlayingSound
 from pyalsoft._managed.sound.runtime import _DefaultRuntime
 from pyalsoft._managed.sound.wave import get_sound_info
 from pyalsoft._managed.spatial import (
+    _OMITTED_DISTANCE_MODEL,
+    _OMITTED_RESAMPLER,
+    _OMITTED_STEREO_ANGLES,
+    _OMITTED_SUPER_STEREO_WIDTH,
     Acoustics,
+    DirectChannelsMode,
     DistanceModel,
     Listener,
+    Resampler,
+    SpatializationMode,
+    StereoMode,
     Vector3,
     VoiceConfig,
 )
@@ -38,6 +48,7 @@ from pyalsoft._managed.spatial import (
 __all__ = [
     "PlayingSound",
     "clear_sound_cache",
+    "defer_updates",
     "get_acoustics",
     "get_listener",
     "get_sound_cache_info",
@@ -61,6 +72,36 @@ def _get_default_runtime() -> _DefaultRuntime:
         if _default_runtime is None:
             _default_runtime = _DefaultRuntime()
         return _default_runtime
+
+
+@contextmanager
+def defer_updates(playback: Playback | None = None) -> Iterator[None]:
+    """Batch playback changes and make them audible together.
+
+    Pass an explicit session, or omit ``playback`` to use the convenience
+    runtime. Audio continues rendering with its previous state inside the block;
+    pending listener, source, effect, play, and pause changes are committed when
+    the outermost block exits. Nested blocks are supported.
+
+    Args:
+        playback: Explicit session to update. ``None`` selects the convenience
+            runtime and opens it if necessary.
+
+    Raises:
+        TypeError: ``playback`` is neither a [`Playback`][pyalsoft.Playback] nor
+            ``None``.
+        PlaybackClosedError: The explicit session is closed.
+        PlaybackOpenError: The convenience runtime cannot open an audio session.
+        AudioBackendError: The backend lacks ``AL_SOFT_deferred_updates`` or
+            cannot begin or commit the update batch.
+    """
+
+    if playback is None:
+        with _get_default_runtime().defer_updates():
+            yield
+        return
+    with _defer_updates(playback):
+        yield
 
 
 def set_sound_cache_limit(max_bytes: int | None) -> None:
@@ -364,12 +405,24 @@ def play(
     cone_inner_angle: float | None = None,
     cone_outer_angle: float | None = None,
     cone_outer_gain: float | None = None,
+    distance_model: DistanceModel | None = _OMITTED_DISTANCE_MODEL,
+    radius: float | None = None,
+    spatialization: SpatializationMode | None = None,
+    stereo_angles: tuple[float, float] | None = _OMITTED_STEREO_ANGLES,
+    resampler: Resampler | None = _OMITTED_RESAMPLER,
+    air_absorption_factor: float | None = None,
+    room_rolloff_factor: float | None = None,
+    stereo_mode: StereoMode | None = None,
+    super_stereo_width: float | None = _OMITTED_SUPER_STEREO_WIDTH,
     filter: Filter | None = None,
     effect_sends: tuple[EffectSend, ...] | list[EffectSend] | None = None,
     offset_seconds: float = 0.0,
     offset_frames: int | None = None,
+    delay_seconds: float = 0.0,
+    delay_frames: int | None = None,
+    start_time_ns: int | None = None,
     spatialize: bool | None = None,
-    direct_channels: bool = False,
+    direct_channels: DirectChannelsMode | bool | None = None,
 ) -> Voice: ...
 
 
@@ -394,12 +447,24 @@ def play(
     cone_inner_angle: float | None = None,
     cone_outer_angle: float | None = None,
     cone_outer_gain: float | None = None,
+    distance_model: DistanceModel | None = _OMITTED_DISTANCE_MODEL,
+    radius: float | None = None,
+    spatialization: SpatializationMode | None = None,
+    stereo_angles: tuple[float, float] | None = _OMITTED_STEREO_ANGLES,
+    resampler: Resampler | None = _OMITTED_RESAMPLER,
+    air_absorption_factor: float | None = None,
+    room_rolloff_factor: float | None = None,
+    stereo_mode: StereoMode | None = None,
+    super_stereo_width: float | None = _OMITTED_SUPER_STEREO_WIDTH,
     filter: Filter | None = None,
     effect_sends: tuple[EffectSend, ...] | list[EffectSend] | None = None,
     offset_seconds: float = 0.0,
     offset_frames: int | None = None,
+    delay_seconds: float = 0.0,
+    delay_frames: int | None = None,
+    start_time_ns: int | None = None,
     spatialize: bool | None = None,
-    direct_channels: bool = False,
+    direct_channels: DirectChannelsMode | bool | None = None,
 ) -> PlayingSound: ...
 
 
@@ -423,12 +488,24 @@ def play(
     cone_inner_angle: float | None = None,
     cone_outer_angle: float | None = None,
     cone_outer_gain: float | None = None,
+    distance_model: DistanceModel | None = _OMITTED_DISTANCE_MODEL,
+    radius: float | None = None,
+    spatialization: SpatializationMode | None = None,
+    stereo_angles: tuple[float, float] | None = _OMITTED_STEREO_ANGLES,
+    resampler: Resampler | None = _OMITTED_RESAMPLER,
+    air_absorption_factor: float | None = None,
+    room_rolloff_factor: float | None = None,
+    stereo_mode: StereoMode | None = None,
+    super_stereo_width: float | None = _OMITTED_SUPER_STEREO_WIDTH,
     filter: Filter | None = _OMITTED_FILTER,
     effect_sends: tuple[EffectSend, ...] | list[EffectSend] | None = None,
     offset_seconds: float = 0.0,
     offset_frames: int | None = None,
+    delay_seconds: float = 0.0,
+    delay_frames: int | None = None,
+    start_time_ns: int | None = None,
     spatialize: bool | None = None,
-    direct_channels: bool = False,
+    direct_channels: DirectChannelsMode | bool | None = None,
 ) -> Voice | PlayingSound:
     """Play an explicit clip, WAV file, or PCM value.
 
@@ -468,19 +545,39 @@ def play(
         cone_inner_angle: Full inner cone angle in degrees, from 0 through 360.
         cone_outer_angle: Full outer cone angle in degrees, from 0 through 360.
         cone_outer_gain: Linear gain outside the outer cone.
+        distance_model: Per-source attenuation formula, or ``None`` to inherit
+            the playback context's model.
+        radius: Non-negative physical source radius in world units.
+        spatialization: Automatic, forced, or disabled spatial processing.
+        stereo_angles: Left and right virtual-speaker angles in radians, or
+            ``None`` to restore the implementation defaults.
+        resampler: Implementation-provided source resampler, or ``None`` for
+            the implementation default.
+        air_absorption_factor: Distance-based high-frequency absorption factor.
+        room_rolloff_factor: Distance rolloff for auxiliary effect paths.
+        stereo_mode: Normal stereo or UHJ Super Stereo processing.
+        super_stereo_width: Super Stereo width, or ``None`` for the
+            implementation default.
         filter: Direct EFX filter, or ``None`` to remove the base filter.
         effect_sends: Ordered auxiliary EFX routes. An empty sequence removes all.
         offset_seconds: Initial position in source-audio seconds. Must be
             non-negative and less than the source duration.
         offset_frames: Exact initial sample-frame index. When provided,
             ``offset_seconds`` must remain 0.0.
+        delay_seconds: Initial silence in source-audio seconds. Pitch and Doppler
+            affect its real-time duration. Cannot be combined with an initial
+            offset.
+        delay_frames: Exact number of silent sample frames. When provided,
+            ``delay_seconds`` must remain 0.0 and no initial offset may be set.
+        start_time_ns: Absolute audio-device clock time in nanoseconds. ``None``
+            starts as soon as possible. A past time also starts immediately.
         spatialize: ``True`` forces spatial rendering, ``False`` disables it,
             and ``None`` leaves the decision to OpenAL based on the source
             format.
-        direct_channels: Whether to route stereo channels directly to matching
-            outputs, bypassing HRTF virtualization. Mono WAV and PCM values are
-            duplicated to stereo by convenience playback. Explicit clips must
-            already be stereo.
+        direct_channels: Direct stereo-channel routing mode. ``True`` selects
+            ``DROP_UNMATCHED`` and ``False`` selects ``OFF``. Mono WAV and PCM
+            values are duplicated to stereo by convenience playback. Explicit
+            clips must already be stereo.
 
     Returns:
         A [`Voice`][pyalsoft.Voice] owned by the explicit session, or a
@@ -488,7 +585,7 @@ def play(
 
     Raises:
         TypeError: The call form or an argument has the wrong type.
-        ValueError: A configuration or initial offset is invalid.
+        ValueError: A configuration, initial offset, or playback timing is invalid.
         AudioFileError: A WAV file cannot be read or has an unsupported format.
         PlaybackOpenError: The convenience runtime cannot open an audio session.
         PlaybackClosedError: The explicit session is closed.
@@ -498,6 +595,14 @@ def play(
             without backend support.
     """
 
+    if spatialize is not None and spatialization is not None:
+        raise ValueError("spatialize and spatialization cannot both be set")
+    if spatialize is not None and isinstance(spatialize, bool):
+        spatialization = (
+            SpatializationMode.ENABLED if spatialize else SpatializationMode.DISABLED
+        )
+    elif spatialize is not None:
+        raise TypeError("spatialize must be a boolean or None")
     resolved_config = _voice_config_with_overrides(
         config,
         position=position,
@@ -515,6 +620,16 @@ def play(
         cone_inner_angle=cone_inner_angle,
         cone_outer_angle=cone_outer_angle,
         cone_outer_gain=cone_outer_gain,
+        distance_model=distance_model,
+        radius=radius,
+        spatialization=spatialization,
+        direct_channels=direct_channels,
+        stereo_angles=stereo_angles,
+        resampler=resampler,
+        air_absorption_factor=air_absorption_factor,
+        room_rolloff_factor=room_rolloff_factor,
+        stereo_mode=stereo_mode,
+        super_stereo_width=super_stereo_width,
         filter=filter,
         effect_sends=effect_sends,
     )
@@ -527,8 +642,9 @@ def play(
             resolved_config,
             offset_seconds=offset_seconds,
             offset_frames=offset_frames,
-            spatialize=spatialize,
-            direct_channels=direct_channels,
+            delay_seconds=delay_seconds,
+            delay_frames=delay_frames,
+            start_time_ns=start_time_ns,
         )
     if clip is not None:
         raise TypeError("clip is only valid with an explicit Playback")
@@ -539,8 +655,9 @@ def play(
         resolved_config,
         offset_seconds=offset_seconds,
         offset_frames=offset_frames,
-        spatialize=spatialize,
-        direct_channels=direct_channels,
+        delay_seconds=delay_seconds,
+        delay_frames=delay_frames,
+        start_time_ns=start_time_ns,
     )
 
 

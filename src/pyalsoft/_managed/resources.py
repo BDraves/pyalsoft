@@ -13,7 +13,7 @@ class VoiceState(Enum):
 
     Attributes:
         INITIAL: Ready to play from the beginning.
-        PLAYING: Currently advancing through the clip.
+        PLAYING: Playing, including while waiting for a scheduled start time.
         PAUSED: Paused at the current playhead position.
         STOPPED: Finished naturally or explicitly stopped.
     """
@@ -295,13 +295,98 @@ class VoiceStatus:
 
     Attributes:
         state: Current OpenAL playback state.
-        offset_seconds: Current playhead position in source-audio seconds.
+        offset_seconds: Current playhead position in source-audio seconds. This
+            is negative while consuming an initial playback delay.
         offset_frames: Current playhead position as an exact sample-frame index.
+            This is negative while consuming an initial playback delay.
     """
 
     state: VoiceState
     offset_seconds: float
     offset_frames: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class VoiceLatency:
+    """Atomically measured source position and physical-output latency.
+
+    ``offset_frames_fixed`` preserves OpenAL's exact unsigned 32.32
+    fixed-point sample offset. The convenience properties convert it to a
+    floating-point frame count or source-audio seconds only when requested.
+    """
+
+    offset_frames_fixed: int
+    output_latency_ns: int
+    sample_rate: int
+
+    @property
+    def offset_frames(self) -> float:
+        """Source position in sample frames, including the fractional frame."""
+
+        return self.offset_frames_fixed / (1 << 32)
+
+    @property
+    def offset_seconds(self) -> float:
+        """Source position in source-audio seconds."""
+
+        return self.offset_frames / self.sample_rate
+
+    @property
+    def output_latency_seconds(self) -> float:
+        """Physical-output latency in seconds."""
+
+        return self.output_latency_ns / 1_000_000_000
+
+
+@dataclass(frozen=True, slots=True)
+class VoiceClock:
+    """Atomically measured source position and audio-device clock time.
+
+    ``offset_frames_fixed`` preserves OpenAL's exact signed 32.32 fixed-point
+    sample offset. The device time remains an integer nanosecond count.
+    """
+
+    offset_frames_fixed: int
+    device_time_ns: int
+    sample_rate: int
+
+    @property
+    def offset_frames(self) -> float:
+        """Source position in sample frames, including the fractional frame."""
+
+        return self.offset_frames_fixed / (1 << 32)
+
+    @property
+    def offset_seconds(self) -> float:
+        """Source position in source-audio seconds."""
+
+        return self.offset_frames / self.sample_rate
+
+    @property
+    def device_time_seconds(self) -> float:
+        """Audio-device clock time in seconds."""
+
+        return self.device_time_ns / 1_000_000_000
+
+
+@dataclass(frozen=True, slots=True)
+class PlaybackClock:
+    """Atomically measured audio-device clock and output latency."""
+
+    device_time_ns: int
+    output_latency_ns: int
+
+    @property
+    def device_time_seconds(self) -> float:
+        """Audio-device clock time in seconds."""
+
+        return self.device_time_ns / 1_000_000_000
+
+    @property
+    def output_latency_seconds(self) -> float:
+        """Physical-output latency in seconds."""
+
+        return self.output_latency_ns / 1_000_000_000
 
 
 @dataclass(frozen=True, slots=True)

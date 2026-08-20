@@ -4,6 +4,30 @@ Notable user-facing changes to PyALSoft are documented here.
 
 ## Unreleased
 
+## 1.4.0 - 2026.08.19
+
+### Added
+
+- Added managed delayed and device-clock-scheduled voice and stream starts
+  through `play()`, `restart()`, and `start_stream()`, including convenience
+  `PlayingSound` support. (@BDraves)
+- Added nested `defer_updates()` transactions for applying listener, source,
+  effect, play, and pause changes together across explicit sessions and the
+  convenience runtime. (@BDraves)
+- Added managed per-source distance models, physical radius, explicit
+  spatialization, direct-channel routing and remixing, stereo angles, runtime
+  resampler selection, air absorption, room rolloff, UHJ Super Stereo controls,
+  and precise source/device latency and clock queries. (@BDraves)
+- Exposed every advanced source control through `play()`, `PlayingSound`
+  properties, and `PlayingSound.update()`, including explicit clearing of
+  nullable overrides and second-based `PlaybackClock` conversions. (@BDraves)
+
+### Fixed
+
+- Corrected stopped-voice configuration when another playback context is
+  current, and made mono convenience sounds rebuild their backing clip when
+  direct-channel routing changes before or during playback. (@BDraves)
+
 ## 1.3.0 - 2026.08.16
 
 ### Added
