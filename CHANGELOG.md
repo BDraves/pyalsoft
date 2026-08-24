@@ -2,7 +2,7 @@
 
 Notable user-facing changes to PyALSoft are documented here.
 
-## Unreleased
+## 1.8.0 - 2026.08.23
 
 ### Added
 
