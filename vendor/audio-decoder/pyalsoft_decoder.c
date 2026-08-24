@@ -135,6 +135,7 @@ static int32_t pyalsoft_probe_miniaudio(
     ma_decoder_config config;
     ma_result result;
     ma_format output_format;
+    ma_uint64 frame_count = 0;
 
     config = ma_decoder_config_init(pyalsoft_ma_format(sample_format), 0, 0);
     config.encodingFormat = pyalsoft_ma_encoding(codec);
@@ -153,7 +154,10 @@ static int32_t pyalsoft_probe_miniaudio(
         0
     );
     if (result == MA_SUCCESS) {
-        result = ma_decoder_get_length_in_pcm_frames(&decoder, &info->frame_count);
+        result = ma_decoder_get_length_in_pcm_frames(&decoder, &frame_count);
+    }
+    if (result == MA_SUCCESS) {
+        info->frame_count = (uint64_t)frame_count;
     }
     ma_decoder_uninit(&decoder);
     if (result != MA_SUCCESS) {
