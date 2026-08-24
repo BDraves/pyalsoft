@@ -45,12 +45,20 @@ reported as unsupported rather than being treated as Vorbis.
 | FLAC above 16-bit | mono or stereo | FLOAT32 |
 | MP3 and Ogg Vorbis | mono or stereo | FLOAT32 |
 
+Multichannel WAV files must use `WAVE_FORMAT_EXTENSIBLE` with an explicit
+speaker mask matching OpenAL's quad, 5.1 rear, 6.1, or 7.1 channel order.
+Ambiguous layouts and alternative masks such as 5.1 side are rejected instead
+of being uploaded with incorrect speaker assignments.
+
 Source sample rates are preserved. `SoundInfo.sample_type` and `bit_depth`
 describe this decoded PCM representation, not a compressed bitrate. Static
 files are decoded completely into memory and uploaded to static OpenAL buffers;
-this path is intended for sound assets, not memory-bounded or gapless music
-streaming. Use [`open_stream()`][pyalsoft.open_stream] with application-provided
-PCM chunks when bounded streaming is required.
+encoded input and decoded PCM are each limited to 512 MiB. This path is intended
+for sound assets, not memory-bounded or gapless music streaming. WAV and FLAC
+inspection reads container metadata without loading sample data. MP3 and Ogg
+Vorbis inspection must scan the complete encoded file to determine exact frame
+counts. Use [`open_stream()`][pyalsoft.open_stream] with application-provided PCM
+chunks when bounded streaming is required.
 
 ## Control one sound
 

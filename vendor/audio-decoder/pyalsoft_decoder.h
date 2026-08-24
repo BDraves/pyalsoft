@@ -36,7 +36,8 @@ enum pyalsoft_decoder_error_code {
     PYALSOFT_DECODER_INVALID_FRAME_COUNT = 5,
     PYALSOFT_DECODER_ALLOCATION_FAILED = 6,
     PYALSOFT_DECODER_TRUNCATED = 7,
-    PYALSOFT_DECODER_INTERNAL_ERROR = 8
+    PYALSOFT_DECODER_INTERNAL_ERROR = 8,
+    PYALSOFT_DECODER_OUTPUT_TOO_LARGE = 9
 };
 
 struct pyalsoft_decoder_info {
@@ -65,6 +66,7 @@ PYALSOFT_DECODER_API int32_t pyalsoft_decoder_decode(
     size_t data_size,
     int32_t codec,
     int32_t sample_format,
+    size_t maximum_pcm_size,
     struct pyalsoft_decoder_info *info,
     void **pcm,
     size_t *pcm_size,

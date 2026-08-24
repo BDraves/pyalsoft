@@ -8,8 +8,10 @@ import pytest
 
 from pyalsoft._pyinstaller import get_hook_dirs
 from tools.audio_decoder import (
+    decoder_source_fingerprint,
     decoder_target,
     staged_decoder_path,
+    vendored_decoder_path,
     verify_vendored_sources,
 )
 from tools.build_openal_soft import (
@@ -19,11 +21,13 @@ from tools.build_openal_soft import (
     _cmake_build_command,
     build_runtime,
 )
+from tools.freeze_test import AUDIO_FIXTURES, _smoke_command
 from tools.openal_soft import (
     NATIVE_ROOT_ENVIRONMENT,
     native_runtime_root,
     runtime_target,
 )
+from tools.smoke_test_runtime import DEFAULT_FIXTURE_ROOT
 
 
 def test_native_runtime_root_defaults_to_project_build_directory(
@@ -157,6 +161,14 @@ def test_pyinstaller_hook_declares_versioned_linux_runtimes() -> None:
     assert "lib*.so.*" in hook.read_text(encoding="utf-8")
 
 
+def test_freezer_passes_the_smoke_test_fixture_directory(tmp_path: Path) -> None:
+    executable = tmp_path / "pyalsoft-freeze-test"
+
+    assert AUDIO_FIXTURES == DEFAULT_FIXTURE_ROOT
+    assert AUDIO_FIXTURES.is_dir()
+    assert _smoke_command(executable) == [executable, DEFAULT_FIXTURE_ROOT]
+
+
 @pytest.mark.parametrize(
     ("system", "machine", "identifier", "library_name", "wheel_platform"),
     [
@@ -224,7 +236,23 @@ def test_decoder_staging_uses_shared_native_root(
     target = decoder_target("win32", "AMD64")
 
     assert staged_decoder_path(target) == (
-        configured / "win_amd64" / "pyalsoft_decoder.dll"
+        configured
+        / "win_amd64"
+        / decoder_source_fingerprint()[:12]
+        / "pyalsoft_decoder.dll"
+    )
+
+
+def test_vendored_decoder_path_is_source_addressed() -> None:
+    target = decoder_target("win32", "AMD64")
+
+    assert (
+        vendored_decoder_path(target)
+        == (
+            Path("vendor/audio-decoder/runtime/win_amd64")
+            / decoder_source_fingerprint()[:12]
+            / "pyalsoft_decoder.dll"
+        ).resolve()
     )
 
 

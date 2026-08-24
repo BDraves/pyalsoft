@@ -14,8 +14,10 @@ if not __package__:
 from tools.audio_decoder import (  # noqa: E402
     VENDOR,
     DecoderTarget,
+    decoder_source_fingerprint,
     decoder_target,
     staged_decoder_path,
+    vendored_decoder_path,
     verify_vendored_sources,
 )
 from tools.openal_soft import ROOT  # noqa: E402
@@ -47,10 +49,18 @@ def build_decoder(target: DecoderTarget | None = None) -> Path:
         and shutil.which("clang") is not None
         and shutil.which("ninja") is not None
     ):
-        generator_options = ["-G", "Ninja", "-DCMAKE_C_COMPILER=clang"]
+        generator_options = [
+            "-G",
+            "Ninja",
+            "-DCMAKE_C_COMPILER=clang",
+            "-DCMAKE_C_FLAGS_RELEASE=-O2 -DNDEBUG",
+        ]
         build_suffix = "-clang"
     build_directory = (
-        ROOT / "build" / "audio-decoder" / f"{selected.identifier}{build_suffix}"
+        ROOT
+        / "build"
+        / "audio-decoder"
+        / f"{selected.identifier}-{decoder_source_fingerprint()[:12]}{build_suffix}"
     )
     configure_command = [
         "cmake",
@@ -95,8 +105,7 @@ def main() -> None:
     arguments = parser.parse_args()
     path = build_decoder()
     if arguments.vendor_runtime:
-        target = decoder_target()
-        vendored = VENDOR / "runtime" / target.identifier / target.bundled_name
+        vendored = vendored_decoder_path()
         vendored.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, vendored)
     try:

@@ -23,9 +23,42 @@ from pyalsoft import (
     release,
     upload,
 )
+from pyalsoft._managed.sound import decoder as decoder_module
 from tests._support.managed_backend import FakeLibrary, as_library
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "audio"
+
+
+def _write_extensible_wave(path: Path, channels: int, channel_mask: int) -> None:
+    bits = 16
+    sample_rate = 8_000
+    block_alignment = channels * bits // 8
+    subformat = bytes.fromhex("0100000000001000800000aa00389b71")
+    format_chunk = (
+        struct.pack(
+            "<HHIIHH",
+            0xFFFE,
+            channels,
+            sample_rate,
+            sample_rate * block_alignment,
+            block_alignment,
+            bits,
+        )
+        + struct.pack("<HHI", 22, bits, channel_mask)
+        + subformat
+    )
+    samples = bytes(block_alignment * 2)
+    riff_size = 4 + 8 + len(format_chunk) + 8 + len(samples)
+    path.write_bytes(
+        b"RIFF"
+        + struct.pack("<I", riff_size)
+        + b"WAVEfmt "
+        + struct.pack("<I", len(format_chunk))
+        + format_chunk
+        + b"data"
+        + struct.pack("<I", len(samples))
+        + samples
+    )
 
 
 @pytest.mark.parametrize(
@@ -62,6 +95,57 @@ def test_sixteen_bit_flac_decodes_losslessly() -> None:
     wave_pcm = load_audio(FIXTURES / "tone-s16.wav")
 
     assert flac == wave_pcm
+
+
+def test_flac_metadata_probe_does_not_load_the_native_decoder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_native_probe() -> None:
+        raise AssertionError("FLAC metadata probe loaded the native decoder")
+
+    monkeypatch.setattr(decoder_module, "_get_native_decoder", fail_native_probe)
+
+    assert get_sound_info(FIXTURES / "tone-s16.flac").frame_count == 320
+
+
+def test_canonical_multichannel_wave_layout_is_accepted(tmp_path: Path) -> None:
+    path = tmp_path / "quad.wav"
+    _write_extensible_wave(path, channels=4, channel_mask=0x0033)
+
+    assert get_sound_info(path).channels == 4
+    assert load_audio(path).frame_count == 2
+
+
+@pytest.mark.parametrize("channel_mask", [0, 0x000F])
+def test_ambiguous_multichannel_wave_layout_is_rejected(
+    tmp_path: Path, channel_mask: int
+) -> None:
+    path = tmp_path / "ambiguous.wav"
+    _write_extensible_wave(path, channels=4, channel_mask=channel_mask)
+
+    with pytest.raises(AudioFileError, match="channel mask"):
+        load_audio(path)
+
+
+def test_non_extensible_multichannel_wave_layout_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "unmapped.wav"
+    with wave.open(str(path), "wb") as output:
+        output.setnchannels(4)
+        output.setsampwidth(2)
+        output.setframerate(8_000)
+        output.writeframes(bytes(16))
+
+    with pytest.raises(AudioFileError, match="extensible channel mask"):
+        load_audio(path)
+
+
+def test_decoded_audio_size_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(decoder_module, "_MAX_AUDIO_BYTES", 2_000)
+
+    with pytest.raises(AudioFileError, match="configured size limit"):
+        load_audio(FIXTURES / "tone.mp3")
 
 
 @pytest.mark.parametrize("suffix", [".wrong", ""])

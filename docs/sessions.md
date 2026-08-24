@@ -46,8 +46,9 @@ with open_playback() as playback:
 
 [`load_audio()`][pyalsoft.load_audio] exposes the same static decoder when an
 application needs the intermediate [`PCM`][pyalsoft.PCM] value. Decoding is
-whole-file and preserves the source sample rate. AAC/M4A, Opus, AIFF, metadata
-tags, and decoder plugins are not part of this API.
+whole-file, preserves the source sample rate, and limits both encoded input and
+decoded PCM to 512 MiB. AAC/M4A, Opus, AIFF, metadata tags, and decoder plugins
+are not part of this API.
 
 ## Loop regions
 

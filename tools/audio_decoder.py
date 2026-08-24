@@ -7,12 +7,23 @@ import sys
 import tomllib
 from collections.abc import Collection
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 
 from tools.openal_soft import ROOT, native_runtime_root, verify_checksum
 
 VENDOR = ROOT / "vendor" / "audio-decoder"
 CONFIG_PATH = VENDOR / "source.toml"
+_SOURCE_FILES = (
+    "tools/audio_decoder.py",
+    "tools/build_audio_decoder.py",
+    "vendor/audio-decoder/CMakeLists.txt",
+    "vendor/audio-decoder/miniaudio.h",
+    "vendor/audio-decoder/pyalsoft_decoder.c",
+    "vendor/audio-decoder/pyalsoft_decoder.h",
+    "vendor/audio-decoder/source.toml",
+    "vendor/audio-decoder/stb_vorbis.c",
+)
 
 
 @dataclass(frozen=True)
@@ -97,6 +108,19 @@ def verify_vendored_sources() -> None:
         verify_checksum(str(path), path.read_bytes(), config[key])
 
 
+def decoder_source_fingerprint() -> str:
+    """Return a stable fingerprint for every input to the decoder library."""
+
+    digest = sha256()
+    for filename in _SOURCE_FILES:
+        data = (ROOT / filename).read_bytes()
+        digest.update(filename.encode("ascii"))
+        digest.update(b"\0")
+        digest.update(len(data).to_bytes(8, "big"))
+        digest.update(data)
+    return digest.hexdigest()
+
+
 def staged_decoder_path(
     target: DecoderTarget | None = None, project_root: Path = ROOT
 ) -> Path:
@@ -104,5 +128,21 @@ def staged_decoder_path(
 
     selected = target or decoder_target()
     return (
-        native_runtime_root(project_root) / selected.identifier / selected.bundled_name
+        native_runtime_root(project_root)
+        / selected.identifier
+        / decoder_source_fingerprint()[:12]
+        / selected.bundled_name
+    )
+
+
+def vendored_decoder_path(target: DecoderTarget | None = None) -> Path:
+    """Return the source-addressed path for a checked-in decoder runtime."""
+
+    selected = target or decoder_target()
+    return (
+        VENDOR
+        / "runtime"
+        / selected.identifier
+        / decoder_source_fingerprint()[:12]
+        / selected.bundled_name
     )
