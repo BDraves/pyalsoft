@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pyalsoft import bindings
+from pyalsoft._managed.sound import decoder
 from pyalsoft.bindings import _library as runtime
 
 
@@ -10,6 +11,10 @@ def main() -> None:
     bundled = runtime._bundled_library_path()
     if bundled is None:
         raise RuntimeError("the platform wheel did not contain an OpenAL Soft runtime")
+    decoder_path = decoder._decoder_library_path()
+    if decoder_path is None:
+        raise RuntimeError("the platform wheel did not contain an audio decoder")
+    decoder._NativeDecoder(decoder_path)
 
     library = bindings.load()
     if library.library_name != bundled:
@@ -31,6 +36,7 @@ def main() -> None:
         library.alcCloseDevice(device)
 
     print(f"loaded bundled OpenAL Soft runtime: {bundled}")
+    print(f"loaded bundled static audio decoder: {decoder_path}")
 
 
 if __name__ == "__main__":

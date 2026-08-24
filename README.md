@@ -9,10 +9,11 @@
 <!-- openal-soft-version-badge:end -->
 
 PyALSoft provides function-oriented playback and capture APIs, plus typed
-bindings for OpenAL Soft. Wheels include the native OpenAL Soft runtime.
+bindings for OpenAL Soft. Wheels include the native OpenAL Soft runtime and
+static-audio decoder.
 
-**[Read the documentation](https://bdraves.github.io/pyalsoft/)** ·
-[Browse the API reference](https://bdraves.github.io/pyalsoft/api/) ·
+**[Read the documentation](https://bdraves.github.io/pyalsoft/)** |
+[Browse the API reference](https://bdraves.github.io/pyalsoft/api/) |
 [View the examples](https://github.com/BDraves/pyalsoft/tree/development/examples)
 
 > PyALSoft is an independent project and is not affiliated with or endorsed by
@@ -28,7 +29,8 @@ python -m pip install pyalsoft
 
 ## Quick start
 
-`play` starts a WAV file immediately and returns a control handle:
+`play` starts a WAV, FLAC, MP3, or Ogg Vorbis file immediately and returns a
+control handle:
 
 ```python
 from pyalsoft import play

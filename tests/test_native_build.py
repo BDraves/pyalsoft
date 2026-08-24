@@ -7,6 +7,11 @@ from pathlib import Path
 import pytest
 
 from pyalsoft._pyinstaller import get_hook_dirs
+from tools.audio_decoder import (
+    decoder_target,
+    staged_decoder_path,
+    verify_vendored_sources,
+)
 from tools.build_openal_soft import (
     BUILD_JOBS_ENVIRONMENT,
     DEFAULT_BUILD_JOBS,
@@ -150,3 +155,78 @@ def test_pyinstaller_hook_declares_versioned_linux_runtimes() -> None:
     hook = hook_directory / "hook-pyalsoft.py"
     assert hook.is_file()
     assert "lib*.so.*" in hook.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("system", "machine", "identifier", "library_name", "wheel_platform"),
+    [
+        (
+            "win32",
+            "AMD64",
+            "win_amd64",
+            "pyalsoft_decoder.dll",
+            "win_amd64",
+        ),
+        (
+            "linux",
+            "x86_64",
+            "linux_x86_64",
+            "libpyalsoft_decoder.so",
+            "linux_x86_64",
+        ),
+        (
+            "linux",
+            "aarch64",
+            "linux_aarch64",
+            "libpyalsoft_decoder.so",
+            "linux_aarch64",
+        ),
+        (
+            "darwin",
+            "x86_64",
+            "macos_x86_64",
+            "libpyalsoft_decoder.dylib",
+            "macosx_10_13_x86_64",
+        ),
+        (
+            "darwin",
+            "arm64",
+            "macos_arm64",
+            "libpyalsoft_decoder.dylib",
+            "macosx_11_0_arm64",
+        ),
+    ],
+)
+def test_decoder_target(
+    system: str,
+    machine: str,
+    identifier: str,
+    library_name: str,
+    wheel_platform: str,
+) -> None:
+    target = decoder_target(system, machine)
+
+    assert target.identifier == identifier
+    assert target.bundled_name == library_name
+    assert target.wheel_platform == wheel_platform
+
+
+def test_unsupported_decoder_target_is_rejected() -> None:
+    with pytest.raises(RuntimeError, match="unsupported audio decoder architecture"):
+        decoder_target("linux", "riscv64")
+
+
+def test_decoder_staging_uses_shared_native_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    configured = tmp_path / "native-cache"
+    monkeypatch.setenv(NATIVE_ROOT_ENVIRONMENT, str(configured))
+    target = decoder_target("win32", "AMD64")
+
+    assert staged_decoder_path(target) == (
+        configured / "win_amd64" / "pyalsoft_decoder.dll"
+    )
+
+
+def test_vendored_decoder_sources_match_the_pinned_manifest() -> None:
+    verify_vendored_sources()

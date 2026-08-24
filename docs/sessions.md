@@ -32,8 +32,8 @@ progress and makes later operations fail with
 Use [`get_voice_config()`][pyalsoft.get_voice_config] to inspect the immutable
 configuration currently retained for an explicit voice or stream.
 
-Supported WAV files can be decoded and uploaded directly while retaining the
-same explicit resource ownership:
+Supported WAV, FLAC, MP3, and Ogg Vorbis files can be decoded and uploaded
+directly while retaining the same explicit resource ownership:
 
 ```python
 from pyalsoft import open_playback, play, upload, wait
@@ -44,9 +44,10 @@ with open_playback() as playback:
     wait(playback, voice)
 ```
 
-[`load_audio()`][pyalsoft.load_audio] exposes the same WAV decoder when an
-application needs the intermediate [`PCM`][pyalsoft.PCM] value. Additional file
-formats are intentionally outside the current major-version file contract.
+[`load_audio()`][pyalsoft.load_audio] exposes the same static decoder when an
+application needs the intermediate [`PCM`][pyalsoft.PCM] value. Decoding is
+whole-file and preserves the source sample rate. AAC/M4A, Opus, AIFF, metadata
+tags, and decoder plugins are not part of this API.
 
 ## Loop regions
 

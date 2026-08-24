@@ -2,8 +2,8 @@
 
 PyALSoft provides a function-oriented audio API for common playback and
 recording tasks, along with typed low-level OpenAL Soft bindings. Wheels include
-the native OpenAL Soft runtime, so a separate installation is not normally
-required.
+the native OpenAL Soft runtime and static-audio decoder, so separate native
+installations are not normally required.
 
 ## Installation
 
@@ -13,7 +13,7 @@ PyALSoft requires Python 3.12 or later. Install it from PyPI:
 python -m pip install pyalsoft
 ```
 
-## Play a WAV file
+## Play an audio file
 
 [`play()`][pyalsoft.play] begins playback immediately and returns a
 [`PlayingSound`][pyalsoft.PlayingSound] handle:
@@ -24,6 +24,9 @@ from pyalsoft import play
 sound = play("sound.wav")
 sound.wait()
 ```
+
+WAV, FLAC, MP3, and Ogg Vorbis assets are detected from their contents, so the
+filename extension does not control decoding.
 
 Playback is asynchronous. If you do not need to control the sound, you can
 ignore the return value without stopping playback:

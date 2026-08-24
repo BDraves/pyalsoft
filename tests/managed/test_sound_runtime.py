@@ -182,7 +182,7 @@ def test_sound_cache_configuration_is_validated_and_observable(
         set_sound_cache_limit(1.0)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="cannot be negative"):
         set_sound_cache_limit(-1)
-    with pytest.raises(TypeError, match="path to a WAV file or None"):
+    with pytest.raises(TypeError, match="path to a supported audio file or None"):
         clear_sound_cache(1)  # type: ignore[arg-type]
 
     set_sound_cache_limit(None)

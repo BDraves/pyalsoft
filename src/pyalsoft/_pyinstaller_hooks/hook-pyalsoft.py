@@ -1,4 +1,4 @@
-"""Collect PyALSoft's bundled OpenAL Soft runtime."""
+"""Collect PyALSoft's bundled OpenAL Soft and decoder runtimes."""
 
 from PyInstaller.utils.hooks import collect_dynamic_libs  # type: ignore[import-untyped]
 

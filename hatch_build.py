@@ -13,6 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from tools.audio_decoder import decoder_target, staged_decoder_path  # noqa: E402
 from tools.openal_soft import (  # noqa: E402
     native_runtime_root,
     runtime_target,
@@ -56,6 +57,32 @@ class CustomBuildHook(BuildHookInterface):  # type: ignore
         build_data["force_include_editable"][str(source)] = destination
         build_data["pure_python"] = False
         build_data["tag"] = f"py3-none-{wheel_platform}"
+
+        decoder = decoder_target()
+        decoder_source = staged_decoder_path(decoder, root)
+        vendored_decoder = (
+            root
+            / "vendor"
+            / "audio-decoder"
+            / "runtime"
+            / decoder.identifier
+            / decoder.bundled_name
+        )
+        if not decoder_source.is_file() and vendored_decoder.is_file():
+            decoder_source = vendored_decoder
+        if not decoder_source.is_file() and version != "editable":
+            subprocess.run(
+                [sys.executable, str(root / "tools" / "build_audio_decoder.py")],
+                cwd=root,
+                check=True,
+            )
+            decoder_source = staged_decoder_path(decoder, root)
+        if decoder_source.is_file():
+            decoder_destination = f"pyalsoft/_native/{decoder.bundled_name}"
+            build_data["force_include"][str(decoder_source)] = decoder_destination
+            build_data["force_include_editable"][str(decoder_source)] = (
+                decoder_destination
+            )
 
 
 def _runtime_specification() -> tuple[str, str, str] | None:
