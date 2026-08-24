@@ -3,20 +3,19 @@
 from __future__ import annotations
 
 import math
-import time
 from array import array
 from collections.abc import Iterator
 
 from pyalsoft import (
     SampleType,
-    StreamState,
     finish_stream,
     open_playback,
     open_stream,
     release,
     start_stream,
     try_write_stream,
-    update_stream,
+    wait,
+    write_stream,
 )
 from pyalsoft.bindings import OpenALLibrary
 
@@ -85,19 +84,13 @@ def stream_sine(
             raise ValueError("duration is too short to contain an audio frame")
 
         start_stream(playback, stream)
-        deadline = time.monotonic() + duration + 2.0
         for chunk in chunks:
-            while not try_write_stream(playback, stream, chunk):
-                if time.monotonic() >= deadline:
-                    raise RuntimeError("timed out waiting for a stream buffer")
-                update_stream(playback, stream)
-                time.sleep(0.005)
+            if not write_stream(playback, stream, chunk, timeout=2.0):
+                raise RuntimeError("timed out waiting for a stream buffer")
 
         finish_stream(playback, stream)
-        while update_stream(playback, stream).state is not StreamState.FINISHED:
-            if time.monotonic() >= deadline:
-                raise RuntimeError("timed out waiting for the stream to finish")
-            time.sleep(0.005)
+        if not wait(playback, stream, timeout=duration + 2.0):
+            raise RuntimeError("timed out waiting for the stream to finish")
         release(playback, stream)
 
 

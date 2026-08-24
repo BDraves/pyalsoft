@@ -60,6 +60,7 @@ def test_playing_sound_delegates_status_and_controls(
 
     sound.stop()
     sound.stop()
+    assert sound.wait(timeout=0.0)
     assert not sound.playing
     _assert_state(sound, VoiceState.STOPPED)
     assert sound.end_reason is SoundEndReason.STOPPED
@@ -67,6 +68,20 @@ def test_playing_sound_delegates_status_and_controls(
     assert len(default_library.al.allocated_buffers) == 1
     with pytest.raises(InvalidVoiceStateError, match="stopped"):
         sound.resume()
+
+
+def test_playing_sound_wait_reports_timeout(
+    tmp_path: Path,
+    default_library: FakeLibrary,
+) -> None:
+    path = tmp_path / "wait.wav"
+    _write_wave(path)
+
+    sound = play(path)
+
+    assert not sound.wait(timeout=0.0)
+    default_library.al.states[100] = bindings.AL_STOPPED
+    assert sound.wait(timeout=0.0)
 
 
 def test_playing_sound_exposes_timeline_and_individual_source_controls(

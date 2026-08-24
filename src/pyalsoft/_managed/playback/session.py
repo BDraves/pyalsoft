@@ -667,6 +667,77 @@ def reconfigure_playback(
 
 
 @_serialized_playback
+def reopen_playback(
+    playback: Playback,
+    device_name: PlaybackDevice | str | bytes | None = None,
+) -> None:
+    """Move a live playback session to another output device.
+
+    Existing clips, voices, streams, and effect buses remain valid. The current
+    playback configuration is retained, except that a named HRTF profile is
+    cleared because profile identifiers and availability are device-specific.
+    Pass ``None`` to move to the current default playback device, then use
+    [`list_hrtf_profiles`][pyalsoft.list_hrtf_profiles] and
+    [`reconfigure_playback`][pyalsoft.reconfigure_playback] to select a profile
+    exposed by the new device.
+
+    Args:
+        playback: Open session to migrate.
+        device_name: Target output device or specifier. ``None`` selects the
+            runtime's current default device.
+
+    Raises:
+        TypeError: ``device_name`` has the wrong type.
+        PlaybackClosedError: ``playback`` is closed.
+        AudioBackendError: Migration is unavailable or the backend rejects it.
+    """
+
+    if isinstance(device_name, PlaybackDevice):
+        device_name = device_name.name
+    elif device_name is not None and not isinstance(device_name, (str, bytes)):
+        raise TypeError("device_name must be a PlaybackDevice, str, bytes, or None")
+
+    library = playback._library
+    device = playback._device
+    if not library.alc.is_extension_present(device, "ALC_SOFT_reopen_device"):
+        raise AudioBackendError(
+            "playback device migration requires the ALC_SOFT_reopen_device extension"
+        )
+    retained = replace(playback._config, hrtf_name=None)
+    attributes = _playback_context_attributes(retained, library, device)
+    _activate(playback)
+    _clear_alc_errors(library, device)
+    reopened = library.alc.reopen_device_soft(device, device_name, attributes)
+    _check_alc_error(library, device, "reopen playback device")
+    if not reopened:
+        raise AudioBackendError("reopen playback device failed")
+    library._invalidate_device_extensions(device)
+    playback._config = retained
+
+
+def _playback_connected(playback: Playback) -> bool | None:
+    library = playback._library
+    device = playback._device
+    if not library.alc.is_extension_present(device, "ALC_EXT_disconnect"):
+        return None
+    connected = library.alc.get_integerv(device, bindings.ALC_CONNECTED, 1)[0]
+    _check_alc_error(library, device, "query playback connection state")
+    return bool(connected)
+
+
+@_serialized_playback
+def is_playback_connected(playback: Playback) -> bool | None:
+    """Report connection state, or ``None`` when the backend cannot report it.
+
+    Raises:
+        PlaybackClosedError: ``playback`` is closed.
+        AudioBackendError: OpenAL rejects the connection query.
+    """
+
+    return _playback_connected(playback)
+
+
+@_serialized_playback
 def get_playback_info(playback: Playback) -> PlaybackInfo:
     """Return observed device, context, renderer, and HRTF information.
 
@@ -774,6 +845,7 @@ def get_playback_info(playback: Playback) -> PlaybackInfo:
         max_auxiliary_sends=max_auxiliary_sends,
         output_limiter=output_limiter,
         output_mode=output_mode,
+        connected=_playback_connected(playback),
     )
 
 

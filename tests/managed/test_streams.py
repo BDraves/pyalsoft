@@ -21,6 +21,7 @@ from pyalsoft import (
     bindings,
     close_playback,
     finish_stream,
+    get_voice_config,
     open_playback,
     open_stream,
     pause,
@@ -33,6 +34,8 @@ from pyalsoft import (
     stop,
     try_write_stream,
     update_stream,
+    wait,
+    write_stream,
 )
 from tests._support.managed_backend import FakeLibrary, as_library
 
@@ -77,6 +80,7 @@ def test_stream_uses_bounded_reusable_buffers_and_drains_finished_input(
         )
         assert len(library.al.allocated_buffers) == 2
         assert library.al.sources[100][bindings.AL_GAIN] == 0.5
+        assert get_voice_config(playback, stream).gain == 0.5
 
         first = bytearray(b"\0\0" * 10)
         assert try_write_stream(playback, stream, first)
@@ -115,6 +119,28 @@ def test_stream_uses_bounded_reusable_buffers_and_drains_finished_input(
     assert library.al.allocated_effects == set()
     assert library.al.allocated_effect_slots == set()
     assert library.al.allocated_filters == set()
+
+
+def test_blocking_stream_write_and_wait_support_timeouts() -> None:
+    library = FakeLibrary()
+    with open_playback(library=as_library(library)) as playback:
+        stream = open_stream(
+            playback,
+            channels=1,
+            sample_rate=10,
+            buffer_count=1,
+        )
+        assert write_stream(playback, stream, b"\0\0" * 2, timeout=0.0)
+        assert not write_stream(playback, stream, b"\0\0", timeout=0.0)
+        start_stream(playback, stream)
+        library.al.processed[100] = 1
+        library.al.states[100] = bindings.AL_STOPPED
+        assert write_stream(playback, stream, b"\0\0", timeout=0.0)
+
+        finish_stream(playback, stream)
+        library.al.processed[100] = 1
+        library.al.states[100] = bindings.AL_STOPPED
+        assert wait(playback, stream, timeout=0.0)
 
 
 def test_stream_update_reclaims_offsets_and_counts_underrun_episodes() -> None:

@@ -13,6 +13,7 @@ from pyalsoft._managed._backend import (
     _buffer_format_for_pcm,
     _prepare_buffer_data,
 )
+from pyalsoft._managed._wait import _Waiter
 from pyalsoft._managed.audio import (
     _BLOCK_FORMATS,
     _BUFFER_FORMAT_SPECS,
@@ -417,6 +418,56 @@ def try_write_stream(
                 )
                 _check_al_error(playback, "skip processed stream chunks")
     return True
+
+
+def write_stream(
+    playback: Playback,
+    stream: Stream,
+    samples: Buffer,
+    *,
+    frame_count: int | None = None,
+    timeout: float | None = None,
+    poll_interval: float = 0.01,
+) -> bool:
+    """Queue one chunk, waiting for bounded-buffer capacity when necessary.
+
+    Args:
+        playback: Session that owns ``stream``.
+        stream: Live stream that will receive the chunk.
+        samples: Complete bytes-like encoded or PCM chunk.
+        frame_count: Decoded frame count for an encoded chunk.
+        timeout: Maximum wall-clock seconds to wait, or ``None`` for no limit.
+        poll_interval: Positive wall-clock seconds between capacity checks.
+
+    Returns:
+        ``True`` when the chunk is queued, or ``False`` when the timeout expires.
+
+    Raises:
+        TypeError: A handle, sample buffer, or timing argument has the wrong type.
+        ValueError: A chunk or timing argument is invalid.
+        InvalidHandleError: The stream is released or belongs to another session.
+        InvalidVoiceStateError: The stream no longer accepts input.
+        PlaybackClosedError: ``playback`` is closed.
+        AudioBackendError: OpenAL cannot reclaim or queue a buffer.
+
+    Note:
+        Capacity cannot become available before an initial stream has started.
+        Do not block while filling all initial buffers; start the stream first or
+        provide a finite timeout.
+    """
+
+    waiter = _Waiter(timeout, poll_interval)
+    while True:
+        update_stream(playback, stream)
+        if try_write_stream(
+            playback,
+            stream,
+            samples,
+            frame_count=frame_count,
+        ):
+            return True
+        if not waiter.pause():
+            return False
 
 
 @_serialized_playback

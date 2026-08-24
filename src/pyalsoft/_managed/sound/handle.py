@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from pyalsoft._managed._wait import _Waiter
 from pyalsoft._managed.audio import PCM, SampleType, SoundInfo
 from pyalsoft._managed.effects import _OMITTED_FILTER, EffectSend, Filter
 from pyalsoft._managed.errors import AudioError
@@ -541,6 +542,29 @@ class PlayingSound:
         """
 
         self._runtime.stop(self._record)
+
+    def wait(
+        self,
+        timeout: float | None = None,
+        *,
+        poll_interval: float = 0.01,
+    ) -> bool:
+        """Block until this sound ends, or a timeout expires.
+
+        Args:
+            timeout: Maximum wall-clock seconds to wait, or ``None`` for no limit.
+            poll_interval: Positive wall-clock seconds between status queries.
+
+        Returns:
+            ``True`` when the sound is terminal, or ``False`` when the timeout
+            expires first.
+        """
+
+        waiter = _Waiter(timeout, poll_interval)
+        while not self.done:
+            if not waiter.pause():
+                return False
+        return True
 
     def seek(self, offset_seconds: float) -> None:
         """Move the playhead to an offset in source-audio seconds.

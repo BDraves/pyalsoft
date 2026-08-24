@@ -16,10 +16,12 @@ from pyalsoft import (
     close_playback,
     get_playback_config,
     get_playback_info,
+    is_playback_connected,
     list_hrtf_profiles,
     list_playback_devices,
     open_playback,
     reconfigure_playback,
+    reopen_playback,
 )
 from tests._support.managed_backend import FakeLibrary, as_library
 
@@ -43,6 +45,51 @@ def test_devices_are_enumerated_and_consumed_by_open_playback() -> None:
         assert library.alc.opened_device_name == "USB Headset"
         assert library.alc.context_attributes == (bindings.ALC_HRTF_SOFT, 1)
         assert get_playback_info(playback).device_name == "USB Headset"
+
+
+def test_connection_state_and_device_migration_preserve_resources() -> None:
+    library = FakeLibrary()
+    config = PlaybackConfig(sample_rate=44_100, hrtf=True, hrtf_name="Studio HRTF")
+
+    with open_playback(config=config, library=as_library(library)) as playback:
+        assert is_playback_connected(playback) is True
+        assert get_playback_info(playback).connected is True
+
+        library.alc.connected = False
+        assert is_playback_connected(playback) is False
+
+        reopen_playback(playback, PlaybackDevice("USB Headset"))
+
+        assert library.alc.reopen_calls == [
+            (
+                "USB Headset",
+                (
+                    bindings.ALC_FREQUENCY,
+                    44_100,
+                    bindings.ALC_HRTF_SOFT,
+                    1,
+                ),
+            )
+        ]
+        assert library.invalidated_devices == [library.alc.device]
+        assert get_playback_config(playback) == PlaybackConfig(
+            sample_rate=44_100,
+            hrtf=True,
+        )
+        assert get_playback_info(playback).device_name == "USB Headset"
+
+
+def test_connection_and_migration_report_unavailable_extensions() -> None:
+    library = FakeLibrary()
+    library.alc.extensions.difference_update(
+        {"ALC_EXT_disconnect", "ALC_SOFT_reopen_device"}
+    )
+
+    with open_playback(library=as_library(library)) as playback:
+        assert is_playback_connected(playback) is None
+        assert get_playback_info(playback).connected is None
+        with pytest.raises(AudioBackendError, match="reopen_device"):
+            reopen_playback(playback, None)
 
 
 def test_device_enumeration_falls_back_to_core_specifiers() -> None:

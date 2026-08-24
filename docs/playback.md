@@ -65,6 +65,16 @@ remains unchanged. For sample-accurate work, use `offset_frames`,
 `rewind()` follows OpenAL behavior by moving to the beginning and entering the
 `INITIAL` state. `restart()` moves to the beginning and immediately plays.
 
+Use [`PlayingSound.wait()`][pyalsoft.PlayingSound.wait] when a thread should
+block until playback ends. It returns `False` instead of raising when an
+optional timeout expires:
+
+```python
+sound = play("notification.wav")
+if not sound.wait(timeout=5.0):
+    sound.stop()
+```
+
 For sounds attached to the player, UI sounds, and other sources that should not
 use position, distance attenuation, directional cones, Doppler shift, or
 positional panning, pass `spatialize=False` to [`play()`][pyalsoft.play]:

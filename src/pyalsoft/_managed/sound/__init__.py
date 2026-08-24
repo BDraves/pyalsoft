@@ -28,7 +28,7 @@ from pyalsoft._managed.playback.voices import (
 from pyalsoft._managed.resources import Clip, SoundCacheInfo, Voice
 from pyalsoft._managed.sound.handle import PlayingSound
 from pyalsoft._managed.sound.runtime import _DefaultRuntime
-from pyalsoft._managed.sound.wave import get_sound_info
+from pyalsoft._managed.sound.wave import get_sound_info, load_audio
 from pyalsoft._managed.spatial import (
     _OMITTED_DISTANCE_MODEL,
     _OMITTED_RESAMPLER,
@@ -53,6 +53,7 @@ __all__ = [
     "get_listener",
     "get_sound_cache_info",
     "get_sound_info",
+    "load_audio",
     "play",
     "set_acoustics",
     "set_listener",

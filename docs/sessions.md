@@ -29,6 +29,24 @@ state; sessions on independent library instances may proceed concurrently.
 [`close_playback()`][pyalsoft.close_playback] waits for an operation already in
 progress and makes later operations fail with
 [`PlaybackClosedError`][pyalsoft.PlaybackClosedError].
+Use [`get_voice_config()`][pyalsoft.get_voice_config] to inspect the immutable
+configuration currently retained for an explicit voice or stream.
+
+Supported WAV files can be decoded and uploaded directly while retaining the
+same explicit resource ownership:
+
+```python
+from pyalsoft import open_playback, play, upload, wait
+
+with open_playback() as playback:
+    clip = upload(playback, "notification.wav")
+    voice = play(playback, clip)
+    wait(playback, voice)
+```
+
+[`load_audio()`][pyalsoft.load_audio] exposes the same WAV decoder when an
+application needs the intermediate [`PCM`][pyalsoft.PCM] value. Additional file
+formats are intentionally outside the current major-version file contract.
 
 ## Loop regions
 
@@ -109,6 +127,13 @@ and either SN3D or N3D scaling; FuMa layout and scaling remain valid through
 order 3. `open_stream()` accepts the same `format` and property options. Pass
 `frame_count=` to `try_write_stream()` for each encoded chunk; fixed-width
 chunks infer their frame count from their byte length.
+
+[`write_stream()`][pyalsoft.write_stream] is the blocking counterpart to
+`try_write_stream()`. It reclaims processed buffers while waiting and returns
+`False` if its optional timeout expires. After `finish_stream()`, use
+[`wait()`][pyalsoft.wait] to block until queued audio drains. `wait()` also
+supports static voices and uses portable state polling rather than requiring an
+optional native event extension.
 
 These are input-buffer capabilities. `ALC_LOKI_audio_channel` contributes
 legacy channel constants but declares no callable selection function in the
@@ -219,6 +244,37 @@ reports the retained request, while
 negotiated by the backend. The reset may briefly interrupt output. Live
 reconfiguration requires `ALC_SOFT_HRTF`, which is provided by the bundled
 OpenAL Soft runtime.
+
+[`reopen_playback()`][pyalsoft.reopen_playback] instead migrates a live session
+to another output device while retaining clips, voices, streams, and effect
+buses. It preserves the requested configuration except for `hrtf_name`, which
+is cleared because profiles are device-specific. Enumerate the new device's
+profiles and call `reconfigure_playback()` afterward when a named profile is
+required.
+
+Connection state is exposed as `PlaybackInfo.connected` and through
+[`is_playback_connected()`][pyalsoft.is_playback_connected]. Both return `None`
+when the selected backend lacks `ALC_EXT_disconnect`.
+
+## Device-list events
+
+[`subscribe_device_events()`][pyalsoft.subscribe_device_events] creates a
+bounded queue of playback and capture device additions, removals, and default
+changes. OpenAL's native callback only enqueues immutable events; application
+code calls `subscription.next()` from its own thread:
+
+```python
+from pyalsoft import subscribe_device_events
+
+with subscribe_device_events() as events:
+    event = events.next(timeout=5.0)
+    if event is not None:
+        print(event.type.value, event.device_kind.value, event.name)
+```
+
+Only one system-event owner can use a loaded native OpenAL library at a time.
+The queue discards its oldest event when full and exposes the loss count as
+`dropped_count`.
 
 The available requests and observations are:
 

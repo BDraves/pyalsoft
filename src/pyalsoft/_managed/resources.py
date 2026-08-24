@@ -364,6 +364,8 @@ class PlaybackInfo:
             ``ALC_SOFT_output_limiter`` is unavailable.
         output_mode: Active device output mode, or ``None`` when
             ``ALC_SOFT_output_mode`` is unavailable.
+        connected: Whether the device remains connected, or ``None`` when
+            ``ALC_EXT_disconnect`` is unavailable.
     """
 
     device_name: str
@@ -379,6 +381,7 @@ class PlaybackInfo:
     max_auxiliary_sends: int | None = None
     output_limiter: bool | None = None
     output_mode: PlaybackOutputMode | None = None
+    connected: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
