@@ -2,6 +2,17 @@
 
 Notable user-facing changes to PyALSoft are documented here.
 
+## Unreleased
+
+## 1.8.1 - 2026.08.24
+
+### Fixed
+
+- Made decoder artifacts source-addressed across local, cached, vendored, and
+  release builds; validated multichannel WAV speaker masks before OpenAL upload;
+  and bounded encoded and decoded static-audio memory to 512 MiB. (@BDraves)
+
+
 ## 1.8.0 - 2026.08.23
 
 ### Added

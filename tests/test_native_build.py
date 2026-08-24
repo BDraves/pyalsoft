@@ -8,8 +8,10 @@ import pytest
 
 from pyalsoft._pyinstaller import get_hook_dirs
 from tools.audio_decoder import (
+    decoder_source_fingerprint,
     decoder_target,
     staged_decoder_path,
+    vendored_decoder_path,
     verify_vendored_sources,
 )
 from tools.build_openal_soft import (
@@ -224,7 +226,23 @@ def test_decoder_staging_uses_shared_native_root(
     target = decoder_target("win32", "AMD64")
 
     assert staged_decoder_path(target) == (
-        configured / "win_amd64" / "pyalsoft_decoder.dll"
+        configured
+        / "win_amd64"
+        / decoder_source_fingerprint()[:12]
+        / "pyalsoft_decoder.dll"
+    )
+
+
+def test_vendored_decoder_path_is_source_addressed() -> None:
+    target = decoder_target("win32", "AMD64")
+
+    assert (
+        vendored_decoder_path(target)
+        == (
+            Path("vendor/audio-decoder/runtime/win_amd64")
+            / decoder_source_fingerprint()[:12]
+            / "pyalsoft_decoder.dll"
+        ).resolve()
     )
 
 

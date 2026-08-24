@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from pyalsoft import bindings
+from pathlib import Path
+
+from pyalsoft import bindings, get_sound_info, load_audio
 from pyalsoft._managed.sound import decoder
 from pyalsoft.bindings import _library as runtime
 
@@ -15,6 +17,15 @@ def main() -> None:
     if decoder_path is None:
         raise RuntimeError("the platform wheel did not contain an audio decoder")
     decoder._NativeDecoder(decoder_path)
+
+    fixture_root = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "audio"
+    for filename in ("tone-s16.wav", "tone-s16.flac", "tone.mp3", "tone.ogg"):
+        path = fixture_root / filename
+        pcm = load_audio(path)
+        if pcm.info != get_sound_info(path):
+            raise RuntimeError(
+                f"decoder probe disagrees with decoded PCM for {filename}"
+            )
 
     library = bindings.load()
     if library.library_name != bundled:

@@ -13,7 +13,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from tools.audio_decoder import decoder_target, staged_decoder_path  # noqa: E402
+from tools.audio_decoder import (  # noqa: E402
+    decoder_target,
+    staged_decoder_path,
+    vendored_decoder_path,
+)
 from tools.openal_soft import (  # noqa: E402
     native_runtime_root,
     runtime_target,
@@ -60,14 +64,7 @@ class CustomBuildHook(BuildHookInterface):  # type: ignore
 
         decoder = decoder_target()
         decoder_source = staged_decoder_path(decoder, root)
-        vendored_decoder = (
-            root
-            / "vendor"
-            / "audio-decoder"
-            / "runtime"
-            / decoder.identifier
-            / decoder.bundled_name
-        )
+        vendored_decoder = vendored_decoder_path(decoder)
         if not decoder_source.is_file() and vendored_decoder.is_file():
             decoder_source = vendored_decoder
         if not decoder_source.is_file() and version != "editable":

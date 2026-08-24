@@ -348,6 +348,7 @@ int32_t pyalsoft_decoder_decode(
     size_t data_size,
     int32_t codec,
     int32_t sample_format,
+    size_t maximum_pcm_size,
     struct pyalsoft_decoder_info *info,
     void **pcm,
     size_t *pcm_size,
@@ -373,6 +374,13 @@ int32_t pyalsoft_decoder_decode(
     size = (size_t)(
         info->frame_count * info->channels * pyalsoft_sample_size(sample_format)
     );
+    if (size > maximum_pcm_size) {
+        return pyalsoft_fail(
+            error,
+            PYALSOFT_DECODER_OUTPUT_TOO_LARGE,
+            "decoded audio exceeds the configured size limit"
+        );
+    }
     allocation = malloc(size);
     if (allocation == NULL) {
         return pyalsoft_fail(

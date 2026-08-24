@@ -13,7 +13,7 @@ from importlib.metadata import PackageNotFoundError, distribution
 from os import PathLike
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Any, BinaryIO
 
 from pyalsoft._managed.audio import PCM, AudioPath, SampleType, SoundInfo
 from pyalsoft._managed.errors import AudioFileError
@@ -36,6 +36,18 @@ _SAMPLE_TYPES = {
     _NativeSampleFormat.UINT8: SampleType.UINT8,
     _NativeSampleFormat.INT16: SampleType.INT16,
     _NativeSampleFormat.FLOAT32: SampleType.FLOAT32,
+}
+
+_MAX_AUDIO_BYTES = 512 * 1024 * 1024
+_WAVE_EXTENSIBLE_TAG = 0xFFFE
+_WAVE_SUBFORMAT_GUID_SUFFIX = bytes.fromhex("00001000800000aa00389b71")
+_OPENAL_WAVE_CHANNEL_MASKS = {
+    1: 0x0004,
+    2: 0x0003,
+    4: 0x0033,
+    6: 0x003F,
+    7: 0x070F,
+    8: 0x063F,
 }
 
 
@@ -61,6 +73,14 @@ class _DetectedAudio:
     sample_format: _NativeSampleFormat
 
 
+@dataclass(frozen=True, slots=True)
+class _WaveFormat:
+    channels: int
+    sample_rate: int
+    sample_format: _NativeSampleFormat
+    block_alignment: int
+
+
 def _decoder_library_name() -> str:
     if sys.platform == "win32":
         return "pyalsoft_decoder.dll"
@@ -80,17 +100,17 @@ def _decoder_library_path() -> Path | None:
     # An explicit local native build is usable without modifying the source
     # package. Installed distributions never depend on this development path.
     project_root = Path(__file__).parents[4]
-    machine = platform.machine().casefold()
-    architecture = "aarch64" if machine in {"arm64", "aarch64"} else "x86_64"
-    if sys.platform == "win32":
-        runtime_id = "win_amd64"
-    elif sys.platform == "darwin":
-        runtime_id = f"macos_{'arm64' if architecture == 'aarch64' else 'x86_64'}"
-    else:
-        runtime_id = f"linux_{architecture}"
-    staged_path = project_root / "build" / "native" / runtime_id / library_name
-    if (project_root / "pyproject.toml").is_file() and staged_path.is_file():
-        return staged_path.resolve()
+    if (project_root / "pyproject.toml").is_file():
+        try:
+            from tools.audio_decoder import decoder_target, staged_decoder_path
+
+            staged_path = staged_decoder_path(
+                decoder_target(sys.platform, platform.machine()), project_root
+            )
+        except (ImportError, RuntimeError):
+            staged_path = None
+        if staged_path is not None and staged_path.is_file():
+            return staged_path.resolve()
     try:
         installed_path = Path(
             str(
@@ -129,6 +149,7 @@ class _NativeDecoder:
             ctypes.c_size_t,
             ctypes.c_int32,
             ctypes.c_int32,
+            ctypes.c_size_t,
             ctypes.POINTER(_NativeInfo),
             ctypes.POINTER(ctypes.c_void_p),
             ctypes.POINTER(ctypes.c_size_t),
@@ -140,8 +161,8 @@ class _NativeDecoder:
 
     @staticmethod
     def _input(data: bytes) -> tuple[Any, ctypes.c_void_p]:
-        buffer = ctypes.create_string_buffer(data)
-        return buffer, ctypes.cast(buffer, ctypes.c_void_p)
+        owner = ctypes.c_char_p(data)
+        return owner, ctypes.cast(owner, ctypes.c_void_p)
 
     @staticmethod
     def _raise_error(path: Path, native_error: _NativeError) -> None:
@@ -192,6 +213,7 @@ class _NativeDecoder:
             len(data),
             int(detected.codec),
             int(detected.sample_format),
+            _MAX_AUDIO_BYTES,
             ctypes.byref(info),
             ctypes.byref(output),
             ctypes.byref(output_size),
@@ -234,7 +256,110 @@ def _get_native_decoder() -> _NativeDecoder:
         return _native_decoder
 
 
-def _wav_sample_format(data: bytes, path: Path) -> _NativeSampleFormat:
+def _validate_wave_channel_layout(
+    channels: int,
+    channel_mask: int | None,
+    path: Path,
+) -> None:
+    expected = _OPENAL_WAVE_CHANNEL_MASKS.get(channels)
+    if expected is None:
+        raise AudioFileError(f"unsupported {channels}-channel WAV audio file: {path}")
+    if channels > 2 and channel_mask is None:
+        raise AudioFileError(
+            f"multichannel WAV audio requires an extensible channel mask: {path}"
+        )
+    if channel_mask not in (None, 0, expected):
+        raise AudioFileError(
+            f"WAV channel mask 0x{channel_mask:x} does not match the supported "
+            f"{channels}-channel OpenAL layout: {path}"
+        )
+    if channels > 2 and channel_mask == 0:
+        raise AudioFileError(
+            f"multichannel WAV audio requires an explicit channel mask: {path}"
+        )
+
+
+def _parse_wave_format(chunk: bytes, path: Path) -> _WaveFormat:
+    if len(chunk) < 16:
+        raise AudioFileError(f"invalid WAV format chunk in audio file {path}")
+    format_tag, channels, sample_rate, byte_rate, block_alignment, bits = (
+        struct.unpack_from("<HHIIHH", chunk)
+    )
+    channel_mask: int | None = None
+    if format_tag == _WAVE_EXTENSIBLE_TAG:
+        if len(chunk) < 40 or int.from_bytes(chunk[16:18], "little") < 22:
+            raise AudioFileError(
+                f"invalid extensible WAV format chunk in audio file {path}"
+            )
+        valid_bits = int.from_bytes(chunk[18:20], "little")
+        if valid_bits == 0 or valid_bits > bits:
+            raise AudioFileError(
+                f"invalid extensible WAV valid-bit count in audio file {path}"
+            )
+        channel_mask = int.from_bytes(chunk[20:24], "little")
+        subformat = chunk[24:40]
+        if subformat[4:] != _WAVE_SUBFORMAT_GUID_SUFFIX:
+            raise AudioFileError(f"unsupported WAV subformat in audio file {path}")
+        format_tag = int.from_bytes(subformat[:4], "little")
+
+    _validate_wave_channel_layout(channels, channel_mask, path)
+    if sample_rate == 0 or block_alignment == 0:
+        raise AudioFileError(f"invalid WAV format values in audio file {path}")
+    if format_tag == 1:
+        try:
+            sample_format = {
+                8: _NativeSampleFormat.UINT8,
+                16: _NativeSampleFormat.INT16,
+                24: _NativeSampleFormat.FLOAT32,
+                32: _NativeSampleFormat.FLOAT32,
+            }[bits]
+        except KeyError as error:
+            raise AudioFileError(
+                f"unsupported {bits}-bit PCM WAV file: {path}"
+            ) from error
+    elif format_tag == 3:
+        if bits not in (32, 64):
+            raise AudioFileError(
+                f"unsupported {bits}-bit floating-point WAV file: {path}"
+            )
+        sample_format = _NativeSampleFormat.FLOAT32
+    else:
+        raise AudioFileError(f"unsupported compressed WAV audio file {path}")
+    expected_alignment = channels * bits // 8
+    if (
+        block_alignment != expected_alignment
+        or byte_rate != sample_rate * block_alignment
+    ):
+        raise AudioFileError(f"invalid WAV frame alignment in audio file {path}")
+    return _WaveFormat(channels, sample_rate, sample_format, block_alignment)
+
+
+def _wave_sound_info(
+    format: _WaveFormat,
+    data_size: int | None,
+    path: Path,
+) -> SoundInfo:
+    if data_size is None:
+        raise AudioFileError(f"WAV audio file has no data chunk: {path}")
+    frame_count, remainder = divmod(data_size, format.block_alignment)
+    if remainder:
+        raise AudioFileError(f"WAV data is not aligned to complete frames: {path}")
+    if frame_count == 0:
+        raise AudioFileError(
+            f"could not decode audio file {path}: audio contains no complete sample frames"
+        )
+    try:
+        return SoundInfo(
+            channels=format.channels,
+            sample_rate=format.sample_rate,
+            sample_type=_SAMPLE_TYPES[format.sample_format],
+            frame_count=frame_count,
+        )
+    except (TypeError, ValueError) as error:
+        raise AudioFileError(f"unsupported audio file {path}: {error}") from error
+
+
+def _wav_metadata(data: bytes, path: Path) -> tuple[_WaveFormat, int]:
     declared_size = int.from_bytes(data[4:8], "little") + 8
     if declared_size > len(data):
         raise AudioFileError(
@@ -242,53 +367,64 @@ def _wav_sample_format(data: bytes, path: Path) -> _NativeSampleFormat:
             f"read {len(data)}"
         )
     offset = 12
-    sample_format: _NativeSampleFormat | None = None
-    while offset + 8 <= len(data):
+    format: _WaveFormat | None = None
+    data_size: int | None = None
+    while offset + 8 <= declared_size:
         chunk_id = data[offset : offset + 4]
         chunk_size = int.from_bytes(data[offset + 4 : offset + 8], "little")
         chunk_start = offset + 8
         chunk_end = chunk_start + chunk_size
-        if chunk_end > len(data):
+        if chunk_end > declared_size:
             raise AudioFileError(f"truncated WAV chunk in audio file {path}")
-        if chunk_id == b"fmt ":
-            if chunk_size < 16:
-                raise AudioFileError(f"invalid WAV format chunk in audio file {path}")
-            format_tag, _, _, _, _, bits = struct.unpack_from(
-                "<HHIIHH", data, chunk_start
-            )
-            if format_tag == 0xFFFE:
-                if chunk_size < 40:
-                    raise AudioFileError(
-                        f"invalid extensible WAV format chunk in audio file {path}"
-                    )
-                format_tag = int.from_bytes(
-                    data[chunk_start + 24 : chunk_start + 26], "little"
-                )
-            if format_tag == 1:
-                try:
-                    sample_format = {
-                        8: _NativeSampleFormat.UINT8,
-                        16: _NativeSampleFormat.INT16,
-                        24: _NativeSampleFormat.FLOAT32,
-                        32: _NativeSampleFormat.FLOAT32,
-                    }[bits]
-                except KeyError as error:
-                    raise AudioFileError(
-                        f"unsupported {bits}-bit PCM WAV file: {path}"
-                    ) from error
-            if format_tag == 3:
-                if bits in (32, 64):
-                    sample_format = _NativeSampleFormat.FLOAT32
-                else:
-                    raise AudioFileError(
-                        f"unsupported {bits}-bit floating-point WAV file: {path}"
-                    )
-            elif format_tag != 1:
-                raise AudioFileError(f"unsupported compressed WAV audio file {path}")
+        if chunk_id == b"fmt " and format is None:
+            format = _parse_wave_format(data[chunk_start:chunk_end], path)
+        elif chunk_id == b"data" and data_size is None:
+            data_size = chunk_size
         offset = chunk_end + (chunk_size & 1)
-    if sample_format is not None:
-        return sample_format
-    raise AudioFileError(f"WAV audio file has no format chunk: {path}")
+    if format is None:
+        raise AudioFileError(f"WAV audio file has no format chunk: {path}")
+    _wave_sound_info(format, data_size, path)
+    assert data_size is not None
+    return format, data_size
+
+
+def _wav_sample_format(data: bytes, path: Path) -> _NativeSampleFormat:
+    format, _ = _wav_metadata(data, path)
+    return format.sample_format
+
+
+def _probe_wave_file(source: BinaryIO, path: Path, file_size: int) -> SoundInfo:
+    source.seek(0)
+    header = source.read(12)
+    declared_size = int.from_bytes(header[4:8], "little") + 8
+    if declared_size > file_size:
+        raise AudioFileError(
+            f"truncated WAV audio file {path}: expected {declared_size} bytes, "
+            f"read {file_size}"
+        )
+    offset = 12
+    format: _WaveFormat | None = None
+    data_size: int | None = None
+    while offset + 8 <= declared_size:
+        source.seek(offset)
+        chunk_header = source.read(8)
+        if len(chunk_header) != 8:
+            raise AudioFileError(f"truncated WAV chunk in audio file {path}")
+        chunk_id = chunk_header[:4]
+        chunk_size = int.from_bytes(chunk_header[4:8], "little")
+        chunk_start = offset + 8
+        chunk_end = chunk_start + chunk_size
+        if chunk_end > declared_size:
+            raise AudioFileError(f"truncated WAV chunk in audio file {path}")
+        if chunk_id == b"fmt " and format is None:
+            source.seek(chunk_start)
+            format = _parse_wave_format(source.read(min(chunk_size, 40)), path)
+        elif chunk_id == b"data" and data_size is None:
+            data_size = chunk_size
+        offset = chunk_end + (chunk_size & 1)
+    if format is None:
+        raise AudioFileError(f"WAV audio file has no format chunk: {path}")
+    return _wave_sound_info(format, data_size, path)
 
 
 def _flac_sample_format(data: bytes, path: Path) -> _NativeSampleFormat:
@@ -309,6 +445,27 @@ def _flac_sample_format(data: bytes, path: Path) -> _NativeSampleFormat:
         if bits_per_sample <= 16
         else _NativeSampleFormat.FLOAT32
     )
+
+
+def _flac_sound_info(data: bytes, path: Path) -> SoundInfo:
+    sample_format = _flac_sample_format(data, path)
+    packed = int.from_bytes(data[18:26], "big")
+    sample_rate = (packed >> 44) & 0xFFFFF
+    channels = ((packed >> 41) & 0x07) + 1
+    frame_count = packed & ((1 << 36) - 1)
+    if channels > 2:
+        raise AudioFileError(
+            f"could not decode audio file {path}: compressed audio must be mono or stereo"
+        )
+    try:
+        return SoundInfo(
+            channels=channels,
+            sample_rate=sample_rate,
+            sample_type=_SAMPLE_TYPES[sample_format],
+            frame_count=frame_count,
+        )
+    except (TypeError, ValueError) as error:
+        raise AudioFileError(f"unsupported audio file {path}: {error}") from error
 
 
 def _looks_like_mp3_frame(data: bytes, offset: int) -> bool:
@@ -388,11 +545,37 @@ def _detect_audio(data: bytes, path: Path) -> _DetectedAudio:
 
 def _read_audio_file(path: Path) -> tuple[bytes, _DetectedAudio]:
     try:
+        file_size = path.stat().st_size
+        if file_size > _MAX_AUDIO_BYTES:
+            raise AudioFileError(
+                f"audio file {path} exceeds the {_MAX_AUDIO_BYTES}-byte input limit"
+            )
         data = path.read_bytes()
     except OSError as error:
         raise AudioFileError(f"could not read audio file {path}: {error}") from error
     detected = _detect_audio(data, path)
     return data, detected
+
+
+def _probe_audio_file(path: Path) -> SoundInfo:
+    try:
+        file_size = path.stat().st_size
+        with path.open("rb") as source:
+            header = source.read(42)
+            if header.startswith(b"RIFF") and header[8:12] == b"WAVE":
+                return _probe_wave_file(source, path, file_size)
+            if header.startswith(b"fLaC"):
+                return _flac_sound_info(header, path)
+            if file_size > _MAX_AUDIO_BYTES:
+                raise AudioFileError(
+                    f"audio file {path} exceeds the {_MAX_AUDIO_BYTES}-byte input limit"
+                )
+            source.seek(0)
+            data = source.read()
+    except OSError as error:
+        raise AudioFileError(f"could not read audio file {path}: {error}") from error
+    detected = _detect_audio(data, path)
+    return _get_native_decoder().probe(data, detected, path)
 
 
 def _normalize_audio_path(path: AudioPath) -> Path:
@@ -411,7 +594,8 @@ def load_audio(path: AudioPath) -> PCM:
 
     WAV, FLAC, MP3, and Ogg Vorbis files are detected from their contents and
     decoded completely in memory. This function performs no playback-device
-    work. Source sample rates are retained.
+    work. Source sample rates are retained. Encoded input and decoded PCM are
+    each limited to 512 MiB.
 
     Args:
         path: Path to a supported audio file.
@@ -432,7 +616,9 @@ def get_sound_info(path: AudioPath) -> SoundInfo:
     """Read decoded format and length information without opening a device.
 
     The returned sample type and bit depth describe the decoded PCM that
-    PyALSoft will upload, rather than a compressed bitrate.
+    PyALSoft will upload, rather than a compressed bitrate. WAV and FLAC
+    metadata is read without loading sample data; MP3 and Ogg Vorbis require a
+    complete encoded-file scan for an exact frame count.
 
     Args:
         path: Path to a supported WAV, FLAC, MP3, or Ogg Vorbis file.
@@ -446,6 +632,4 @@ def get_sound_info(path: AudioPath) -> SoundInfo:
             supported static-audio layouts.
     """
 
-    normalized = _normalize_audio_path(path)
-    data, detected = _read_audio_file(normalized)
-    return _get_native_decoder().probe(data, detected, normalized)
+    return _probe_audio_file(_normalize_audio_path(path))
