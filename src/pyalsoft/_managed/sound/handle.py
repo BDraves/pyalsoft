@@ -357,6 +357,16 @@ class PlayingSound:
         self.update(cone_outer_gain=value)
 
     @property
+    def cone_outer_gain_high_frequency(self) -> float:
+        """High-frequency gain outside a directional sound's outer cone."""
+
+        return self.config.cone_outer_gain_high_frequency
+
+    @cone_outer_gain_high_frequency.setter
+    def cone_outer_gain_high_frequency(self, value: float) -> None:
+        self.update(cone_outer_gain_high_frequency=value)
+
+    @property
     def distance_model(self) -> DistanceModel | None:
         """Per-source distance model, or ``None`` to inherit the context."""
 
@@ -435,6 +445,36 @@ class PlayingSound:
     @room_rolloff_factor.setter
     def room_rolloff_factor(self, value: float) -> None:
         self.update(room_rolloff_factor=value)
+
+    @property
+    def direct_filter_gain_high_frequency_auto(self) -> bool:
+        """Whether direct high-frequency filtering follows source attenuation."""
+
+        return self.config.direct_filter_gain_high_frequency_auto
+
+    @direct_filter_gain_high_frequency_auto.setter
+    def direct_filter_gain_high_frequency_auto(self, value: bool) -> None:
+        self.update(direct_filter_gain_high_frequency_auto=value)
+
+    @property
+    def auxiliary_send_filter_gain_auto(self) -> bool:
+        """Whether auxiliary-send gain follows source attenuation."""
+
+        return self.config.auxiliary_send_filter_gain_auto
+
+    @auxiliary_send_filter_gain_auto.setter
+    def auxiliary_send_filter_gain_auto(self, value: bool) -> None:
+        self.update(auxiliary_send_filter_gain_auto=value)
+
+    @property
+    def auxiliary_send_filter_gain_high_frequency_auto(self) -> bool:
+        """Whether wet high-frequency filtering follows source attenuation."""
+
+        return self.config.auxiliary_send_filter_gain_high_frequency_auto
+
+    @auxiliary_send_filter_gain_high_frequency_auto.setter
+    def auxiliary_send_filter_gain_high_frequency_auto(self, value: bool) -> None:
+        self.update(auxiliary_send_filter_gain_high_frequency_auto=value)
 
     @property
     def stereo_mode(self) -> StereoMode:
@@ -617,6 +657,7 @@ class PlayingSound:
         cone_inner_angle: float | None = None,
         cone_outer_angle: float | None = None,
         cone_outer_gain: float | None = None,
+        cone_outer_gain_high_frequency: float | None = None,
         distance_model: DistanceModel | None = _OMITTED_DISTANCE_MODEL,
         radius: float | None = None,
         spatialization: SpatializationMode | None = None,
@@ -625,6 +666,9 @@ class PlayingSound:
         resampler: Resampler | None = _OMITTED_RESAMPLER,
         air_absorption_factor: float | None = None,
         room_rolloff_factor: float | None = None,
+        direct_filter_gain_high_frequency_auto: bool | None = None,
+        auxiliary_send_filter_gain_auto: bool | None = None,
+        auxiliary_send_filter_gain_high_frequency_auto: bool | None = None,
         stereo_mode: StereoMode | None = None,
         super_stereo_width: float | None = _OMITTED_SUPER_STEREO_WIDTH,
         filter: Filter | None = _OMITTED_FILTER,
@@ -697,6 +741,7 @@ class PlayingSound:
             cone_inner_angle=cone_inner_angle,
             cone_outer_angle=cone_outer_angle,
             cone_outer_gain=cone_outer_gain,
+            cone_outer_gain_high_frequency=cone_outer_gain_high_frequency,
             distance_model=distance_model,
             radius=radius,
             spatialization=spatialization,
@@ -705,6 +750,13 @@ class PlayingSound:
             resampler=resampler,
             air_absorption_factor=air_absorption_factor,
             room_rolloff_factor=room_rolloff_factor,
+            direct_filter_gain_high_frequency_auto=(
+                direct_filter_gain_high_frequency_auto
+            ),
+            auxiliary_send_filter_gain_auto=auxiliary_send_filter_gain_auto,
+            auxiliary_send_filter_gain_high_frequency_auto=(
+                auxiliary_send_filter_gain_high_frequency_auto
+            ),
             stereo_mode=stereo_mode,
             super_stereo_width=super_stereo_width,
             filter=filter,

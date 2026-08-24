@@ -1,5 +1,17 @@
 """Explicit managed playback sessions and resource operations."""
 
+from pyalsoft._managed.playback.effects import (
+    create_effect_bus,
+    get_effect_bus_config,
+    set_effect_bus_config,
+)
+from pyalsoft._managed.playback.offline import (
+    OfflinePlayback,
+    open_offline_playback,
+    pause_playback_device,
+    render_samples,
+    resume_playback_device,
+)
 from pyalsoft._managed.playback.session import (
     Playback,
     close_playback,
@@ -39,10 +51,13 @@ from pyalsoft._managed.playback.voices import (
 
 __all__ = [
     "Playback",
+    "OfflinePlayback",
     "close_playback",
+    "create_effect_bus",
     "defer_updates",
     "finish_stream",
     "get_playback_config",
+    "get_effect_bus_config",
     "get_playback_info",
     "get_playback_clock",
     "get_voice_clock",
@@ -52,17 +67,22 @@ __all__ = [
     "list_playback_devices",
     "list_resamplers",
     "open_playback",
+    "open_offline_playback",
     "open_stream",
     "pause",
+    "pause_playback_device",
     "release",
     "release_finished",
     "reconfigure_playback",
+    "render_samples",
     "restart",
     "resume",
+    "resume_playback_device",
     "rewind",
     "seek",
     "seek_frames",
     "set_voice_config",
+    "set_effect_bus_config",
     "start_stream",
     "stop",
     "try_write_stream",

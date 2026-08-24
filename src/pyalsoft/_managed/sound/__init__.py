@@ -341,6 +341,7 @@ def update_acoustics(
     distance_model: DistanceModel | None = None,
     doppler_factor: float | None = None,
     speed_of_sound: float | None = None,
+    meters_per_unit: float | None = None,
 ) -> Acoustics:
     """Apply acoustic changes and return the complete new state.
 
@@ -352,6 +353,7 @@ def update_acoustics(
         distance_model: New distance-attenuation formula.
         doppler_factor: New non-negative Doppler scale.
         speed_of_sound: New propagation speed in world-units per second.
+        meters_per_unit: New number of meters represented by one world-space unit.
 
     Returns:
         Validated acoustic settings after applying the changes.
@@ -375,6 +377,11 @@ def update_acoustics(
             ),
             speed_of_sound=(
                 current.speed_of_sound if speed_of_sound is None else speed_of_sound
+            ),
+            meters_per_unit=(
+                current.meters_per_unit
+                if meters_per_unit is None
+                else meters_per_unit
             ),
         )
         if playback is None:
@@ -405,6 +412,7 @@ def play(
     cone_inner_angle: float | None = None,
     cone_outer_angle: float | None = None,
     cone_outer_gain: float | None = None,
+    cone_outer_gain_high_frequency: float | None = None,
     distance_model: DistanceModel | None = _OMITTED_DISTANCE_MODEL,
     radius: float | None = None,
     spatialization: SpatializationMode | None = None,
@@ -412,6 +420,9 @@ def play(
     resampler: Resampler | None = _OMITTED_RESAMPLER,
     air_absorption_factor: float | None = None,
     room_rolloff_factor: float | None = None,
+    direct_filter_gain_high_frequency_auto: bool | None = None,
+    auxiliary_send_filter_gain_auto: bool | None = None,
+    auxiliary_send_filter_gain_high_frequency_auto: bool | None = None,
     stereo_mode: StereoMode | None = None,
     super_stereo_width: float | None = _OMITTED_SUPER_STEREO_WIDTH,
     filter: Filter | None = None,
@@ -447,6 +458,7 @@ def play(
     cone_inner_angle: float | None = None,
     cone_outer_angle: float | None = None,
     cone_outer_gain: float | None = None,
+    cone_outer_gain_high_frequency: float | None = None,
     distance_model: DistanceModel | None = _OMITTED_DISTANCE_MODEL,
     radius: float | None = None,
     spatialization: SpatializationMode | None = None,
@@ -454,6 +466,9 @@ def play(
     resampler: Resampler | None = _OMITTED_RESAMPLER,
     air_absorption_factor: float | None = None,
     room_rolloff_factor: float | None = None,
+    direct_filter_gain_high_frequency_auto: bool | None = None,
+    auxiliary_send_filter_gain_auto: bool | None = None,
+    auxiliary_send_filter_gain_high_frequency_auto: bool | None = None,
     stereo_mode: StereoMode | None = None,
     super_stereo_width: float | None = _OMITTED_SUPER_STEREO_WIDTH,
     filter: Filter | None = None,
@@ -488,6 +503,7 @@ def play(
     cone_inner_angle: float | None = None,
     cone_outer_angle: float | None = None,
     cone_outer_gain: float | None = None,
+    cone_outer_gain_high_frequency: float | None = None,
     distance_model: DistanceModel | None = _OMITTED_DISTANCE_MODEL,
     radius: float | None = None,
     spatialization: SpatializationMode | None = None,
@@ -495,6 +511,9 @@ def play(
     resampler: Resampler | None = _OMITTED_RESAMPLER,
     air_absorption_factor: float | None = None,
     room_rolloff_factor: float | None = None,
+    direct_filter_gain_high_frequency_auto: bool | None = None,
+    auxiliary_send_filter_gain_auto: bool | None = None,
+    auxiliary_send_filter_gain_high_frequency_auto: bool | None = None,
     stereo_mode: StereoMode | None = None,
     super_stereo_width: float | None = _OMITTED_SUPER_STEREO_WIDTH,
     filter: Filter | None = _OMITTED_FILTER,
@@ -621,6 +640,7 @@ def play(
         cone_inner_angle=cone_inner_angle,
         cone_outer_angle=cone_outer_angle,
         cone_outer_gain=cone_outer_gain,
+        cone_outer_gain_high_frequency=cone_outer_gain_high_frequency,
         distance_model=distance_model,
         radius=radius,
         spatialization=spatialization,
@@ -629,6 +649,13 @@ def play(
         resampler=resampler,
         air_absorption_factor=air_absorption_factor,
         room_rolloff_factor=room_rolloff_factor,
+        direct_filter_gain_high_frequency_auto=(
+            direct_filter_gain_high_frequency_auto
+        ),
+        auxiliary_send_filter_gain_auto=auxiliary_send_filter_gain_auto,
+        auxiliary_send_filter_gain_high_frequency_auto=(
+            auxiliary_send_filter_gain_high_frequency_auto
+        ),
         stereo_mode=stereo_mode,
         super_stereo_width=super_stereo_width,
         filter=filter,

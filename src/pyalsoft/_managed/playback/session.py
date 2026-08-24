@@ -31,7 +31,7 @@ from pyalsoft.bindings._library import _pointer_address
 
 if TYPE_CHECKING:
     from pyalsoft._managed.audio import BufferInfo, SoundInfo
-    from pyalsoft._managed.playback.effects import _EfxResources
+    from pyalsoft._managed.playback.effects import _EffectBusRecord, _EfxResources
     from pyalsoft._managed.playback.streams import _StreamRecord
     from pyalsoft._managed.spatial import VoiceConfig
 
@@ -59,6 +59,7 @@ class Playback:
         "_context",
         "_deferred_update_depth",
         "_device",
+        "_effect_buses",
         "_library",
         "_lock",
         "_previous_context",
@@ -99,6 +100,7 @@ class Playback:
         self._voice_clips: dict[object, object] = {}
         self._voice_configs: dict[object, VoiceConfig] = {}
         self._voice_efx: dict[object, _EfxResources] = {}
+        self._effect_buses: dict[object, _EffectBusRecord] = {}
         self._streams: dict[object, _StreamRecord] = {}
         self._closed = False
 
@@ -778,9 +780,9 @@ def get_playback_info(playback: Playback) -> PlaybackInfo:
 def close_playback(playback: Playback) -> None:
     """Release every resource and close a playback session.
 
-    Closing an already closed session is harmless. All clips, voices, and
-    streams owned by the session become invalid, even when cleanup reports an
-    error.
+    Closing an already closed session is harmless. All clips, voices, streams,
+    and effect buses owned by the session become invalid, even when cleanup
+    reports an error.
 
     Args:
         playback: Session to close.
@@ -805,6 +807,7 @@ def _close_playback(playback: Playback) -> None:
     """Close a validated, live playback while lifecycle state is serialized."""
 
     from pyalsoft._managed.playback.effects import (
+        _delete_all_effect_buses,
         _delete_efx_resources,
         _EfxResources,
     )
@@ -849,6 +852,11 @@ def _close_playback(playback: Playback) -> None:
                         for resources in efx_resources
                         for identifier in resources.slots
                     ),
+                    owned_slots=tuple(
+                        identifier
+                        for resources in efx_resources
+                        for identifier in resources.owned_slots
+                    ),
                     send_filters=tuple(
                         identifier
                         for resources in efx_resources
@@ -860,6 +868,7 @@ def _close_playback(playback: Playback) -> None:
                     combined_efx,
                     operation="EFX cleanup",
                 )
+                _delete_all_effect_buses(playback)
                 buffer_ids = tuple(playback._clips.values()) + tuple(
                     identifier
                     for record in playback._streams.values()
@@ -892,6 +901,7 @@ def _close_playback(playback: Playback) -> None:
         playback._voice_clips.clear()
         playback._voice_configs.clear()
         playback._voice_efx.clear()
+        playback._effect_buses.clear()
         playback._streams.clear()
         playback._clips.clear()
         playback._clip_infos.clear()
@@ -960,6 +970,14 @@ def _set_acoustics(playback: Playback, acoustics: Acoustics) -> None:
                 al.sourcei(record.identifier, bindings.AL_DISTANCE_MODEL, inherited)
     al.doppler_factor(acoustics.doppler_factor)
     al.speed_of_sound(acoustics.speed_of_sound)
+    has_efx = playback._library.alc.is_extension_present(
+        playback._device, "ALC_EXT_EFX"
+    )
+    _check_alc_error(playback._library, playback._device, "query EFX support")
+    if has_efx:
+        al.listenerf(bindings.AL_METERS_PER_UNIT, acoustics.meters_per_unit)
+    elif acoustics.meters_per_unit != 1.0:
+        raise AudioBackendError("meters_per_unit requires the ALC_EXT_EFX extension")
     _check_al_error(playback, "configure acoustics")
 
 
@@ -972,6 +990,13 @@ def _get_acoustics(playback: Playback) -> Acoustics:
     native_model = int(al.get_integer(bindings.AL_DISTANCE_MODEL))
     doppler_factor = float(al.get_float(bindings.AL_DOPPLER_FACTOR))
     speed_of_sound = float(al.get_float(bindings.AL_SPEED_OF_SOUND))
+    has_efx = playback._library.alc.is_extension_present(
+        playback._device, "ALC_EXT_EFX"
+    )
+    _check_alc_error(playback._library, playback._device, "query EFX support")
+    meters_per_unit = (
+        float(al.get_listenerf(bindings.AL_METERS_PER_UNIT)) if has_efx else 1.0
+    )
     _check_al_error(playback, "query acoustics")
     try:
         distance_model = _DISTANCE_MODEL_BY_AL[native_model]
@@ -983,6 +1008,7 @@ def _get_acoustics(playback: Playback) -> Acoustics:
         distance_model=distance_model,
         doppler_factor=doppler_factor,
         speed_of_sound=speed_of_sound,
+        meters_per_unit=meters_per_unit,
     )
 
 

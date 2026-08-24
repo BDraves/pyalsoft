@@ -35,6 +35,7 @@ from pyalsoft._managed.playback.effects import (
     _EfxResources,
     _install_efx_resources,
     _prepare_efx_replacement,
+    _release_effect_bus,
 )
 from pyalsoft._managed.playback.session import (
     Playback,
@@ -55,6 +56,7 @@ from pyalsoft._managed.playback.source_controls import (
 from pyalsoft._managed.playback.streams import _stream_record
 from pyalsoft._managed.resources import (
     Clip,
+    EffectBus,
     PlaybackClock,
     Stream,
     StreamState,
@@ -103,6 +105,7 @@ def _voice_config_with_overrides(
     cone_inner_angle: float | None = None,
     cone_outer_angle: float | None = None,
     cone_outer_gain: float | None = None,
+    cone_outer_gain_high_frequency: float | None = None,
     distance_model: DistanceModel | None = _OMITTED_DISTANCE_MODEL,
     radius: float | None = None,
     spatialization: SpatializationMode | None = None,
@@ -111,6 +114,9 @@ def _voice_config_with_overrides(
     resampler: Resampler | None = _OMITTED_RESAMPLER,
     air_absorption_factor: float | None = None,
     room_rolloff_factor: float | None = None,
+    direct_filter_gain_high_frequency_auto: bool | None = None,
+    auxiliary_send_filter_gain_auto: bool | None = None,
+    auxiliary_send_filter_gain_high_frequency_auto: bool | None = None,
     stereo_mode: StereoMode | None = None,
     super_stereo_width: float | None = _OMITTED_SUPER_STEREO_WIDTH,
     filter: Filter | None = _OMITTED_FILTER,
@@ -162,6 +168,11 @@ def _voice_config_with_overrides(
         cone_outer_gain=(
             config.cone_outer_gain if cone_outer_gain is None else cone_outer_gain
         ),
+        cone_outer_gain_high_frequency=(
+            config.cone_outer_gain_high_frequency
+            if cone_outer_gain_high_frequency is None
+            else cone_outer_gain_high_frequency
+        ),
         distance_model=(
             config.distance_model
             if isinstance(distance_model, _UnsetType)
@@ -189,6 +200,21 @@ def _voice_config_with_overrides(
             config.room_rolloff_factor
             if room_rolloff_factor is None
             else room_rolloff_factor
+        ),
+        direct_filter_gain_high_frequency_auto=(
+            config.direct_filter_gain_high_frequency_auto
+            if direct_filter_gain_high_frequency_auto is None
+            else direct_filter_gain_high_frequency_auto
+        ),
+        auxiliary_send_filter_gain_auto=(
+            config.auxiliary_send_filter_gain_auto
+            if auxiliary_send_filter_gain_auto is None
+            else auxiliary_send_filter_gain_auto
+        ),
+        auxiliary_send_filter_gain_high_frequency_auto=(
+            config.auxiliary_send_filter_gain_high_frequency_auto
+            if auxiliary_send_filter_gain_high_frequency_auto is None
+            else auxiliary_send_filter_gain_high_frequency_auto
         ),
         stereo_mode=config.stereo_mode if stereo_mode is None else stereo_mode,
         super_stereo_width=(
@@ -979,6 +1005,11 @@ def release_finished(playback: Playback) -> int:
         slots=tuple(
             identifier for resources in released_efx for identifier in resources.slots
         ),
+        owned_slots=tuple(
+            identifier
+            for resources in released_efx
+            for identifier in resources.owned_slots
+        ),
         send_filters=tuple(
             identifier for resources in released_efx for identifier in resources.filters
         ),
@@ -1013,8 +1044,12 @@ def release(playback: Playback, resource: Voice) -> None: ...
 def release(playback: Playback, resource: Stream) -> None: ...
 
 
-def release(playback: Playback, resource: Clip | Voice | Stream) -> None:
-    """Release a clip, voice, or stream before its playback session closes.
+@overload
+def release(playback: Playback, resource: EffectBus) -> None: ...
+
+
+def release(playback: Playback, resource: Clip | Voice | Stream | EffectBus) -> None:
+    """Release a clip, voice, stream, or effect bus before its session closes.
 
     Releasing a voice stops it. Releasing a stream stops it and discards queued
     audio. A clip cannot be released while any live voice still refers to it.
@@ -1022,12 +1057,13 @@ def release(playback: Playback, resource: Clip | Voice | Stream) -> None:
 
     Args:
         playback: Session that owns ``resource``.
-        resource: Live clip, static voice, or stream to release.
+        resource: Live clip, static voice, stream, or effect bus to release.
 
     Raises:
         TypeError: ``resource`` is not a supported handle.
         InvalidHandleError: The handle is released or belongs to another session.
-        ResourceInUseError: ``resource`` is a clip attached to a live voice.
+        ResourceInUseError: ``resource`` is still referenced by another live
+            managed resource.
         PlaybackClosedError: ``playback`` is closed.
         AudioBackendError: OpenAL cannot release the native resources.
     """
@@ -1036,7 +1072,12 @@ def release(playback: Playback, resource: Clip | Voice | Stream) -> None:
 
 
 @_serialized_playback
-def _release(playback: Playback, resource: Clip | Voice | Stream) -> None:
+def _release(
+    playback: Playback, resource: Clip | Voice | Stream | EffectBus
+) -> None:
+    if isinstance(resource, EffectBus):
+        _release_effect_bus(playback, resource)
+        return
     if isinstance(resource, Stream):
         record = _stream_record(playback, resource)
         _prepare_al(playback)
@@ -1079,4 +1120,4 @@ def _release(playback: Playback, resource: Clip | Voice | Stream) -> None:
         del playback._clips[resource._token]
         del playback._clip_infos[resource._token]
         return
-    raise TypeError("resource must be a Clip, Voice, or Stream")
+    raise TypeError("resource must be a Clip, Voice, Stream, or EffectBus")

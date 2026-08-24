@@ -221,6 +221,15 @@ attenuates auxiliary effect paths, so it is normally paired with a reverb
 The complete runnable example is
 [`advanced_sources.py`](https://github.com/BDraves/pyalsoft/blob/development/examples/advanced_sources.py).
 
+## Pause a playback device
+
+[`pause_playback_device()`][pyalsoft.pause_playback_device] suspends device
+processing without changing individual voice states. Use
+[`resume_playback_device()`][pyalsoft.resume_playback_device] to continue. This
+is useful while an application is in the background and requires
+`ALC_SOFT_pause_device`. These operations are distinct from `pause()` and
+`resume()`, which control one voice or stream.
+
 ## Precise playback timing
 
 Three managed queries expose atomic timing pairs for synchronization work:

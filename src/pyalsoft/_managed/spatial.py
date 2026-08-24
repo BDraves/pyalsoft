@@ -163,6 +163,8 @@ class VoiceConfig:
         cone_inner_angle: Full unattenuated cone angle in degrees, from 0 to 360.
         cone_outer_angle: Full outer cone angle in degrees, from 0 to 360.
         cone_outer_gain: Linear gain outside the outer cone, from 0.0 through 1.0.
+        cone_outer_gain_high_frequency: High-frequency gain outside the outer
+            cone, from 0.0 through 1.0.
         distance_model: Optional per-source distance model. ``None`` inherits the
             playback context's model.
         radius: Non-negative physical source radius in world units.
@@ -172,6 +174,12 @@ class VoiceConfig:
         resampler: Optional implementation-provided source resampler.
         air_absorption_factor: Distance-based high-frequency absorption strength.
         room_rolloff_factor: Distance rolloff applied to auxiliary effect paths.
+        direct_filter_gain_high_frequency_auto: Whether direct-path
+            high-frequency filtering follows source gain and distance.
+        auxiliary_send_filter_gain_auto: Whether auxiliary-send gain follows
+            source gain and distance.
+        auxiliary_send_filter_gain_high_frequency_auto: Whether auxiliary-send
+            high-frequency filtering follows source gain and distance.
         stereo_mode: Normal stereo or UHJ Super Stereo processing.
         super_stereo_width: Optional Super Stereo soundfield width.
         filter: Optional EFX filter applied directly to the dry signal.
@@ -197,6 +205,7 @@ class VoiceConfig:
     cone_inner_angle: float = 360.0
     cone_outer_angle: float = 360.0
     cone_outer_gain: float = 0.0
+    cone_outer_gain_high_frequency: float = 1.0
     distance_model: DistanceModel | None = None
     radius: float = 0.0
     spatialization: SpatializationMode = SpatializationMode.AUTO
@@ -205,6 +214,9 @@ class VoiceConfig:
     resampler: Resampler | None = None
     air_absorption_factor: float = 0.0
     room_rolloff_factor: float = 0.0
+    direct_filter_gain_high_frequency_auto: bool = True
+    auxiliary_send_filter_gain_auto: bool = True
+    auxiliary_send_filter_gain_high_frequency_auto: bool = True
     stereo_mode: StereoMode = StereoMode.NORMAL
     super_stereo_width: float | None = None
     filter: Filter | None = None
@@ -252,6 +264,14 @@ class VoiceConfig:
         cone_outer_gain = _finite_float("cone_outer_gain", self.cone_outer_gain)
         if not 0.0 <= cone_outer_gain <= 1.0:
             raise ValueError("cone_outer_gain must be between 0.0 and 1.0")
+        cone_outer_gain_high_frequency = _finite_float(
+            "cone_outer_gain_high_frequency",
+            self.cone_outer_gain_high_frequency,
+        )
+        if not 0.0 <= cone_outer_gain_high_frequency <= 1.0:
+            raise ValueError(
+                "cone_outer_gain_high_frequency must be between 0.0 and 1.0"
+            )
         if self.distance_model is not None and not isinstance(
             self.distance_model, DistanceModel
         ):
@@ -286,6 +306,13 @@ class VoiceConfig:
         )
         if not 0.0 <= room_rolloff_factor <= 10.0:
             raise ValueError("room_rolloff_factor must be between 0.0 and 10.0")
+        for name in (
+            "direct_filter_gain_high_frequency_auto",
+            "auxiliary_send_filter_gain_auto",
+            "auxiliary_send_filter_gain_high_frequency_auto",
+        ):
+            if not isinstance(getattr(self, name), bool):
+                raise TypeError(f"{name} must be a boolean")
         if not isinstance(self.stereo_mode, StereoMode):
             raise TypeError("stereo_mode must be a StereoMode")
         if self.super_stereo_width is None:
@@ -329,6 +356,11 @@ class VoiceConfig:
         object.__setattr__(self, "cone_inner_angle", cone_inner_angle)
         object.__setattr__(self, "cone_outer_angle", cone_outer_angle)
         object.__setattr__(self, "cone_outer_gain", cone_outer_gain)
+        object.__setattr__(
+            self,
+            "cone_outer_gain_high_frequency",
+            cone_outer_gain_high_frequency,
+        )
         object.__setattr__(self, "radius", radius)
         object.__setattr__(self, "stereo_angles", stereo_angles)
         object.__setattr__(self, "air_absorption_factor", air_absorption_factor)
@@ -388,6 +420,8 @@ class Acoustics:
         doppler_factor: Non-negative scale for Doppler shift; 0 disables it.
         speed_of_sound: Propagation speed in world-units per second; at least
             0.0001. The default 343.3 represents meters per second in dry air.
+        meters_per_unit: Number of meters represented by one world-space unit.
+            This scales EFX air absorption and must be non-negative.
 
     Raises:
         TypeError: A field has the wrong type.
@@ -397,6 +431,7 @@ class Acoustics:
     distance_model: DistanceModel = DistanceModel.INVERSE_CLAMPED
     doppler_factor: float = 1.0
     speed_of_sound: float = 343.3
+    meters_per_unit: float = 1.0
 
     def __post_init__(self) -> None:
         if not isinstance(self.distance_model, DistanceModel):
@@ -407,8 +442,12 @@ class Acoustics:
         speed_of_sound = _finite_float("speed_of_sound", self.speed_of_sound)
         if speed_of_sound < 0.0001:
             raise ValueError("speed_of_sound must be at least 0.0001")
+        meters_per_unit = _finite_float("meters_per_unit", self.meters_per_unit)
+        if meters_per_unit < 0.0:
+            raise ValueError("meters_per_unit cannot be negative")
         object.__setattr__(self, "doppler_factor", doppler_factor)
         object.__setattr__(self, "speed_of_sound", speed_of_sound)
+        object.__setattr__(self, "meters_per_unit", meters_per_unit)
 
 
 _DEFAULT_LISTENER = Listener()

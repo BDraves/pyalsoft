@@ -110,11 +110,48 @@ order 3. `open_stream()` accepts the same `format` and property options. Pass
 `frame_count=` to `try_write_stream()` for each encoded chunk; fixed-width
 chunks infer their frame count from their byte length.
 
-These are input-buffer capabilities. `ALC_SOFT_loopback_bformat` instead
-configures an offline loopback rendering device, for which the managed API does
-not currently provide a session type. `ALC_LOKI_audio_channel` contributes
+These are input-buffer capabilities. `ALC_LOKI_audio_channel` contributes
 legacy channel constants but declares no callable selection function in the
 OpenAL registry; those constants remain available through `pyalsoft.bindings`.
+
+## Offline rendering
+
+[`open_offline_playback()`][pyalsoft.open_offline_playback] creates a managed
+session that renders deterministically into memory instead of opening audio
+hardware. Clips, voices, streams, listeners, and effects use the same operations
+as an ordinary [`Playback`][pyalsoft.Playback]:
+
+```python
+from pyalsoft import (
+    RenderChannelLayout,
+    RenderConfig,
+    RenderSampleType,
+    open_offline_playback,
+    play,
+    render_samples,
+    upload,
+)
+
+config = RenderConfig(
+    sample_rate=48_000,
+    channels=RenderChannelLayout.STEREO,
+    sample_type=RenderSampleType.INT16,
+)
+with open_offline_playback(config) as playback:
+    clip = upload(playback, pcm)
+    play(playback, clip)
+    output = render_samples(playback, 48_000)
+```
+
+`render_samples()` advances the audio device by exactly the requested number of
+frames and returns interleaved bytes in the configured format. Mono, stereo,
+quad, 5.1, 6.1, 7.1, and 3D B-format output are supported when the backend
+accepts them. B-format output additionally configures ambisonic order, layout,
+and scaling through `ALC_SOFT_loopback_bformat`.
+
+See the runnable
+[`render_offline.py`](https://github.com/BDraves/pyalsoft/blob/development/examples/render_offline.py)
+example, which can optionally write the result to a WAV file.
 
 ## Device and context configuration
 

@@ -8,6 +8,14 @@ Notable user-facing changes to PyALSoft are documented here.
 
 - Added managed static-clip loop regions through `upload(loop_points=...)`,
   backed by `AL_SOFT_loop_points`. (@BDraves)
+- Added reusable managed effect buses with live immutable configuration,
+  shared voice and stream sends, optional effect-slot chaining, and deterministic
+  ownership checks. (@BDraves)
+- Completed managed EFX listener, source, and slot controls and added dedicated
+  dialogue and low-frequency effect configurations. (@BDraves)
+- Added managed offline rendering for mono, stereo, surround, and B-format
+  output, reusing the existing playback resource API. (@BDraves)
+- Added managed playback-device pause and resume operations. (@BDraves)
 
 ## 1.5.0 - 2026.08.19
 

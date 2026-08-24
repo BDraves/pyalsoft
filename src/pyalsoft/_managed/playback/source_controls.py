@@ -300,11 +300,35 @@ def _apply_advanced_source_config(
             bindings.AL_AIR_ABSORPTION_FACTOR,
         ),
         ("room_rolloff_factor", bindings.AL_ROOM_ROLLOFF_FACTOR),
+        (
+            "cone_outer_gain_high_frequency",
+            bindings.AL_CONE_OUTER_GAINHF,
+        ),
     )
     for field, parameter in efx_fields:
-        if _changed(previous, field, 0.0, config):
+        default = 1.0 if field == "cone_outer_gain_high_frequency" else 0.0
+        if _changed(previous, field, default, config):
             _require_alc_extension(playback, "ALC_EXT_EFX", field.replace("_", " "))
             al.sourcef(identifier, parameter, getattr(config, field))
+
+    efx_boolean_fields = (
+        (
+            "direct_filter_gain_high_frequency_auto",
+            bindings.AL_DIRECT_FILTER_GAINHF_AUTO,
+        ),
+        (
+            "auxiliary_send_filter_gain_auto",
+            bindings.AL_AUXILIARY_SEND_FILTER_GAIN_AUTO,
+        ),
+        (
+            "auxiliary_send_filter_gain_high_frequency_auto",
+            bindings.AL_AUXILIARY_SEND_FILTER_GAINHF_AUTO,
+        ),
+    )
+    for field, parameter in efx_boolean_fields:
+        if _changed(previous, field, True, config):
+            _require_alc_extension(playback, "ALC_EXT_EFX", field.replace("_", " "))
+            al.sourcei(identifier, parameter, int(getattr(config, field)))
 
     if _changed(previous, "stereo_mode", StereoMode.NORMAL, config):
         _require_al_extension(playback, "AL_SOFT_UHJ", "Super Stereo processing")

@@ -637,6 +637,7 @@ class _DefaultRuntime:
         cone_inner_angle: float | None = None,
         cone_outer_angle: float | None = None,
         cone_outer_gain: float | None = None,
+        cone_outer_gain_high_frequency: float | None = None,
         distance_model: DistanceModel | None = _OMITTED_DISTANCE_MODEL,
         radius: float | None = None,
         spatialization: SpatializationMode | None = None,
@@ -645,6 +646,9 @@ class _DefaultRuntime:
         resampler: Resampler | None = _OMITTED_RESAMPLER,
         air_absorption_factor: float | None = None,
         room_rolloff_factor: float | None = None,
+        direct_filter_gain_high_frequency_auto: bool | None = None,
+        auxiliary_send_filter_gain_auto: bool | None = None,
+        auxiliary_send_filter_gain_high_frequency_auto: bool | None = None,
         stereo_mode: StereoMode | None = None,
         super_stereo_width: float | None = _OMITTED_SUPER_STEREO_WIDTH,
         filter: Filter | None = _OMITTED_FILTER,
@@ -669,6 +673,7 @@ class _DefaultRuntime:
                 cone_inner_angle=cone_inner_angle,
                 cone_outer_angle=cone_outer_angle,
                 cone_outer_gain=cone_outer_gain,
+                cone_outer_gain_high_frequency=cone_outer_gain_high_frequency,
                 distance_model=distance_model,
                 radius=radius,
                 spatialization=spatialization,
@@ -677,6 +682,13 @@ class _DefaultRuntime:
                 resampler=resampler,
                 air_absorption_factor=air_absorption_factor,
                 room_rolloff_factor=room_rolloff_factor,
+                direct_filter_gain_high_frequency_auto=(
+                    direct_filter_gain_high_frequency_auto
+                ),
+                auxiliary_send_filter_gain_auto=auxiliary_send_filter_gain_auto,
+                auxiliary_send_filter_gain_high_frequency_auto=(
+                    auxiliary_send_filter_gain_high_frequency_auto
+                ),
                 stereo_mode=stereo_mode,
                 super_stereo_width=super_stereo_width,
                 filter=filter,

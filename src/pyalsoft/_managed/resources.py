@@ -5,7 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
-from pyalsoft._managed.audio import BufferInfo, SoundInfo
+from pyalsoft._managed.audio import (
+    AmbisonicLayout,
+    AmbisonicScaling,
+    BufferInfo,
+    SoundInfo,
+)
 
 
 class VoiceState(Enum):
@@ -102,6 +107,114 @@ class PlaybackOutputMode(Enum):
     SURROUND_6_1 = "surround_6_1"
     SURROUND_7_1 = "surround_7_1"
     UNKNOWN = "unknown"
+
+
+class RenderChannelLayout(Enum):
+    """Channel layout produced by a managed offline rendering session."""
+
+    MONO = "mono"
+    STEREO = "stereo"
+    QUAD = "quad"
+    SURROUND_5_1 = "surround_5_1"
+    SURROUND_6_1 = "surround_6_1"
+    SURROUND_7_1 = "surround_7_1"
+    BFORMAT_3D = "bformat_3d"
+
+
+class RenderSampleType(Enum):
+    """One sample representation produced by offline rendering."""
+
+    INT8 = "int8"
+    UINT8 = "uint8"
+    INT16 = "int16"
+    UINT16 = "uint16"
+    INT32 = "int32"
+    UINT32 = "uint32"
+    FLOAT32 = "float32"
+
+    @property
+    def byte_width(self) -> int:
+        """Number of bytes used by one rendered channel sample."""
+
+        return {
+            RenderSampleType.INT8: 1,
+            RenderSampleType.UINT8: 1,
+            RenderSampleType.INT16: 2,
+            RenderSampleType.UINT16: 2,
+            RenderSampleType.INT32: 4,
+            RenderSampleType.UINT32: 4,
+            RenderSampleType.FLOAT32: 4,
+        }[self]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RenderConfig:
+    """Output format for a managed offline rendering session."""
+
+    sample_rate: int = 48_000
+    channels: RenderChannelLayout = RenderChannelLayout.STEREO
+    sample_type: RenderSampleType = RenderSampleType.INT16
+    ambisonic_order: int = 1
+    ambisonic_layout: AmbisonicLayout = AmbisonicLayout.FUMA
+    ambisonic_scaling: AmbisonicScaling = AmbisonicScaling.FUMA
+
+    def __post_init__(self) -> None:
+        if isinstance(self.sample_rate, bool) or not isinstance(self.sample_rate, int):
+            raise TypeError("sample_rate must be an integer")
+        if self.sample_rate <= 0:
+            raise ValueError("sample_rate must be positive")
+        if not isinstance(self.channels, RenderChannelLayout):
+            raise TypeError("channels must be a RenderChannelLayout")
+        if not isinstance(self.sample_type, RenderSampleType):
+            raise TypeError("sample_type must be a RenderSampleType")
+        if isinstance(self.ambisonic_order, bool) or not isinstance(
+            self.ambisonic_order, int
+        ):
+            raise TypeError("ambisonic_order must be an integer")
+        if not 1 <= self.ambisonic_order <= 14:
+            raise ValueError("ambisonic_order must be between 1 and 14")
+        if not isinstance(self.ambisonic_layout, AmbisonicLayout):
+            raise TypeError("ambisonic_layout must be an AmbisonicLayout")
+        if not isinstance(self.ambisonic_scaling, AmbisonicScaling):
+            raise TypeError("ambisonic_scaling must be an AmbisonicScaling")
+        if self.channels is not RenderChannelLayout.BFORMAT_3D:
+            if self.ambisonic_order != 1:
+                raise ValueError("ambisonic_order requires BFORMAT_3D output")
+            if self.ambisonic_layout is not AmbisonicLayout.FUMA:
+                raise ValueError("ambisonic_layout requires BFORMAT_3D output")
+            if self.ambisonic_scaling is not AmbisonicScaling.FUMA:
+                raise ValueError("ambisonic_scaling requires BFORMAT_3D output")
+        elif self.ambisonic_order > 3:
+            if self.ambisonic_layout is not AmbisonicLayout.ACN:
+                raise ValueError("ambisonic orders above 3 require ACN layout")
+            if self.ambisonic_scaling not in (
+                AmbisonicScaling.SN3D,
+                AmbisonicScaling.N3D,
+            ):
+                raise ValueError(
+                    "ambisonic orders above 3 require SN3D or N3D scaling"
+                )
+
+    @property
+    def channel_count(self) -> int:
+        """Number of interleaved channels in one rendered frame."""
+
+        if self.channels is RenderChannelLayout.BFORMAT_3D:
+            return (self.ambisonic_order + 1) ** 2
+        return {
+            RenderChannelLayout.MONO: 1,
+            RenderChannelLayout.STEREO: 2,
+            RenderChannelLayout.QUAD: 4,
+            RenderChannelLayout.SURROUND_5_1: 6,
+            RenderChannelLayout.SURROUND_6_1: 7,
+            RenderChannelLayout.SURROUND_7_1: 8,
+        }[self.channels]
+
+    @property
+    def frame_width_bytes(self) -> int:
+        """Number of bytes in one interleaved rendered frame."""
+
+        return self.channel_count * self.sample_type.byte_width
 
 
 @dataclass(frozen=True, slots=True)
@@ -454,6 +567,23 @@ class Clip:
 
     def __repr__(self) -> str:
         return "Clip(<opaque>)"
+
+
+@dataclass(frozen=True, slots=True)
+class EffectBus:
+    """Opaque identity for one reusable managed auxiliary effect bus.
+
+    Instances are created by [`create_effect_bus`][pyalsoft.create_effect_bus].
+    A bus belongs to exactly one playback session and can be referenced by any
+    number of [`EffectSend`][pyalsoft.EffectSend] values in that session.
+    """
+
+    _owner: object = field(repr=False)
+    _token: object = field(repr=False)
+    _identifier: int = field(repr=False)
+
+    def __repr__(self) -> str:
+        return "EffectBus(<opaque>)"
 
 
 @dataclass(frozen=True, slots=True)
