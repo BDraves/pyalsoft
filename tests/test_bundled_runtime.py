@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from examples.advanced_sources import advanced_sources
+from examples.loop_points import demonstrate_loop_points
 from examples.move_sine import move_sine
 from examples.play_sine import SAMPLE_RATE, play_sine, sine_pcm
 from examples.stream_sine import stream_sine
@@ -58,6 +59,7 @@ def test_bundled_runtime_runs_playback_examples(
     library = bindings.load(WINDOWS_RUNTIME)
 
     play_sine(library, duration=0.05)
+    demonstrate_loop_points(library, repeat_seconds=0.0)
     move_sine(library, duration=0.05)
     stream_sine(library, duration=0.05)
     report = advanced_sources(library)

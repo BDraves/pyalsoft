@@ -81,6 +81,10 @@ def test_advanced_source_config_maps_to_native_properties() -> None:
             resampler=resamplers[2],
             air_absorption_factor=1.0,
             room_rolloff_factor=0.7,
+            cone_outer_gain_high_frequency=0.6,
+            direct_filter_gain_high_frequency_auto=False,
+            auxiliary_send_filter_gain_auto=False,
+            auxiliary_send_filter_gain_high_frequency_auto=False,
         )
         voice = play(playback, clip, config)
         super_config = VoiceConfig(
@@ -100,6 +104,10 @@ def test_advanced_source_config_maps_to_native_properties() -> None:
         assert source[bindings.AL_SOURCE_RESAMPLER_SOFT] == 2
         assert source[bindings.AL_AIR_ABSORPTION_FACTOR] == 1.0
         assert source[bindings.AL_ROOM_ROLLOFF_FACTOR] == 0.7
+        assert source[bindings.AL_CONE_OUTER_GAINHF] == 0.6
+        assert source[bindings.AL_DIRECT_FILTER_GAINHF_AUTO] == 0
+        assert source[bindings.AL_AUXILIARY_SEND_FILTER_GAIN_AUTO] == 0
+        assert source[bindings.AL_AUXILIARY_SEND_FILTER_GAINHF_AUTO] == 0
         assert (
             library.al.sources[101][bindings.AL_STEREO_MODE_SOFT]
             == bindings.AL_SUPER_STEREO_SOFT
@@ -135,9 +143,13 @@ def test_advanced_source_config_maps_to_native_properties() -> None:
 
         set_acoustics(
             playback,
-            Acoustics(distance_model=DistanceModel.LINEAR_CLAMPED),
+            Acoustics(
+                distance_model=DistanceModel.LINEAR_CLAMPED,
+                meters_per_unit=0.01,
+            ),
         )
         assert source[bindings.AL_DISTANCE_MODEL] == bindings.AL_LINEAR_DISTANCE_CLAMPED
+        assert library.al.listener[bindings.AL_METERS_PER_UNIT] == 0.01
         inherited = play(playback, clip)
         assert (
             library.al.sources[102][bindings.AL_DISTANCE_MODEL]
@@ -332,6 +344,12 @@ def test_advanced_controls_and_timing_support_streams() -> None:
             True,
         ),
         (
+            "ALC_EXT_EFX",
+            VoiceConfig(cone_outer_gain_high_frequency=0.5),
+            "ALC_EXT_EFX",
+            True,
+        ),
+        (
             "AL_SOFT_UHJ",
             VoiceConfig(stereo_mode=StereoMode.SUPER_STEREO),
             "AL_SOFT_UHJ",
@@ -473,6 +491,14 @@ def test_playback_close_clears_cached_super_stereo_defaults() -> None:
         ({"resampler": 1}, "resampler must be a Resampler or None"),
         ({"air_absorption_factor": 10.1}, "air_absorption_factor must be between"),
         ({"room_rolloff_factor": -0.1}, "room_rolloff_factor must be between"),
+        (
+            {"cone_outer_gain_high_frequency": 1.1},
+            "cone_outer_gain_high_frequency must be between",
+        ),
+        (
+            {"direct_filter_gain_high_frequency_auto": 1},
+            "direct_filter_gain_high_frequency_auto must be a boolean",
+        ),
         ({"super_stereo_width": 1.1}, "super_stereo_width must be between"),
     ],
 )

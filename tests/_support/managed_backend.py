@@ -20,7 +20,7 @@ class FakeAL:
         self.allocated_filters: set[int] = set()
         self.allocated_effect_slots: set[int] = set()
         self.buffers: dict[int, tuple[int, bytes, int]] = {}
-        self.buffer_properties: dict[int, dict[int, int]] = {}
+        self.buffer_properties: dict[int, dict[int, object]] = {}
         self.effects: dict[int, dict[int, object]] = {}
         self.filters: dict[int, dict[int, object]] = {}
         self.effect_slots: dict[int, dict[int, object]] = {}
@@ -88,6 +88,11 @@ class FakeAL:
     def bufferi(self, identifier: int, parameter: int, value: int) -> None:
         self.buffer_properties.setdefault(identifier, {})[parameter] = value
 
+    def bufferiv(
+        self, identifier: int, parameter: int, values: tuple[int, ...]
+    ) -> None:
+        self.buffer_properties.setdefault(identifier, {})[parameter] = tuple(values)
+
     def buffer_data(
         self, identifier: int, format_name: int, data: bytes, sample_rate: int
     ) -> None:
@@ -151,6 +156,11 @@ class FakeAL:
 
     def auxiliary_effect_sloti(
         self, identifier: int, parameter: int, value: int
+    ) -> None:
+        self.effect_slots[identifier][parameter] = value
+
+    def auxiliary_effect_slotf(
+        self, identifier: int, parameter: int, value: float
     ) -> None:
         self.effect_slots[identifier][parameter] = value
 
@@ -359,6 +369,10 @@ class FakeALC:
         self.reset_attributes: list[tuple[int, ...] | None] = []
         self.reset_result = True
         self.reset_error = bindings.ALC_INVALID_VALUE
+        self.render_format_supported = True
+        self.rendered_frames: list[int] = []
+        self.device_pause_calls = 0
+        self.device_resume_calls = 0
         self.extensions = {
             "ALC_ENUMERATE_ALL_EXT",
             "ALC_EXT_EFX",
@@ -366,6 +380,9 @@ class FakeALC:
             "ALC_SOFT_output_limiter",
             "ALC_SOFT_output_mode",
             "ALC_SOFT_device_clock",
+            "ALC_SOFT_loopback",
+            "ALC_SOFT_loopback_bformat",
+            "ALC_SOFT_pause_device",
         }
         self.hrtf_profiles = ("Built-in HRTF", "Studio HRTF", "Gaming HRTF")
         self._restore_device_defaults()
@@ -393,6 +410,54 @@ class FakeALC:
     def open_device(self, device_name: str | bytes | None) -> object:
         self.opened_device_name = device_name
         return self.device
+
+    def loopback_open_device_soft(self, device_name: str | bytes | None) -> object:
+        self.opened_device_name = device_name
+        return self.device
+
+    def is_render_format_supported_soft(
+        self,
+        device: object,
+        frequency: int,
+        channels: int,
+        sample_type: int,
+    ) -> bool:
+        assert device is self.device
+        assert frequency > 0
+        assert channels in (
+            bindings.ALC_MONO_SOFT,
+            bindings.ALC_STEREO_SOFT,
+            bindings.ALC_QUAD_SOFT,
+            bindings.ALC_5POINT1_SOFT,
+            bindings.ALC_6POINT1_SOFT,
+            bindings.ALC_7POINT1_SOFT,
+            bindings.ALC_BFORMAT3D_SOFT,
+        )
+        assert sample_type in (
+            bindings.ALC_BYTE_SOFT,
+            bindings.ALC_UNSIGNED_BYTE_SOFT,
+            bindings.ALC_SHORT_SOFT,
+            bindings.ALC_UNSIGNED_SHORT_SOFT,
+            bindings.ALC_INT_SOFT,
+            bindings.ALC_UNSIGNED_INT_SOFT,
+            bindings.ALC_FLOAT_SOFT,
+        )
+        return self.render_format_supported
+
+    def render_samples_soft(
+        self, device: object, buffer: bytearray, frame_count: int
+    ) -> None:
+        assert device is self.device
+        self.rendered_frames.append(frame_count)
+        buffer[:] = bytes(index % 251 for index in range(len(buffer)))
+
+    def device_pause_soft(self, device: object) -> None:
+        assert device is self.device
+        self.device_pause_calls += 1
+
+    def device_resume_soft(self, device: object) -> None:
+        assert device is self.device
+        self.device_resume_calls += 1
 
     def get_error(self, device: object | None) -> int:
         del device
@@ -458,6 +523,8 @@ class FakeALC:
             return (self.output_mode,)
         if parameter == bindings.ALC_NUM_HRTF_SPECIFIERS_SOFT:
             return (len(self.hrtf_profiles),)
+        if parameter == bindings.ALC_MAX_AMBISONIC_ORDER_SOFT:
+            return (14,)
         assert parameter == bindings.ALC_HRTF_STATUS_SOFT
         self.error = self.hrtf_query_error
         return (self.hrtf_status,)
@@ -568,8 +635,11 @@ class FakeLibrary:
             "AL_SOFT_MSADPCM",
             "AL_SOFT_UHJ_ex",
             "AL_SOFT_block_alignment",
+            "AL_SOFT_loop_points",
             "AL_SOFT_bformat_ex",
             "AL_SOFT_bformat_hoa",
+            "ALC_EXT_DEDICATED",
+            "AL_SOFT_effect_target",
         }
 
     def _invalidate_device_extensions(self, device: object) -> None:

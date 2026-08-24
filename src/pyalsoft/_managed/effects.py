@@ -9,6 +9,7 @@ from typing import Any, ClassVar, cast
 
 from pyalsoft import bindings
 from pyalsoft._managed._values import Vector3, _bounded_float, _vector3
+from pyalsoft._managed.resources import EffectBus
 
 _PARAMETER_METADATA = "pyalsoft_efx_parameter"
 
@@ -142,6 +143,8 @@ class _NativeConfig:
 
 class _EffectConfig(_NativeConfig):
     """Marker base for supported managed effects."""
+
+    _required_extension: ClassVar[str | None] = None
 
 
 def _iter_native_parameters(
@@ -677,6 +680,32 @@ class Equalizer(_EffectConfig):
     )
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DedicatedDialogue(_EffectConfig):
+    """Route audio to the implementation's dedicated dialogue channel.
+
+    This effect requires ``ALC_EXT_DEDICATED``. ``gain`` is a non-negative
+    linear multiplier applied to the dedicated output.
+    """
+
+    _native_type = bindings.AL_EFFECT_DEDICATED_DIALOGUE
+    _required_extension = "ALC_EXT_DEDICATED"
+    gain: float = _float_field(1.0, bindings.AL_DEDICATED_GAIN, 0.0, float("inf"))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DedicatedLowFrequencyEffect(_EffectConfig):
+    """Route audio to the implementation's dedicated low-frequency channel.
+
+    This effect requires ``ALC_EXT_DEDICATED``. ``gain`` is a non-negative
+    linear multiplier applied to the dedicated output.
+    """
+
+    _native_type = bindings.AL_EFFECT_DEDICATED_LOW_FREQUENCY_EFFECT
+    _required_extension = "ALC_EXT_DEDICATED"
+    gain: float = _float_field(1.0, bindings.AL_DEDICATED_GAIN, 0.0, float("inf"))
+
+
 type Effect = (
     Reverb
     | EAXReverb
@@ -691,6 +720,8 @@ type Effect = (
     | AutoWah
     | Compressor
     | Equalizer
+    | DedicatedDialogue
+    | DedicatedLowFrequencyEffect
 )
 """A supported auxiliary EFX effect configuration."""
 
@@ -763,6 +794,30 @@ def _validate_filter(name: str, value: object) -> None:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class EffectBusConfig:
+    """Complete immutable configuration for a reusable auxiliary effect bus.
+
+    ``target`` optionally chains this bus into another bus. Chaining requires
+    ``AL_SOFT_effect_target`` and cycles are rejected.
+    """
+
+    effect: Effect
+    gain: float = 1.0
+    auxiliary_send_auto: bool = True
+    target: EffectBus | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.effect, _EffectConfig):
+            raise TypeError("effect must be an Effect")
+        gain = _bounded_float("gain", self.gain, 0.0, 1.0)
+        if not isinstance(self.auxiliary_send_auto, bool):
+            raise TypeError("auxiliary_send_auto must be a boolean")
+        if self.target is not None and not isinstance(self.target, EffectBus):
+            raise TypeError("target must be an EffectBus or None")
+        object.__setattr__(self, "gain", gain)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class EffectSend:
     """One auxiliary effect route, with an optional wet-signal filter.
 
@@ -771,14 +826,20 @@ class EffectSend:
     sends.
 
     Attributes:
-        effect: Effect applied to this route.
+        effect: Effect owned by this route, mutually exclusive with ``bus``.
+        bus: Reusable effect bus, mutually exclusive with ``effect``.
         filter: Optional filter applied only to this route's wet signal.
     """
 
-    effect: Effect
+    effect: Effect | None = None
+    bus: EffectBus | None = None
     filter: Filter | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.effect, _EffectConfig):
-            raise TypeError("effect must be an Effect")
+        if (self.effect is None) == (self.bus is None):
+            raise ValueError("exactly one of effect or bus must be provided")
+        if self.effect is not None and not isinstance(self.effect, _EffectConfig):
+            raise TypeError("effect must be an Effect or None")
+        if self.bus is not None and not isinstance(self.bus, EffectBus):
+            raise TypeError("bus must be an EffectBus or None")
         _validate_filter("filter", self.filter)

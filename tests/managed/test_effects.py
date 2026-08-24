@@ -11,19 +11,24 @@ from pyalsoft import (
     BandPassFilter,
     Chorus,
     Compressor,
+    DedicatedDialogue,
+    DedicatedLowFrequencyEffect,
     Distortion,
     EAXReverb,
     Echo,
     Effect,
+    EffectBusConfig,
     EffectSend,
     Equalizer,
     Flanger,
     FrequencyShiftDirection,
     FrequencyShifter,
     HighPassFilter,
+    InvalidHandleError,
     LowPassFilter,
     ModulationWaveform,
     PitchShifter,
+    ResourceInUseError,
     Reverb,
     RingModulator,
     RingModulatorWaveform,
@@ -32,9 +37,12 @@ from pyalsoft import (
     VocalMorpherWaveform,
     VoiceConfig,
     bindings,
+    create_effect_bus,
+    get_effect_bus_config,
     open_playback,
     play,
     release,
+    set_effect_bus_config,
     set_voice_config,
     upload,
 )
@@ -230,6 +238,16 @@ from tests._support.managed_backend import FakeLibrary, as_library
                 bindings.AL_EQUALIZER_HIGH_CUTOFF: 6000.0,
             },
         ),
+        (
+            DedicatedDialogue(gain=0.75),
+            bindings.AL_EFFECT_DEDICATED_DIALOGUE,
+            {bindings.AL_DEDICATED_GAIN: 0.75},
+        ),
+        (
+            DedicatedLowFrequencyEffect(gain=0.5),
+            bindings.AL_EFFECT_DEDICATED_LOW_FREQUENCY_EFFECT,
+            {bindings.AL_DEDICATED_GAIN: 0.5},
+        ),
     ],
     ids=lambda value: type(value).__name__ if not isinstance(value, int) else None,
 )
@@ -331,6 +349,103 @@ def test_voice_efx_are_created_replaced_and_released_with_the_voice() -> None:
     assert library.al.allocated_effects == set()
     assert library.al.allocated_effect_slots == set()
     assert library.al.allocated_filters == set()
+
+
+def test_effect_bus_is_shared_updated_chained_and_lifecycle_checked() -> None:
+    library = FakeLibrary()
+    with open_playback(library=as_library(library)) as playback:
+        output = create_effect_bus(
+            playback,
+            EffectBusConfig(effect=Reverb(decay_time=1.5), gain=0.8),
+        )
+        source = create_effect_bus(
+            playback,
+            EffectBusConfig(
+                effect=Chorus(rate=0.5),
+                auxiliary_send_auto=False,
+                target=output,
+            ),
+        )
+        clip = upload(playback, PCM(b"\0\0" * 10, channels=1, sample_rate=10))
+        first = play(playback, clip, effect_sends=(EffectSend(bus=source),))
+        second = play(playback, clip, effect_sends=(EffectSend(bus=source),))
+
+        assert library.al.source_sends[(100, 0)] == (401, bindings.AL_FILTER_NULL)
+        assert library.al.source_sends[(101, 0)] == (401, bindings.AL_FILTER_NULL)
+        assert library.al.effect_slots[400] == {
+            bindings.AL_EFFECTSLOT_EFFECT: 200,
+            bindings.AL_EFFECTSLOT_GAIN: 0.8,
+            bindings.AL_EFFECTSLOT_AUXILIARY_SEND_AUTO: 1,
+        }
+        assert library.al.effect_slots[401] == {
+            bindings.AL_EFFECTSLOT_EFFECT: 201,
+            bindings.AL_EFFECTSLOT_GAIN: 1.0,
+            bindings.AL_EFFECTSLOT_AUXILIARY_SEND_AUTO: 0,
+            bindings.AL_EFFECTSLOT_TARGET_SOFT: 400,
+        }
+        assert get_effect_bus_config(playback, source).target == output
+
+        replacement = EffectBusConfig(effect=Echo(delay=0.2), gain=0.25)
+        set_effect_bus_config(playback, source, replacement)
+        assert get_effect_bus_config(playback, source) == replacement
+        assert library.al.effect_slots[401] == {
+            bindings.AL_EFFECTSLOT_EFFECT: 202,
+            bindings.AL_EFFECTSLOT_GAIN: 0.25,
+            bindings.AL_EFFECTSLOT_AUXILIARY_SEND_AUTO: 1,
+            bindings.AL_EFFECTSLOT_TARGET_SOFT: bindings.AL_EFFECTSLOT_NULL,
+        }
+        assert library.al.allocated_effects == {200, 202}
+
+        with pytest.raises(ResourceInUseError, match="attached"):
+            release(playback, source)
+        release(playback, first)
+        release(playback, second)
+        release(playback, source)
+        release(playback, output)
+        release(playback, clip)
+
+    assert library.al.allocated_effects == set()
+    assert library.al.allocated_effect_slots == set()
+
+
+def test_effect_bus_rejects_cross_session_targets_cycles_and_missing_extensions() -> (
+    None
+):
+    first_library = FakeLibrary()
+    second_library = FakeLibrary()
+    with (
+        open_playback(library=as_library(first_library)) as first_playback,
+        open_playback(library=as_library(second_library)) as second_playback,
+    ):
+        first = create_effect_bus(first_playback, EffectBusConfig(effect=Reverb()))
+        second = create_effect_bus(second_playback, EffectBusConfig(effect=Echo()))
+        with pytest.raises(InvalidHandleError, match="does not belong"):
+            create_effect_bus(
+                first_playback,
+                EffectBusConfig(effect=Chorus(), target=second),
+            )
+        with pytest.raises(ValueError, match="target itself"):
+            set_effect_bus_config(
+                first_playback,
+                first,
+                EffectBusConfig(effect=Reverb(), target=first),
+            )
+
+    library = FakeLibrary()
+    library.al_extensions.remove("ALC_EXT_DEDICATED")
+    with (
+        open_playback(library=as_library(library)) as playback,
+        pytest.raises(AudioBackendError, match="ALC_EXT_DEDICATED"),
+    ):
+        create_effect_bus(
+            playback,
+            EffectBusConfig(effect=DedicatedDialogue()),
+        )
+
+
+def test_effect_send_requires_exactly_one_inline_effect_or_bus() -> None:
+    with pytest.raises(ValueError, match="exactly one"):
+        EffectSend()
 
 
 def test_band_pass_filter_configures_an_auxiliary_send() -> None:

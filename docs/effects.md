@@ -33,6 +33,11 @@ The managed API covers every core `ALC_EXT_EFX` effect:
   [`AutoWah`][pyalsoft.AutoWah], [`Compressor`][pyalsoft.Compressor], and
   [`Equalizer`][pyalsoft.Equalizer]
 
+[`DedicatedDialogue`][pyalsoft.DedicatedDialogue] and
+[`DedicatedLowFrequencyEffect`][pyalsoft.DedicatedLowFrequencyEffect] provide
+the implementation-defined dialogue and low-frequency routes from
+`ALC_EXT_DEDICATED`.
+
 Discrete controls use managed enums instead of native OpenAL integers. For
 example, chorus and flanger share [`ModulationWaveform`][pyalsoft.ModulationWaveform]:
 
@@ -71,10 +76,51 @@ sound.effect_sends = ()
 ```
 
 The same fields are available on [`VoiceConfig`][pyalsoft.VoiceConfig] for
-explicit voices and streams. PyALSoft owns their native filters, effects, and
-auxiliary slots and releases them with the voice. Configuring EFX raises
+explicit voices and streams. PyALSoft owns inline filters, effects, and
+auxiliary slots and releases them with the voice or stream. Configuring EFX raises
 [`AudioBackendError`][pyalsoft.AudioBackendError] when the selected device does
 not expose EFX or cannot provide the requested number of sends.
+
+## Reusable effect buses
+
+An inline `EffectSend(effect=...)` owns a separate native effect and slot for
+that voice. Use [`create_effect_bus()`][pyalsoft.create_effect_bus] when many
+voices should share one room, mix bus, or other effect:
+
+```python
+from pyalsoft import (
+    EffectBusConfig,
+    EffectSend,
+    Reverb,
+    create_effect_bus,
+    open_playback,
+    play,
+)
+
+with open_playback() as playback:
+    room = create_effect_bus(
+        playback,
+        EffectBusConfig(effect=Reverb(decay_time=1.8), gain=0.8),
+    )
+    send = EffectSend(bus=room)
+    first = play(playback, first_clip, effect_sends=(send,))
+    second = play(playback, second_clip, effect_sends=(send,))
+```
+
+[`set_effect_bus_config()`][pyalsoft.set_effect_bus_config] replaces a bus's
+effect, gain, automatic-send behavior, and optional target while attached
+voices keep using the same slot. A target chains one bus into another and
+requires `AL_SOFT_effect_target`; cycles are rejected. A bus cannot be released
+while a live voice or stream uses it or another bus targets it.
+
+The remaining EFX source and listener controls are available through
+[`VoiceConfig`][pyalsoft.VoiceConfig] and [`Acoustics`][pyalsoft.Acoustics]:
+
+- `cone_outer_gain_high_frequency`
+- `direct_filter_gain_high_frequency_auto`
+- `auxiliary_send_filter_gain_auto`
+- `auxiliary_send_filter_gain_high_frequency_auto`
+- `meters_per_unit`
 
 See the runnable
 [`play_with_reverb.py`](https://github.com/BDraves/pyalsoft/blob/development/examples/play_with_reverb.py)
@@ -82,4 +128,6 @@ and
 [`cycle_effects.py`](https://github.com/BDraves/pyalsoft/blob/development/examples/cycle_effects.py),
 as well as the
 [`filter_sound.py`](https://github.com/BDraves/pyalsoft/blob/development/examples/filter_sound.py)
+and
+[`shared_effect_bus.py`](https://github.com/BDraves/pyalsoft/blob/development/examples/shared_effect_bus.py)
 examples.

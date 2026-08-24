@@ -11,6 +11,7 @@ from pyalsoft._managed._backend import (
     _check_alc_error,
     _clear_alc_errors,
     _prepare_buffer_data,
+    _require_al_extension,
     _require_pcm_layout,
 )
 from pyalsoft._managed.audio import PCM, BufferData, BufferFormat, BufferInfo, SoundInfo
@@ -34,6 +35,7 @@ from pyalsoft._managed.playback.effects import (
     _EfxResources,
     _install_efx_resources,
     _prepare_efx_replacement,
+    _release_effect_bus,
 )
 from pyalsoft._managed.playback.session import (
     Playback,
@@ -54,6 +56,7 @@ from pyalsoft._managed.playback.source_controls import (
 from pyalsoft._managed.playback.streams import _stream_record
 from pyalsoft._managed.resources import (
     Clip,
+    EffectBus,
     PlaybackClock,
     Stream,
     StreamState,
@@ -81,6 +84,8 @@ from pyalsoft._managed.spatial import (
     _validate_offsets,
 )
 
+_ALINT_MAX = (1 << 31) - 1
+
 
 def _voice_config_with_overrides(
     config: VoiceConfig | None,
@@ -100,6 +105,7 @@ def _voice_config_with_overrides(
     cone_inner_angle: float | None = None,
     cone_outer_angle: float | None = None,
     cone_outer_gain: float | None = None,
+    cone_outer_gain_high_frequency: float | None = None,
     distance_model: DistanceModel | None = _OMITTED_DISTANCE_MODEL,
     radius: float | None = None,
     spatialization: SpatializationMode | None = None,
@@ -108,6 +114,9 @@ def _voice_config_with_overrides(
     resampler: Resampler | None = _OMITTED_RESAMPLER,
     air_absorption_factor: float | None = None,
     room_rolloff_factor: float | None = None,
+    direct_filter_gain_high_frequency_auto: bool | None = None,
+    auxiliary_send_filter_gain_auto: bool | None = None,
+    auxiliary_send_filter_gain_high_frequency_auto: bool | None = None,
     stereo_mode: StereoMode | None = None,
     super_stereo_width: float | None = _OMITTED_SUPER_STEREO_WIDTH,
     filter: Filter | None = _OMITTED_FILTER,
@@ -159,6 +168,11 @@ def _voice_config_with_overrides(
         cone_outer_gain=(
             config.cone_outer_gain if cone_outer_gain is None else cone_outer_gain
         ),
+        cone_outer_gain_high_frequency=(
+            config.cone_outer_gain_high_frequency
+            if cone_outer_gain_high_frequency is None
+            else cone_outer_gain_high_frequency
+        ),
         distance_model=(
             config.distance_model
             if isinstance(distance_model, _UnsetType)
@@ -186,6 +200,21 @@ def _voice_config_with_overrides(
             config.room_rolloff_factor
             if room_rolloff_factor is None
             else room_rolloff_factor
+        ),
+        direct_filter_gain_high_frequency_auto=(
+            config.direct_filter_gain_high_frequency_auto
+            if direct_filter_gain_high_frequency_auto is None
+            else direct_filter_gain_high_frequency_auto
+        ),
+        auxiliary_send_filter_gain_auto=(
+            config.auxiliary_send_filter_gain_auto
+            if auxiliary_send_filter_gain_auto is None
+            else auxiliary_send_filter_gain_auto
+        ),
+        auxiliary_send_filter_gain_high_frequency_auto=(
+            config.auxiliary_send_filter_gain_high_frequency_auto
+            if auxiliary_send_filter_gain_high_frequency_auto is None
+            else auxiliary_send_filter_gain_high_frequency_auto
         ),
         stereo_mode=config.stereo_mode if stereo_mode is None else stereo_mode,
         super_stereo_width=(
@@ -228,36 +257,75 @@ def _voice_clip_info(playback: Playback, voice: Voice) -> SoundInfo | BufferInfo
     return playback._clip_infos[clip_token]
 
 
+def _validate_loop_points(
+    loop_points: tuple[int, int] | None, frame_count: int
+) -> tuple[int, int] | None:
+    if loop_points is None:
+        return None
+    if not isinstance(loop_points, (tuple, list)):
+        raise TypeError("loop_points must be a two-item tuple or list, or None")
+    if len(loop_points) != 2:
+        raise ValueError("loop_points must contain exactly two frame indices")
+    start, end = loop_points
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) for value in (start, end)
+    ):
+        raise TypeError("loop point frame indices must be integers")
+    if not 0 <= start < end <= frame_count:
+        raise ValueError(f"loop points must satisfy 0 <= start < end <= {frame_count}")
+    if end > _ALINT_MAX:
+        raise ValueError(f"loop point frame indices must not exceed {_ALINT_MAX}")
+    return start, end
+
+
 @_serialized_playback
-def upload(playback: Playback, pcm: PCM | BufferData) -> Clip:
+def upload(
+    playback: Playback,
+    pcm: PCM | BufferData,
+    *,
+    loop_points: tuple[int, int] | None = None,
+) -> Clip:
     """Upload immutable audio data to a playback session.
 
     OpenAL copies the samples into a native buffer. The returned clip may be
     played more than once and remains owned by ``playback`` until it is released
-    explicitly or the session closes.
+    explicitly or the session closes. Optional loop points select the sample-frame
+    range repeated by voices that enable looping; the start frame is inclusive
+    and the end frame is exclusive.
 
     Args:
         playback: Open session that will own the clip.
         pcm: Complete PCM or exact-format buffer data to copy.
+        loop_points: Optional ``(start, end)`` loop-frame range. ``None`` makes
+            looping voices repeat the complete clip.
 
     Returns:
         An opaque clip identity for the uploaded audio.
 
     Raises:
         TypeError: ``pcm`` is not [`PCM`][pyalsoft.PCM] or
-            [`BufferData`][pyalsoft.BufferData].
+            [`BufferData`][pyalsoft.BufferData], or loop points are not integers.
+        ValueError: The loop-point range is empty or outside the clip.
         PlaybackClosedError: ``playback`` is closed.
-        AudioBackendError: OpenAL cannot allocate or populate the buffer.
+        AudioBackendError: OpenAL cannot allocate or populate the buffer, or
+            loop points were requested without ``AL_SOFT_loop_points`` support.
     """
 
     if not isinstance(pcm, (PCM, BufferData)):
         raise TypeError("pcm must be a PCM or BufferData value")
+    resolved_loop_points = _validate_loop_points(loop_points, pcm.frame_count)
     _prepare_al(playback)
     if isinstance(pcm, PCM):
         _require_pcm_layout(playback._library, pcm.channels, pcm.sample_type)
         native_format = _FORMAT_BY_LAYOUT[(pcm.channels, pcm.sample_type)]
     else:
         native_format = pcm.format.native_format
+    if resolved_loop_points is not None:
+        _require_al_extension(
+            playback._library,
+            "AL_SOFT_loop_points",
+            "clip loop points",
+        )
     identifiers = playback._library.al.gen_buffers()
     if len(identifiers) != 1:
         raise AudioBackendError("OpenAL did not create exactly one buffer")
@@ -272,6 +340,12 @@ def upload(playback: Playback, pcm: PCM | BufferData) -> Clip:
             pcm.samples,
             pcm.sample_rate,
         )
+        if resolved_loop_points is not None:
+            playback._library.al.bufferiv(
+                identifier,
+                bindings.AL_LOOP_POINTS_SOFT,
+                resolved_loop_points,
+            )
         _check_al_error(playback, "upload clip")
     except Exception:
         _clear_al_errors(playback)
@@ -281,7 +355,7 @@ def upload(playback: Playback, pcm: PCM | BufferData) -> Clip:
     token = object()
     playback._clips[token] = identifier
     playback._clip_infos[token] = pcm.info
-    return Clip(playback._token, token, identifier, pcm.info)
+    return Clip(playback._token, token, identifier, pcm.info, resolved_loop_points)
 
 
 @_serialized_playback
@@ -931,6 +1005,11 @@ def release_finished(playback: Playback) -> int:
         slots=tuple(
             identifier for resources in released_efx for identifier in resources.slots
         ),
+        owned_slots=tuple(
+            identifier
+            for resources in released_efx
+            for identifier in resources.owned_slots
+        ),
         send_filters=tuple(
             identifier for resources in released_efx for identifier in resources.filters
         ),
@@ -965,8 +1044,12 @@ def release(playback: Playback, resource: Voice) -> None: ...
 def release(playback: Playback, resource: Stream) -> None: ...
 
 
-def release(playback: Playback, resource: Clip | Voice | Stream) -> None:
-    """Release a clip, voice, or stream before its playback session closes.
+@overload
+def release(playback: Playback, resource: EffectBus) -> None: ...
+
+
+def release(playback: Playback, resource: Clip | Voice | Stream | EffectBus) -> None:
+    """Release a clip, voice, stream, or effect bus before its session closes.
 
     Releasing a voice stops it. Releasing a stream stops it and discards queued
     audio. A clip cannot be released while any live voice still refers to it.
@@ -974,12 +1057,13 @@ def release(playback: Playback, resource: Clip | Voice | Stream) -> None:
 
     Args:
         playback: Session that owns ``resource``.
-        resource: Live clip, static voice, or stream to release.
+        resource: Live clip, static voice, stream, or effect bus to release.
 
     Raises:
         TypeError: ``resource`` is not a supported handle.
         InvalidHandleError: The handle is released or belongs to another session.
-        ResourceInUseError: ``resource`` is a clip attached to a live voice.
+        ResourceInUseError: ``resource`` is still referenced by another live
+            managed resource.
         PlaybackClosedError: ``playback`` is closed.
         AudioBackendError: OpenAL cannot release the native resources.
     """
@@ -988,7 +1072,10 @@ def release(playback: Playback, resource: Clip | Voice | Stream) -> None:
 
 
 @_serialized_playback
-def _release(playback: Playback, resource: Clip | Voice | Stream) -> None:
+def _release(playback: Playback, resource: Clip | Voice | Stream | EffectBus) -> None:
+    if isinstance(resource, EffectBus):
+        _release_effect_bus(playback, resource)
+        return
     if isinstance(resource, Stream):
         record = _stream_record(playback, resource)
         _prepare_al(playback)
@@ -1031,4 +1118,4 @@ def _release(playback: Playback, resource: Clip | Voice | Stream) -> None:
         del playback._clips[resource._token]
         del playback._clip_infos[resource._token]
         return
-    raise TypeError("resource must be a Clip, Voice, or Stream")
+    raise TypeError("resource must be a Clip, Voice, Stream, or EffectBus")

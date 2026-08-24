@@ -30,6 +30,30 @@ state; sessions on independent library instances may proceed concurrently.
 progress and makes later operations fail with
 [`PlaybackClosedError`][pyalsoft.PlaybackClosedError].
 
+## Loop regions
+
+Pass a frame range to [`upload()`][pyalsoft.upload] to repeat only part of a
+static clip. The start frame is inclusive and the end frame is exclusive:
+
+```python
+from pyalsoft import PCM, open_playback, play, upload
+
+pcm = PCM(samples, channels=1, sample_rate=44_100)
+
+with open_playback() as playback:
+    clip = upload(
+        playback,
+        pcm,
+        loop_points=(44_100, 88_200),
+    )
+    voice = play(playback, clip, looping=True)
+```
+
+Here the first second plays once, then frames 44,100 through 88,199 repeat.
+Loop points affect only voices with looping enabled. Omitting them loops the
+complete clip as before. A requested range must satisfy
+`0 <= start < end <= pcm.frame_count` and requires `AL_SOFT_loop_points`.
+
 ## Extension buffer formats
 
 [`PCM`][pyalsoft.PCM] supports unsigned 8-bit, signed 16-bit, float32, and
@@ -86,11 +110,48 @@ order 3. `open_stream()` accepts the same `format` and property options. Pass
 `frame_count=` to `try_write_stream()` for each encoded chunk; fixed-width
 chunks infer their frame count from their byte length.
 
-These are input-buffer capabilities. `ALC_SOFT_loopback_bformat` instead
-configures an offline loopback rendering device, for which the managed API does
-not currently provide a session type. `ALC_LOKI_audio_channel` contributes
+These are input-buffer capabilities. `ALC_LOKI_audio_channel` contributes
 legacy channel constants but declares no callable selection function in the
 OpenAL registry; those constants remain available through `pyalsoft.bindings`.
+
+## Offline rendering
+
+[`open_offline_playback()`][pyalsoft.open_offline_playback] creates a managed
+session that renders deterministically into memory instead of opening audio
+hardware. Clips, voices, streams, listeners, and effects use the same operations
+as an ordinary [`Playback`][pyalsoft.Playback]:
+
+```python
+from pyalsoft import (
+    RenderChannelLayout,
+    RenderConfig,
+    RenderSampleType,
+    open_offline_playback,
+    play,
+    render_samples,
+    upload,
+)
+
+config = RenderConfig(
+    sample_rate=48_000,
+    channels=RenderChannelLayout.STEREO,
+    sample_type=RenderSampleType.INT16,
+)
+with open_offline_playback(config) as playback:
+    clip = upload(playback, pcm)
+    play(playback, clip)
+    output = render_samples(playback, 48_000)
+```
+
+`render_samples()` advances the audio device by exactly the requested number of
+frames and returns interleaved bytes in the configured format. Mono, stereo,
+quad, 5.1, 6.1, 7.1, and 3D B-format output are supported when the backend
+accepts them. B-format output additionally configures ambisonic order, layout,
+and scaling through `ALC_SOFT_loopback_bformat`.
+
+See the runnable
+[`render_offline.py`](https://github.com/BDraves/pyalsoft/blob/development/examples/render_offline.py)
+example, which can optionally write the result to a WAV file.
 
 ## Device and context configuration
 
@@ -182,6 +243,7 @@ the context.
 
 See the runnable
 [`play_sine.py`](https://github.com/BDraves/pyalsoft/blob/development/examples/play_sine.py),
+[`loop_points.py`](https://github.com/BDraves/pyalsoft/blob/development/examples/loop_points.py),
 [`stream_sine.py`](https://github.com/BDraves/pyalsoft/blob/development/examples/stream_sine.py),
 and
 [`select_device_hrtf.py`](https://github.com/BDraves/pyalsoft/blob/development/examples/select_device_hrtf.py)

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pyalsoft"
-version = "1.5.0"
+version = "1.6.0"
 description = "Function-oriented Python audio API and typed OpenAL Soft bindings with bundled runtimes"
 readme = "README.md"
 authors = [
@@ -150,7 +150,10 @@ test-requires = ["pyinstaller==6.20.0"]
 test-command = [
   "python {project}/examples/play_file.py",
   "python {project}/examples/play_sine.py",
+  "python {project}/examples/loop_points.py",
   "python {project}/examples/play_with_reverb.py",
+  "python {project}/examples/shared_effect_bus.py",
+  "python {project}/examples/render_offline.py",
   "python {project}/examples/cycle_effects.py",
   "python {project}/examples/filter_sound.py",
   "python {project}/examples/select_device_hrtf.py",
@@ -166,7 +169,10 @@ test-requires = []
 test-command = [
   "python {project}/examples/play_file.py",
   "python {project}/examples/play_sine.py",
+  "python {project}/examples/loop_points.py",
   "python {project}/examples/play_with_reverb.py",
+  "python {project}/examples/shared_effect_bus.py",
+  "python {project}/examples/render_offline.py",
   "python {project}/examples/cycle_effects.py",
   "python {project}/examples/filter_sound.py",
   "python {project}/examples/select_device_hrtf.py",
