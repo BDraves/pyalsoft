@@ -62,6 +62,31 @@ def _read_wave(path: Path) -> PCM:
         raise AudioFileError(f"unsupported WAV file {path}: {error}") from error
 
 
+def load_audio(path: AudioPath) -> PCM:
+    """Decode a supported WAV file into immutable PCM audio.
+
+    This is the data-loading counterpart to
+    [`get_sound_info`][pyalsoft.get_sound_info]. It performs no device work, so
+    the returned value can be transformed, cached by an application, passed to
+    convenience [`play`][pyalsoft.play], or uploaded to an explicit session.
+
+    Args:
+        path: Path to the WAV file. User-directory markers are expanded and the
+            path is resolved before reading.
+
+    Returns:
+        Complete decoded PCM audio.
+
+    Raises:
+        TypeError: ``path`` is not string or path-like.
+        AudioFileError: The file cannot be read or uses an unsupported WAV format.
+    """
+
+    if not isinstance(path, (str, PathLike)):
+        raise TypeError("sound must be a path to a WAV file")
+    return _read_wave(Path(path).expanduser().resolve())
+
+
 def get_sound_info(path: AudioPath) -> SoundInfo:
     """Read WAV format and length information without opening an audio device.
 

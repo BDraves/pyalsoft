@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from contextlib import suppress
 
 from pyalsoft import play, start_recording, stop_recording
@@ -22,8 +21,7 @@ def main() -> None:
     captured = stop_recording(recording)
     print(f"Captured {captured.duration:.2f} seconds. Playing it back...")
     sound = play(captured)
-    while sound.playing:
-        time.sleep(0.05)
+    sound.wait()
     print("Done.")
 
 

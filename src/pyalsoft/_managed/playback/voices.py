@@ -14,7 +14,14 @@ from pyalsoft._managed._backend import (
     _require_al_extension,
     _require_pcm_layout,
 )
-from pyalsoft._managed.audio import PCM, BufferData, BufferFormat, BufferInfo, SoundInfo
+from pyalsoft._managed.audio import (
+    PCM,
+    AudioPath,
+    BufferData,
+    BufferFormat,
+    BufferInfo,
+    SoundInfo,
+)
 from pyalsoft._managed.effects import (
     _OMITTED_FILTER,
     EffectSend,
@@ -278,10 +285,9 @@ def _validate_loop_points(
     return start, end
 
 
-@_serialized_playback
 def upload(
     playback: Playback,
-    pcm: PCM | BufferData,
+    pcm: PCM | BufferData | AudioPath,
     *,
     loop_points: tuple[int, int] | None = None,
 ) -> Clip:
@@ -295,7 +301,8 @@ def upload(
 
     Args:
         playback: Open session that will own the clip.
-        pcm: Complete PCM or exact-format buffer data to copy.
+        pcm: Complete PCM, exact-format buffer data, or supported WAV path to
+            decode and copy.
         loop_points: Optional ``(start, end)`` loop-frame range. ``None`` makes
             looping voices repeat the complete clip.
 
@@ -303,8 +310,9 @@ def upload(
         An opaque clip identity for the uploaded audio.
 
     Raises:
-        TypeError: ``pcm`` is not [`PCM`][pyalsoft.PCM] or
-            [`BufferData`][pyalsoft.BufferData], or loop points are not integers.
+        TypeError: ``pcm`` is not [`PCM`][pyalsoft.PCM],
+            [`BufferData`][pyalsoft.BufferData], or a path, or loop points are
+            not integers.
         ValueError: The loop-point range is empty or outside the clip.
         PlaybackClosedError: ``playback`` is closed.
         AudioBackendError: OpenAL cannot allocate or populate the buffer, or
@@ -312,7 +320,19 @@ def upload(
     """
 
     if not isinstance(pcm, (PCM, BufferData)):
-        raise TypeError("pcm must be a PCM or BufferData value")
+        from pyalsoft._managed.sound.wave import load_audio
+
+        pcm = load_audio(pcm)
+    return _upload(playback, pcm, loop_points=loop_points)
+
+
+@_serialized_playback
+def _upload(
+    playback: Playback,
+    pcm: PCM | BufferData,
+    *,
+    loop_points: tuple[int, int] | None,
+) -> Clip:
     resolved_loop_points = _validate_loop_points(loop_points, pcm.frame_count)
     _prepare_al(playback)
     if isinstance(pcm, PCM):
@@ -596,6 +616,28 @@ def set_voice_config(
     """
 
     _set_voice_config(playback, voice, config, changed_only=False)
+
+
+@_serialized_playback
+def get_voice_config(playback: Playback, voice: Voice | Stream) -> VoiceConfig:
+    """Return the complete managed configuration for a live voice or stream.
+
+    The returned [`VoiceConfig`][pyalsoft.VoiceConfig] is immutable and reflects
+    the most recent managed configuration applied to the source.
+
+    Args:
+        playback: Session that owns ``voice``.
+        voice: Live static voice or stream to inspect.
+
+    Raises:
+        InvalidHandleError: The handle is released or belongs to another session.
+        PlaybackClosedError: ``playback`` is closed.
+    """
+
+    if isinstance(voice, Stream):
+        return _stream_record(playback, voice).config
+    _voice_identifier(playback, voice)
+    return playback._voice_configs[voice._token]
 
 
 @_serialized_playback

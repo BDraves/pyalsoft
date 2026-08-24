@@ -18,10 +18,12 @@ from pyalsoft._managed.playback.session import (
     defer_updates,
     get_playback_config,
     get_playback_info,
+    is_playback_connected,
     list_hrtf_profiles,
     list_playback_devices,
     open_playback,
     reconfigure_playback,
+    reopen_playback,
 )
 from pyalsoft._managed.playback.source_controls import list_resamplers
 from pyalsoft._managed.playback.streams import (
@@ -30,10 +32,12 @@ from pyalsoft._managed.playback.streams import (
     start_stream,
     try_write_stream,
     update_stream,
+    write_stream,
 )
 from pyalsoft._managed.playback.voices import (
     get_playback_clock,
     get_voice_clock,
+    get_voice_config,
     get_voice_latency,
     get_voice_status,
     pause,
@@ -48,6 +52,7 @@ from pyalsoft._managed.playback.voices import (
     stop,
     upload,
 )
+from pyalsoft._managed.playback.waits import wait
 
 __all__ = [
     "Playback",
@@ -59,8 +64,10 @@ __all__ = [
     "get_playback_config",
     "get_effect_bus_config",
     "get_playback_info",
+    "is_playback_connected",
     "get_playback_clock",
     "get_voice_clock",
+    "get_voice_config",
     "get_voice_latency",
     "get_voice_status",
     "list_hrtf_profiles",
@@ -74,6 +81,7 @@ __all__ = [
     "release",
     "release_finished",
     "reconfigure_playback",
+    "reopen_playback",
     "render_samples",
     "restart",
     "resume",
@@ -88,4 +96,6 @@ __all__ = [
     "try_write_stream",
     "update_stream",
     "upload",
+    "wait",
+    "write_stream",
 ]

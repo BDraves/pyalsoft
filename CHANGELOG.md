@@ -4,6 +4,19 @@ Notable user-facing changes to PyALSoft are documented here.
 
 ## Unreleased
 
+### Added
+
+- Added managed voice and stream configuration inspection, reusable WAV
+  decoding, and direct WAV-path uploads for explicit playback sessions.
+  (@BDraves)
+- Added portable blocking waits for sounds, voices, and streams, plus a blocking
+  bounded-stream writer with timeout support. (@BDraves)
+- Added playback connection reporting, live output-device migration, and
+  bounded queued playback/capture device event subscriptions. (@BDraves)
+- Added bounded incremental capture streams with blocking reads and explicit
+  overrun accounting, while preserving complete in-memory recording behavior.
+  (@BDraves)
+
 ## 1.6.0 - 2026.08.23
 
 ### Added

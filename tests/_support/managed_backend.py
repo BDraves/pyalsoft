@@ -369,6 +369,8 @@ class FakeALC:
         self.reset_attributes: list[tuple[int, ...] | None] = []
         self.reset_result = True
         self.reset_error = bindings.ALC_INVALID_VALUE
+        self.reopen_calls: list[tuple[str | bytes | None, tuple[int, ...] | None]] = []
+        self.reopen_result = True
         self.render_format_supported = True
         self.rendered_frames: list[int] = []
         self.device_pause_calls = 0
@@ -383,6 +385,8 @@ class FakeALC:
             "ALC_SOFT_loopback",
             "ALC_SOFT_loopback_bformat",
             "ALC_SOFT_pause_device",
+            "ALC_EXT_disconnect",
+            "ALC_SOFT_reopen_device",
         }
         self.hrtf_profiles = ("Built-in HRTF", "Studio HRTF", "Gaming HRTF")
         self._restore_device_defaults()
@@ -591,6 +595,30 @@ class FakeALC:
             self.output_limiter = bool(values[bindings.ALC_OUTPUT_LIMITER_SOFT])
         if bindings.ALC_OUTPUT_MODE_SOFT in values:
             self.output_mode = values[bindings.ALC_OUTPUT_MODE_SOFT]
+        return True
+
+    def reopen_device_soft(
+        self,
+        device: object,
+        device_name: str | bytes | None,
+        attributes: tuple[int, ...] | None,
+    ) -> bool:
+        assert device is self.device
+        self.reopen_calls.append((device_name, attributes))
+        if not self.reopen_result:
+            return False
+        self.opened_device_name = device_name
+        self._restore_device_defaults()
+        if attributes is not None:
+            values = dict(zip(attributes[::2], attributes[1::2], strict=True))
+            if bindings.ALC_FREQUENCY in values:
+                self.sample_rate = values[bindings.ALC_FREQUENCY]
+            if bindings.ALC_HRTF_SOFT in values:
+                self.hrtf_status = (
+                    bindings.ALC_HRTF_ENABLED_SOFT
+                    if values[bindings.ALC_HRTF_SOFT]
+                    else bindings.ALC_HRTF_DISABLED_SOFT
+                )
         return True
 
     def destroy_context(self, context: object) -> None:

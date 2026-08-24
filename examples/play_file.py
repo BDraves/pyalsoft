@@ -73,8 +73,8 @@ def main() -> None:
 
     # Stop looping and allow the last pass to finish.
     sound.update(looping=False)
-    while sound.playing:
-        time.sleep(0.05)
+    if not sound.wait(timeout=sound.duration_seconds + 2.0):
+        raise RuntimeError("timed out waiting for playback to finish")
     show_status("finished", sound.offset_seconds, sound.duration_seconds)
     end_reason = sound.end_reason
     print(f"end reason: {end_reason.value if end_reason else 'active'}")

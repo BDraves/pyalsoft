@@ -19,13 +19,10 @@ python -m pip install pyalsoft
 [`PlayingSound`][pyalsoft.PlayingSound] handle:
 
 ```python
-import time
-
 from pyalsoft import play
 
 sound = play("sound.wav")
-while sound.playing:
-    time.sleep(0.1)
+sound.wait()
 ```
 
 Playback is asynchronous. If you do not need to control the sound, you can

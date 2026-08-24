@@ -31,13 +31,10 @@ python -m pip install pyalsoft
 `play` starts a WAV file immediately and returns a control handle:
 
 ```python
-import time
-
 from pyalsoft import play
 
 sound = play("sound.wav")
-while sound.playing:
-    time.sleep(0.1)
+sound.wait()
 ```
 
 Use `play("sound.wav", spatialize=False)` for player-attached or UI audio that

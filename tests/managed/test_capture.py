@@ -14,12 +14,17 @@ from pyalsoft import (
     AudioBackendError,
     CaptureDevice,
     CaptureOpenError,
+    CaptureStream,
     Recording,
     SampleType,
     bindings,
+    get_capture_stream_status,
     list_capture_devices,
+    read_capture_stream,
     record,
+    start_capture_stream,
     start_recording,
+    stop_capture_stream,
     stop_recording,
 )
 
@@ -191,6 +196,34 @@ def test_recording_collects_pcm_and_owns_native_lifecycle() -> None:
     assert library.alc.closed == 1
     assert recording._chunks == []
     assert stop_recording(recording) is captured
+
+
+def test_capture_stream_is_bounded_incremental_and_reports_overruns() -> None:
+    library = FakeCaptureLibrary(b"\x01\x00\x02\x00\x03\x00")
+
+    stream = start_capture_stream(
+        sample_rate=8_000,
+        capacity_frames=2,
+        library=as_library(library),
+    )
+    first = read_capture_stream(stream, max_frames=1, timeout=1.0)
+    second = read_capture_stream(stream, timeout=0.0)
+    status = get_capture_stream_status(stream)
+    stop_capture_stream(stream)
+
+    assert isinstance(stream, CaptureStream)
+    assert repr(stream) == "CaptureStream(<opaque>)"
+    assert first is not None
+    assert first.samples == b"\x02\x00"
+    assert second is not None
+    assert second.samples == b"\x03\x00"
+    assert status.buffered_frames == 0
+    assert status.capacity_frames == 2
+    assert status.overrun_count == 1
+    assert not status.closed
+    assert get_capture_stream_status(stream).closed
+    assert read_capture_stream(stream, timeout=0.0) is None
+    stop_capture_stream(stream)
 
 
 def test_recording_start_failure_closes_device_and_is_not_retained(

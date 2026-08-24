@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -27,6 +28,7 @@ from pyalsoft import (
     bindings,
     get_acoustics,
     get_listener,
+    get_voice_config,
     get_voice_status,
     open_playback,
     pause,
@@ -43,8 +45,10 @@ from pyalsoft import (
     set_voice_config,
     stop,
     upload,
+    wait,
 )
 from tests._support.managed_backend import FakeLibrary, as_library
+from tests.managed._sound_support import _write_wave
 
 
 def test_managed_playback_applies_data_and_controls_lifecycle() -> None:
@@ -89,6 +93,9 @@ def test_managed_playback_applies_data_and_controls_lifecycle() -> None:
         )
 
         set_voice_config(playback, voice, replace(config, position=(7.0, 8.0, 9.0)))
+        assert get_voice_config(playback, voice) == replace(
+            config, position=(7.0, 8.0, 9.0)
+        )
         assert library.al.sources[100][bindings.AL_POSITION] == (
             7.0,
             8.0,
@@ -103,6 +110,7 @@ def test_managed_playback_applies_data_and_controls_lifecycle() -> None:
             resume(playback, voice)
         stop(playback, voice)
         assert get_voice_status(playback, voice).state is VoiceState.STOPPED
+        assert wait(playback, voice, timeout=0.0)
         with pytest.raises(InvalidVoiceStateError, match="stopped"):
             resume(playback, voice)
 
@@ -118,6 +126,18 @@ def test_managed_playback_applies_data_and_controls_lifecycle() -> None:
     assert library.alc.destroyed_contexts == [library.alc.context]
     assert library.alc.closed_devices == [library.alc.device]
     assert library.alc.current_context is library.alc.previous_context
+
+
+def test_upload_accepts_a_wave_path(tmp_path: Path) -> None:
+    path = tmp_path / "explicit.wav"
+    _write_wave(path, channels=2, sample_rate=22_050)
+    library = FakeLibrary()
+
+    with open_playback(library=as_library(library)) as playback:
+        clip = upload(playback, path)
+
+        assert clip.info.channels == 2
+        assert clip.info.sample_rate == 22_050
 
 
 def test_failed_clip_upload_releases_the_native_buffer(
