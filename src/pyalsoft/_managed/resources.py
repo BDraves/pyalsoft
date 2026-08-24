@@ -191,9 +191,7 @@ class RenderConfig:
                 AmbisonicScaling.SN3D,
                 AmbisonicScaling.N3D,
             ):
-                raise ValueError(
-                    "ambisonic orders above 3 require SN3D or N3D scaling"
-                )
+                raise ValueError("ambisonic orders above 3 require SN3D or N3D scaling")
 
     @property
     def channel_count(self) -> int:

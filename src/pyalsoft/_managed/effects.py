@@ -690,9 +690,7 @@ class DedicatedDialogue(_EffectConfig):
 
     _native_type = bindings.AL_EFFECT_DEDICATED_DIALOGUE
     _required_extension = "ALC_EXT_DEDICATED"
-    gain: float = _float_field(
-        1.0, bindings.AL_DEDICATED_GAIN, 0.0, float("inf")
-    )
+    gain: float = _float_field(1.0, bindings.AL_DEDICATED_GAIN, 0.0, float("inf"))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -705,9 +703,7 @@ class DedicatedLowFrequencyEffect(_EffectConfig):
 
     _native_type = bindings.AL_EFFECT_DEDICATED_LOW_FREQUENCY_EFFECT
     _required_extension = "ALC_EXT_DEDICATED"
-    gain: float = _float_field(
-        1.0, bindings.AL_DEDICATED_GAIN, 0.0, float("inf")
-    )
+    gain: float = _float_field(1.0, bindings.AL_DEDICATED_GAIN, 0.0, float("inf"))
 
 
 type Effect = (

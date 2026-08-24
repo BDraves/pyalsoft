@@ -379,9 +379,7 @@ def update_acoustics(
                 current.speed_of_sound if speed_of_sound is None else speed_of_sound
             ),
             meters_per_unit=(
-                current.meters_per_unit
-                if meters_per_unit is None
-                else meters_per_unit
+                current.meters_per_unit if meters_per_unit is None else meters_per_unit
             ),
         )
         if playback is None:
@@ -649,9 +647,7 @@ def play(
         resampler=resampler,
         air_absorption_factor=air_absorption_factor,
         room_rolloff_factor=room_rolloff_factor,
-        direct_filter_gain_high_frequency_auto=(
-            direct_filter_gain_high_frequency_auto
-        ),
+        direct_filter_gain_high_frequency_auto=(direct_filter_gain_high_frequency_auto),
         auxiliary_send_filter_gain_auto=auxiliary_send_filter_gain_auto,
         auxiliary_send_filter_gain_high_frequency_auto=(
             auxiliary_send_filter_gain_high_frequency_auto

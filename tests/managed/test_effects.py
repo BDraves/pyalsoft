@@ -408,7 +408,9 @@ def test_effect_bus_is_shared_updated_chained_and_lifecycle_checked() -> None:
     assert library.al.allocated_effect_slots == set()
 
 
-def test_effect_bus_rejects_cross_session_targets_cycles_and_missing_extensions() -> None:
+def test_effect_bus_rejects_cross_session_targets_cycles_and_missing_extensions() -> (
+    None
+):
     first_library = FakeLibrary()
     second_library = FakeLibrary()
     with (

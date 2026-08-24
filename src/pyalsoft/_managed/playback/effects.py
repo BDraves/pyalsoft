@@ -199,10 +199,7 @@ def _configure_effect_bus_slot(
     has_effect_target = playback._library.is_al_extension_present(
         "AL_SOFT_effect_target"
     )
-    if (
-        target_slot != bindings.AL_EFFECTSLOT_NULL
-        and not has_effect_target
-    ):
+    if target_slot != bindings.AL_EFFECTSLOT_NULL and not has_effect_target:
         raise AudioBackendError(
             "effect bus chaining requires the AL_SOFT_effect_target extension"
         )
@@ -266,9 +263,7 @@ def create_effect_bus(playback: Playback, config: EffectBusConfig) -> EffectBus:
 
 
 @_serialized_playback
-def get_effect_bus_config(
-    playback: Playback, bus: EffectBus
-) -> EffectBusConfig:
+def get_effect_bus_config(playback: Playback, bus: EffectBus) -> EffectBusConfig:
     """Return the current immutable configuration of a live effect bus."""
 
     return _effect_bus_record(playback, bus).config

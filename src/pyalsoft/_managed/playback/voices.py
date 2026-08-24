@@ -1072,9 +1072,7 @@ def release(playback: Playback, resource: Clip | Voice | Stream | EffectBus) -> 
 
 
 @_serialized_playback
-def _release(
-    playback: Playback, resource: Clip | Voice | Stream | EffectBus
-) -> None:
+def _release(playback: Playback, resource: Clip | Voice | Stream | EffectBus) -> None:
     if isinstance(resource, EffectBus):
         _release_effect_bus(playback, resource)
         return
