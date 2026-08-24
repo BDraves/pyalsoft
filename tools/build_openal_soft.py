@@ -19,6 +19,7 @@ from tools.openal_soft import (
     RuntimeTarget,
     native_runtime_root,
     runtime_target,
+    source_archive_path,
     source_configuration,
     verify_checksum,
 )  # noqa: E402
@@ -68,7 +69,7 @@ def _cmake_build_command(build_directory: Path, jobs: int) -> list[str]:
 
 
 def _source_tree(config: dict[str, str]) -> Path:
-    archive = VENDOR / f"openal-soft-{config['version']}.tar.bz2"
+    archive = source_archive_path(config)
     data = archive.read_bytes()
     expected = config["library_source_sha256"]
     verify_checksum(str(archive), data, expected)

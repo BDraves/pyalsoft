@@ -1,0 +1,119 @@
+name: Update OpenAL Soft
+
+on:
+  schedule:
+    # Stable releases are infrequent. Avoid the busy start of the hour.
+    - cron: "17 9 * * 1"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Optional stable OpenAL Soft X.Y.Z version
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-openal-soft
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: Prepare update pull request
+    if: github.repository == 'BDraves/pyalsoft'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out development
+        uses: actions/checkout@v7
+        with:
+          ref: development
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.29"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked --no-install-project --python 3.12 --group docs
+
+      - name: Prepare update
+        id: update
+        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          report="$RUNNER_TEMP/openal-update.md"
+          arguments=(--report "$report")
+          if [[ -n "$REQUESTED_VERSION" ]]; then
+            arguments+=(--version "$REQUESTED_VERSION")
+          fi
+          uv run --no-sync python tools/update_openal_soft.py "${arguments[@]}"
+          if git diff --quiet; then
+            echo "updated=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          version="$(uv run --no-sync python -c \
+            'import tomllib; print(tomllib.load(open("vendor/openal-soft/source.toml", "rb"))["version"])')"
+          echo "updated=true" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "report=$report" >> "$GITHUB_OUTPUT"
+
+      - name: Verify generated update
+        if: steps.update.outputs.updated == 'true'
+        run: |
+          uv run --no-sync python tools/generate_bindings.py --check
+          uv run --no-sync python tools/sync_openal_soft.py --check
+          uv run --no-sync ruff check .
+          uv run --no-sync ruff format --check .
+          uv run --no-sync mypy
+          uv run --no-sync pytest -m "not integration"
+          uv run --no-sync mkdocs build --strict
+          git diff --check
+
+      - name: Create or update pull request
+        if: steps.update.outputs.updated == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT: ${{ steps.update.outputs.report }}
+          VERSION: ${{ steps.update.outputs.version }}
+        run: |
+          branch="automation/openal-soft-${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --create "$branch"
+          git add -A \
+            CHANGELOG.md \
+            LICENSES/THIRD-PARTY.md \
+            README.md \
+            docs/reference.md \
+            src/pyalsoft/bindings/_generated \
+            vendor/openal-soft
+          git commit --message "chore: update OpenAL Soft to ${VERSION}"
+          git push --force-with-lease origin "HEAD:refs/heads/${branch}"
+
+          if gh pr list --base development --head "$branch" --state open \
+            --json number --jq '.[0].number' | grep -q '[0-9]'; then
+            gh pr edit "$branch" \
+              --title "chore: update OpenAL Soft to ${VERSION}" \
+              --body-file "$REPORT"
+          else
+            gh pr create \
+              --base development \
+              --head "$branch" \
+              --title "chore: update OpenAL Soft to ${VERSION}" \
+              --body-file "$REPORT"
+          fi
