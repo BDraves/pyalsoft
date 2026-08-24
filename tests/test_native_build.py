@@ -21,11 +21,13 @@ from tools.build_openal_soft import (
     _cmake_build_command,
     build_runtime,
 )
+from tools.freeze_test import AUDIO_FIXTURES, _smoke_command
 from tools.openal_soft import (
     NATIVE_ROOT_ENVIRONMENT,
     native_runtime_root,
     runtime_target,
 )
+from tools.smoke_test_runtime import DEFAULT_FIXTURE_ROOT
 
 
 def test_native_runtime_root_defaults_to_project_build_directory(
@@ -157,6 +159,14 @@ def test_pyinstaller_hook_declares_versioned_linux_runtimes() -> None:
     hook = hook_directory / "hook-pyalsoft.py"
     assert hook.is_file()
     assert "lib*.so.*" in hook.read_text(encoding="utf-8")
+
+
+def test_freezer_passes_the_smoke_test_fixture_directory(tmp_path: Path) -> None:
+    executable = tmp_path / "pyalsoft-freeze-test"
+
+    assert AUDIO_FIXTURES == DEFAULT_FIXTURE_ROOT
+    assert AUDIO_FIXTURES.is_dir()
+    assert _smoke_command(executable) == [executable, DEFAULT_FIXTURE_ROOT]
 
 
 @pytest.mark.parametrize(
