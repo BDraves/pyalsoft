@@ -1,4 +1,4 @@
-"""Implicit playback runtime, active-sound ownership, and WAV clip cache."""
+"""Implicit playback runtime, active-sound ownership, and audio clip cache."""
 
 from __future__ import annotations
 
@@ -47,12 +47,12 @@ from pyalsoft._managed.resources import (
     VoiceState,
     VoiceStatus,
 )
+from pyalsoft._managed.sound.decoder import _decode_audio
 from pyalsoft._managed.sound.handle import (
     PlayingSound,
     _CachedSoundClip,
     _SoundRecord,
 )
-from pyalsoft._managed.sound.wave import _read_wave
 from pyalsoft._managed.spatial import (
     _DEFAULT_ACOUSTICS,
     _DEFAULT_LISTENER,
@@ -201,7 +201,7 @@ class _DefaultRuntime:
         cache_key = (record.path, direct_channels)
         cached = self._clips.get(cache_key)
         if cached is None:
-            source_pcm = _read_wave(record.path)
+            source_pcm = _decode_audio(record.path)
             pcm = _as_stereo(source_pcm) if direct_channels else source_pcm
             cached = _CachedSoundClip(
                 clip=upload(playback, pcm),
@@ -394,7 +394,7 @@ class _DefaultRuntime:
                 cache_key = (normalized, direct_channels)
                 cached = self._clips.get(cache_key)
                 if cached is None:
-                    source_pcm = _read_wave(normalized)
+                    source_pcm = _decode_audio(normalized)
                     source_info = source_pcm.info
                     offset_seconds, offset_frames = _validate_offsets(
                         source_info, offset_seconds, offset_frames

@@ -55,9 +55,9 @@ def test_missing_wave_uses_managed_audio_file_errors(
 ) -> None:
     path = tmp_path / "missing.wav"
 
-    with pytest.raises(AudioFileError, match="could not read WAV"):
+    with pytest.raises(AudioFileError, match="could not read audio file"):
         get_sound_info(path)
-    with pytest.raises(AudioFileError, match="could not read WAV"):
+    with pytest.raises(AudioFileError, match="could not read audio file"):
         play(path)
 
     assert default_library.alc.current_context is default_library.alc.previous_context
@@ -78,17 +78,18 @@ def test_truncated_wave_data_is_rejected_before_opening_the_device(
 
 
 @pytest.mark.parametrize("sample_width", [3, 4])
-def test_play_rejects_unsupported_wave_sample_widths(
+def test_play_accepts_higher_depth_wave_as_float32(
     tmp_path: Path,
     default_library: FakeLibrary,
     sample_width: int,
 ) -> None:
-    del default_library
     path = tmp_path / "unsupported.wav"
     _write_wave(path, sample_width=sample_width)
 
-    with pytest.raises(AudioFileError, match=rf"{sample_width * 8}-bit"):
-        play(path)
+    sound = play(path)
+
+    assert sound.info.sample_type is SampleType.FLOAT32
+    del default_library
 
 
 @pytest.mark.parametrize("contents", [b"", b"not audio"])
@@ -100,7 +101,7 @@ def test_invalid_wave_does_not_open_the_default_device(
     path = tmp_path / "not-a-wave.wav"
     path.write_bytes(contents)
 
-    with pytest.raises(AudioFileError, match="could not read WAV"):
+    with pytest.raises(AudioFileError):
         play(path)
 
     assert default_library.alc.current_context is default_library.alc.previous_context

@@ -26,9 +26,9 @@ from pyalsoft._managed.playback.voices import (
     _voice_config_with_overrides,
 )
 from pyalsoft._managed.resources import Clip, SoundCacheInfo, Voice
+from pyalsoft._managed.sound.decoder import get_sound_info, load_audio
 from pyalsoft._managed.sound.handle import PlayingSound
 from pyalsoft._managed.sound.runtime import _DefaultRuntime
-from pyalsoft._managed.sound.wave import get_sound_info, load_audio
 from pyalsoft._managed.spatial import (
     _OMITTED_DISTANCE_MODEL,
     _OMITTED_RESAMPLER,
@@ -137,7 +137,7 @@ def clear_sound_cache(path: AudioPath | None = None) -> int:
     [`play`][pyalsoft.play] is never part of this cache.
 
     Args:
-        path: Specific WAV path to evict. ``None`` targets every cached file.
+        path: Specific audio-file path to evict. ``None`` targets every cached file.
 
     Returns:
         Number of clips evicted immediately.
@@ -149,7 +149,7 @@ def clear_sound_cache(path: AudioPath | None = None) -> int:
     normalized: Path | None = None
     if path is not None:
         if not isinstance(path, (str, PathLike)):
-            raise TypeError("path must be a path to a WAV file or None")
+            raise TypeError("path must be a path to a supported audio file or None")
         normalized = Path(path).expanduser().resolve()
     return _get_default_runtime().clear_cache(normalized)
 
@@ -525,11 +525,11 @@ def play(
     spatialize: bool | None = None,
     direct_channels: DirectChannelsMode | bool | None = None,
 ) -> Voice | PlayingSound:
-    """Play an explicit clip, WAV file, or PCM value.
+    """Play an explicit clip, supported audio file, or PCM value.
 
     ``play(playback, clip, config)`` starts a clip owned by an explicit session.
     ``play(sound, config=config)`` starts asynchronous playback through the
-    convenience runtime, where *sound* is a WAV path or in-memory
+    convenience runtime, where *sound* is a supported audio path or in-memory
     [`PCM`][pyalsoft.PCM] value. The runtime keeps playing when the returned
     handle is discarded, and it caches file-backed clips by resolved path.
 
@@ -546,7 +546,7 @@ def play(
 
     Args:
         playback: Explicit playback session in the two-argument form; otherwise,
-            a WAV path or PCM value to play through the convenience runtime.
+            a supported audio path or PCM value to play through the convenience runtime.
         clip: Clip owned by ``playback``. Valid only in the explicit-session form.
         config: Base voice configuration. ``None`` uses all defaults.
         position: Sound position in world or listener-relative coordinates.
@@ -594,7 +594,7 @@ def play(
             and ``None`` leaves the decision to OpenAL based on the source
             format.
         direct_channels: Direct stereo-channel routing mode. ``True`` selects
-            ``DROP_UNMATCHED`` and ``False`` selects ``OFF``. Mono WAV and PCM
+            ``DROP_UNMATCHED`` and ``False`` selects ``OFF``. Mono file and PCM
             values are duplicated to stereo by convenience playback. Surround
             sources are rejected, and explicit clips must already be stereo.
 
@@ -605,7 +605,7 @@ def play(
     Raises:
         TypeError: The call form or an argument has the wrong type.
         ValueError: A configuration, initial offset, or playback timing is invalid.
-        AudioFileError: A WAV file cannot be read or has an unsupported format.
+        AudioFileError: An audio file cannot be read or has an unsupported format.
         PlaybackOpenError: The convenience runtime cannot open an audio session.
         PlaybackClosedError: The explicit session is closed.
         InvalidHandleError: ``clip`` is released or belongs to another session.
@@ -674,7 +674,7 @@ def play(
     if clip is not None:
         raise TypeError("clip is only valid with an explicit Playback")
     if not isinstance(playback, (str, PathLike, PCM)):
-        raise TypeError("sound must be a path to a WAV file or a PCM value")
+        raise TypeError("sound must be a path to a supported audio file or a PCM value")
     return _get_default_runtime().play(
         playback,
         resolved_config,

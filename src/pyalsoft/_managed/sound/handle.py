@@ -64,7 +64,7 @@ class PlayingSound:
     function-oriented managed API. Handles retain their final status after
     natural completion, an explicit stop, device loss, or runtime shutdown.
 
-    Do not construct instances directly. Use [`play`][pyalsoft.play] with a WAV
+    Do not construct instances directly. Use [`play`][pyalsoft.play] with an audio
     path or [`PCM`][pyalsoft.PCM] value.
     """
 

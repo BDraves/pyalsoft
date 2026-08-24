@@ -2,7 +2,14 @@
 
 Notable user-facing changes to PyALSoft are documented here.
 
-## Unreleased
+## 1.8.0 - 2026.08.23
+
+### Added
+
+- Added signature-detected static WAV, FLAC, MP3, and Ogg Vorbis decoding to
+  file playback, inspection, loading, caching, and explicit-session uploads,
+  with source sample rates preserved and no new runtime dependencies.
+  (@BDraves)
 
 ## 1.7.0 - 2026.08.23
 

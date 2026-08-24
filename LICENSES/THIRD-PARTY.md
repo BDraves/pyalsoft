@@ -25,6 +25,21 @@ registry's copyright and permission notice is in
 `LICENSES/OpenAL-Registry.txt`. That notice states that use of the registry
 alone is unencumbered by the OpenAL Soft LGPL terms.
 
+## miniaudio
+
+Platform wheels include a decoder-only helper built from miniaudio 0.11.25.
+PyALSoft uses its WAV, FLAC, and MP3 decoding components without its playback
+device layer. The upstream project is <https://github.com/mackron/miniaudio>.
+Its MIT-0 license is reproduced in `LICENSES/miniaudio.txt` and in the vendored
+source.
+
+## stb_vorbis
+
+The decoder helper uses stb_vorbis from the pinned stb commit recorded in
+`vendor/audio-decoder/source.toml`. The upstream project is
+<https://github.com/nothings/stb>. Its dual MIT/public-domain notice is
+reproduced in `LICENSES/stb_vorbis.txt` and in the vendored source.
+
 ## {fmt}
 
 OpenAL Soft includes {fmt}. Its MIT license and compiled-object exception are

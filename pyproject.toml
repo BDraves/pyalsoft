@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling>=1.27,<2"]
+requires = ["cmake>=3.25,<4", "hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
 [project]
 name = "pyalsoft"
-version = "1.7.0"
+version = "1.8.0"
 description = "Function-oriented Python audio API and typed OpenAL Soft bindings with bundled runtimes"
 readme = "README.md"
 authors = [
@@ -40,7 +40,7 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
   "Typing :: Typed",
 ]
-license = "MIT AND LGPL-2.0-or-later AND BSD-3-Clause AND LicenseRef-OpenAL-Registry"
+license = "MIT AND MIT-0 AND LGPL-2.0-or-later AND BSD-3-Clause AND LicenseRef-OpenAL-Registry"
 license-files = [
   "LICENSE",
   "LICENSES/*",
@@ -138,7 +138,6 @@ include = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pyalsoft"]
-dependencies = ["cmake>=3.25,<4; sys_platform != 'win32'"]
 
 [tool.hatch.build.targets.wheel.hooks.custom]
 path = "hatch_build.py"

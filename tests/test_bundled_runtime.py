@@ -42,6 +42,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WINDOWS_RUNTIME = (
     ROOT / "vendor" / "openal-soft" / "runtime" / "win_amd64" / "soft_oal.dll"
 )
+AUDIO_FIXTURES = ROOT / "tests" / "fixtures" / "audio"
 
 pytestmark = [
     pytest.mark.integration,
@@ -115,6 +116,24 @@ def test_bundled_runtime_supports_managed_efx(
             ),
         )
         release(playback, stream)
+        release(playback, voice)
+        release(playback, clip)
+
+
+@pytest.mark.parametrize(
+    "filename", ["tone-s16.wav", "tone-s16.flac", "tone.mp3", "tone.ogg"]
+)
+def test_bundled_runtime_uploads_every_static_audio_format(
+    monkeypatch: pytest.MonkeyPatch,
+    filename: str,
+) -> None:
+    monkeypatch.setenv("ALSOFT_DRIVERS", "null")
+    library = bindings.load(WINDOWS_RUNTIME)
+
+    with open_playback(library=library) as playback:
+        clip = upload(playback, AUDIO_FIXTURES / filename)
+        voice = play(playback, clip)
+        stop(playback, voice)
         release(playback, voice)
         release(playback, clip)
 

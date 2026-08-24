@@ -301,7 +301,7 @@ def upload(
 
     Args:
         playback: Open session that will own the clip.
-        pcm: Complete PCM, exact-format buffer data, or supported WAV path to
+        pcm: Complete PCM, exact-format buffer data, or supported audio path to
             decode and copy.
         loop_points: Optional ``(start, end)`` loop-frame range. ``None`` makes
             looping voices repeat the complete clip.
@@ -320,7 +320,7 @@ def upload(
     """
 
     if not isinstance(pcm, (PCM, BufferData)):
-        from pyalsoft._managed.sound.wave import load_audio
+        from pyalsoft._managed.sound.decoder import load_audio
 
         pcm = load_audio(pcm)
     return _upload(playback, pcm, loop_points=loop_points)

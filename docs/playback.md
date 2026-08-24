@@ -24,6 +24,33 @@ clear_sound_cache("notification.wav")
 ```
 
 Clearing an active clip marks it for eviction after its final sound stops.
+The budget measures decoded OpenAL buffer bytes, not compressed file size. A
+compressed asset can therefore occupy much more cache memory than its file size,
+and an active sound is intentionally allowed to keep the cache over budget.
+
+## Static audio files
+
+Convenience playback, [`load_audio()`][pyalsoft.load_audio],
+[`get_sound_info()`][pyalsoft.get_sound_info], and explicit-session
+[`upload()`][pyalsoft.upload] accept WAV, FLAC, MP3, and Ogg Vorbis files.
+Formats are detected from file signatures. Ogg Opus and other Ogg codecs are
+reported as unsupported rather than being treated as Vorbis.
+
+| Input | Supported channels | Decoded sample type |
+| --- | --- | --- |
+| WAV PCM 8-bit | mono through 7.1 standard layouts | UINT8 |
+| WAV PCM 16-bit | mono through 7.1 standard layouts | INT16 |
+| WAV PCM 24/32-bit or IEEE float | mono through 7.1 standard layouts | FLOAT32 |
+| FLAC through 16-bit | mono or stereo | INT16 |
+| FLAC above 16-bit | mono or stereo | FLOAT32 |
+| MP3 and Ogg Vorbis | mono or stereo | FLOAT32 |
+
+Source sample rates are preserved. `SoundInfo.sample_type` and `bit_depth`
+describe this decoded PCM representation, not a compressed bitrate. Static
+files are decoded completely into memory and uploaded to static OpenAL buffers;
+this path is intended for sound assets, not memory-bounded or gapless music
+streaming. Use [`open_stream()`][pyalsoft.open_stream] with application-provided
+PCM chunks when bounded streaming is required.
 
 ## Control one sound
 
@@ -104,10 +131,10 @@ footstep = play("footstep.wav", gain=0.8, direct_channels=True)
 ```
 
 Direct-channel playback routes stereo channels to the matching outputs without
-virtual-speaker rendering. For convenience playback, mono WAV and
+virtual-speaker rendering. For convenience playback, mono file and
 [`PCM`][pyalsoft.PCM] sample frames are duplicated into identical left and
 right channels before upload; the returned sound continues to report the
-original source format. The normal and stereo-expanded forms of a cached WAV
+original source format. The normal and stereo-expanded forms of a cached file
 occupy separate cache entries. Surround sources are rejected rather than
 implicitly downmixed. With an explicit playback session, the
 [`Clip`][pyalsoft.Clip] passed to `play()` must already be stereo. A separately
