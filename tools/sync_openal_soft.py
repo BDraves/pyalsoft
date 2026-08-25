@@ -15,19 +15,13 @@ if not __package__:
 from tools.openal_soft import (  # noqa: E402
     ROOT,
     VENDOR,
+    source_archive_path,
     source_configuration,
     verify_checksum,
 )
 
-VENDORED_FILES = {
-    "sha256": VENDOR / "al.xml",
-    "library_source_sha256": VENDOR / "openal-soft-1.25.2.tar.bz2",
-    "windows_amd64_sha256": VENDOR / "runtime" / "win_amd64" / "soft_oal.dll",
-    "license_sha256": VENDOR / "COPYING",
-    "pffft_license_sha256": VENDOR / "LICENSE-pffft",
-}
-
 REQUIRED_CONFIG = {
+    "version",
     "source_url",
     "sha256",
     "library_source_url",
@@ -45,6 +39,18 @@ REQUIRED_CONFIG = {
 
 def _config() -> dict[str, str]:
     return source_configuration(REQUIRED_CONFIG)
+
+
+def vendored_files(config: dict[str, str]) -> dict[str, Path]:
+    """Return checksum keys and their version-aware vendored paths."""
+
+    return {
+        "sha256": VENDOR / "al.xml",
+        "library_source_sha256": source_archive_path(config),
+        "windows_amd64_sha256": (VENDOR / "runtime" / "win_amd64" / "soft_oal.dll"),
+        "license_sha256": VENDOR / "COPYING",
+        "pffft_license_sha256": VENDOR / "LICENSE-pffft",
+    }
 
 
 def _download(url: str) -> bytes:
@@ -79,7 +85,7 @@ def _write(path: Path, data: bytes) -> None:
 
 def check() -> None:
     config = _config()
-    for checksum_key, path in VENDORED_FILES.items():
+    for checksum_key, path in vendored_files(config).items():
         if not path.is_file():
             raise FileNotFoundError(f"missing vendored file: {path}")
         data = path.read_bytes()
@@ -91,6 +97,7 @@ def check() -> None:
 
 def sync() -> None:
     config = _config()
+    files = vendored_files(config)
     registry = _normalized_registry(_download(config["source_url"]))
     verify_checksum("OpenAL registry", registry, config["sha256"])
 
@@ -122,11 +129,11 @@ def sync() -> None:
         config["pffft_license_sha256"],
     )
 
-    _write(VENDORED_FILES["sha256"], registry)
-    _write(VENDORED_FILES["library_source_sha256"], source_archive)
-    _write(VENDORED_FILES["windows_amd64_sha256"], dll)
-    _write(VENDORED_FILES["license_sha256"], license_text)
-    _write(VENDORED_FILES["pffft_license_sha256"], pffft_license)
+    _write(files["sha256"], registry)
+    _write(files["library_source_sha256"], source_archive)
+    _write(files["windows_amd64_sha256"], dll)
+    _write(files["license_sha256"], license_text)
+    _write(files["pffft_license_sha256"], pffft_license)
 
 
 def main() -> None:

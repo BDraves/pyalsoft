@@ -59,6 +59,15 @@ def source_configuration(required: Collection[str]) -> dict[str, str]:
     return result
 
 
+def source_archive_path(
+    configuration: dict[str, str] | None = None,
+) -> Path:
+    """Return the vendored source archive for a source configuration."""
+
+    selected = configuration or source_configuration({"version"})
+    return VENDOR / f"openal-soft-{selected['version']}.tar.bz2"
+
+
 def sha256(data: bytes) -> str:
     """Return the lowercase SHA-256 digest of *data*."""
 

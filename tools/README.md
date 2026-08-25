@@ -10,6 +10,7 @@ effects; shared implementation belongs in importable modules below them.
 | --- | --- | --- |
 | `generate_bindings.py` | Parse `al.xml` and generate typed bindings, metadata, and reference documentation. | Writes generated Python, `docs/reference.md`, and the README version badge unless `--check` is used. |
 | `changelog.py` | Extract one version's notes from `CHANGELOG.md` for publication. | Read-only; writes the selected notes to standard output. |
+| `update_openal_soft.py` | Discover or select a stable OpenAL Soft release, validate its complete artifact set, update the pin, regenerate bindings, and report public API impact. | Downloads upstream release assets and updates the complete `vendor/openal-soft` dependency, generated Python, reference documentation, badge, notices, and changelog. |
 | `sync_openal_soft.py` | Verify or download the pinned OpenAL Soft registry, source archive, Windows runtime, and licenses. | `--check` is read-only; the default mode uses the network and updates `vendor/openal-soft`. |
 | `build_openal_soft.py` | Build or stage the native runtime for the current platform. | Extracts and compiles under `build/`; uses at most two compiler jobs by default. `--jobs` or `PYALSOFT_BUILD_JOBS` can change the limit, and `PYALSOFT_NATIVE_ROOT` can redirect the staged runtime. |
 | `build_audio_decoder.py` | Build and stage the decoder-only miniaudio/stb_vorbis helper for the current platform. | Verifies pinned source checksums and compiles under `build/`; `--vendor-runtime` also updates the current platform's checked-in runtime. |
@@ -18,6 +19,13 @@ effects; shared implementation belongs in importable modules below them.
 
 `semantic_overrides.toml` is generator input, not an executable tool. It records
 reviewed corrections for semantics that the upstream XML cannot express.
+
+Run `uv run python tools/update_openal_soft.py` to update to GitHub's latest
+published stable release, or pass `--version X.Y.Z` to select one explicitly.
+The command stages and validates every input before replacing tracked files.
+Pass `--report PATH` to save its provenance, generated API-diff, and PyALSoft
+SemVer recommendation as Markdown. It deliberately does not change the
+PyALSoft project version or publish a release.
 
 ## Internal structure
 
